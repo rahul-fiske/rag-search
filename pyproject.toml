@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rag-search"
+dynamic = ["version"]
+description = "Local document RAG: always-on indexer and search daemons (docling, BM25 + bge-m3, reranker), a CLI, a local web dashboard, and an MCP adapter for Claude Desktop and Claude Code (other MCP hosts can use it too)."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+authors = [{ name = "rag-search contributors" }]
+keywords = ["mcp", "rag", "search", "docling", "bge-m3", "claude"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+]
+dependencies = [
+  "docling>=2.30",
+  "sentence-transformers>=3.0",
+  "torch>=2.2",
+  "numpy>=1.26",
+  "huggingface_hub>=0.24",
+]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.12,<2"]
+# Document reader (Apple Silicon only): a vision-language model reads scanned pages, pictures and image files.
+# pillow-heif lets it read iPhone photos (.heic); ocrmac (Apple Vision) is the independent second reader that confirms repaired table cells.
+mac-vlm = ["mlx-vlm>=0.3.4; sys_platform == 'darwin' and platform_machine == 'arm64'", "pillow-heif>=0.18", "ocrmac>=1.0; sys_platform == 'darwin'"]
+
+[project.scripts]
+rag-search = "rag_search.cli:main"
+rag-search-mcp = "rag_search.mcp.server:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.5", "mcp>=1.12,<2"]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.package-data]
+"rag_search.ui" = ["static/*", "static/docs/*"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "rag_search.__version__" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests/portable"]

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rag-search dashboard</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232f5fd0'/%3E%3Ccircle cx='14' cy='14' r='6' fill='none' stroke='white' stroke-width='3'/%3E%3Cpath d='M19 19l6 6' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<div id="banner" class="banner hidden" role="alert"></div>
+<header class="top">
+  <div class="top-row">
+    <div class="brand"><span class="logo" aria-hidden="true"></span> rag-search <small id="ver"></small></div>
+    <div class="pills" id="pills" aria-live="polite"></div>
+    <button class="btn small" id="theme" type="button" title="Switch light / dark">Theme</button>
+  </div>
+  <nav class="tabs" id="tabs" aria-label="Sections">
+    <a href="#/overview" data-tab="overview">Overview</a>
+    <a href="#/indexing" data-tab="indexing">Indexing</a>
+    <a href="#/collections" data-tab="collections">Collections &amp; access</a>
+    <a href="#/models" data-tab="models">Models</a>
+    <a href="#/search" data-tab="search">Search</a>
+    <a href="#/playground" data-tab="playground">Playground</a>
+    <a href="#/settings" data-tab="settings">Settings</a>
+    <a href="#/system" data-tab="system">System</a>
+    <a href="#/architecture" data-tab="architecture">Architecture</a>
+    <a href="#/help" data-tab="help">Help &amp; CLI</a>
+  </nav>
+</header>
+<main>
+  <section class="view" id="v-overview" aria-label="Overview"></section>
+  <section class="view" id="v-indexing" aria-label="Indexing"></section>
+  <section class="view" id="v-collections" aria-label="Collections and access"></section>
+  <section class="view" id="v-models" aria-label="Models"></section>
+  <section class="view" id="v-search" aria-label="Search"></section>
+  <section class="view" id="v-playground" aria-label="Playground"></section>
+  <section class="view" id="v-settings" aria-label="Settings"></section>
+  <section class="view" id="v-system" aria-label="System"></section>
+  <section class="view" id="v-architecture" aria-label="Architecture"></section>
+  <section class="view" id="v-help" aria-label="Help and CLI"></section>
+  <div class="foot">rag-search <span id="ver2"></span> · local dashboard · everything stays on this computer</div>
+</main>
+<div id="toasts" aria-live="polite"></div>
+<dialog id="dlg"><form method="dialog" id="dlg-form"><h3 id="dlg-title"></h3><div id="dlg-body"></div>
+  <div class="actions"><button class="btn" value="cancel" id="dlg-cancel">Cancel</button><button class="btn primary" value="ok" id="dlg-ok">OK</button></div></form></dialog>
+<script src="/static/core.js"></script>
+<script src="/static/pipeline.js"></script>
+<script src="/static/conversion.js"></script>
+<script src="/static/overview.js"></script>
+<script src="/static/indexing.js"></script>
+<script src="/static/collections.js"></script>
+<script src="/static/models.js"></script>
+<script src="/static/search.js"></script>
+<script src="/static/playground.js"></script>
+<script src="/static/settings.js"></script>
+<script src="/static/system.js"></script>
+<script src="/static/architecture.js"></script>
+<script src="/static/help.js"></script>
+</body>
+</html>

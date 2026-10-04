@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+data/
+.DS_Store
+_to_delete/
+/PKG-INFO
+# internal-only files: they stay on the machine that needs them, never in the repository
+/INTERNAL_HOSTS.md
+/.release-deny
+/src/rag_search/hosts_*.py
+/tests/portable/test_hosts_*.py
