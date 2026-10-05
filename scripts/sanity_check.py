@@ -275,8 +275,10 @@ def check_e2e(tmp: Path) -> tuple[str, str]:
     per-page trace are read back.  The experiment is deleted at the end."""
     name = "sanity-check"
     _cli("playground", "rm", name, "--yes")                         # a leftover of an earlier run
-    scan, dig = scan_image(tmp / "sanity-scan.pdf"), digital_pdf(tmp / "sanity-digital.pdf")
-    made = _cli("playground", "create", name, "--from", str(scan), "--from", str(dig), "--json")
+    src = tmp / "sanity-sources"                                    # an experiment's source is a folder
+    src.mkdir(exist_ok=True)
+    scan_image(src / "sanity-scan.pdf"), digital_pdf(src / "sanity-digital.pdf")
+    made = _cli("playground", "create", name, "--from", str(src), "--json")
     if made.returncode != 0:
         return "FAIL", f"playground create failed: {(made.stderr or made.stdout)[-300:]}"
     try:

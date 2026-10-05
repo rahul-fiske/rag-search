@@ -545,6 +545,10 @@ through the Mac's own tool environment, see CONTRIBUTING.md "Dev loop"**):
   *not* remembered, because the page cache lets a later run get further, and neither is any result where a
   reader did not get its turn. Open: whether to remember a timeout after it has happened several times.
 
+- 0.9.17: `scripts/sanity_check.py --e2e` (and the machine test that runs it) gave the Playground two files with
+  `--from`; since an experiment's source is a folder, that failed. It now puts the two generated PDFs in a
+  folder. Nothing in the product changed; the Mac-only tier passes (5 tests).
+
 **First real result** (3-page scanned Marathi/Hindi/English passbook, standard pipeline, Qwen3-VL 4B 4-bit):
 Devanagari headings and the cover page are correct; page 2's table has real rows but one row is missing, one
 merges two rows, and narration pushes numbers one column left; page 3's table is scrambled (shifted and
