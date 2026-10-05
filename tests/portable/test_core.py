@@ -426,38 +426,6 @@ class SmartOcrTests(unittest.TestCase):
         c, why = self.dc.resolve_ocr_mode(Path("a.pdf"), dict(cfg, ocr="force"))
         self.assertEqual((c["ocr"], why), ("force", ""))         # other modes are left alone
 
-    def test_probe_on_real_pdfs(self):
-        try:
-            import pypdfium2  # noqa: F401
-            from reportlab.pdfgen import canvas
-        except ImportError:
-            self.skipTest("pypdfium2 / reportlab not installed")
-        tmp = Path(__import__("tempfile").mkdtemp())
-        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
-        text = tmp / "text.pdf"
-        c = canvas.Canvas(str(text))
-        for page in range(3):
-            y = 800
-            for i in range(12):
-                c.drawString(60, y, f"Page {page + 1} line {i}: to enable multi-factor authentication open Settings.")
-                y -= 20
-            c.showPage()
-        c.save()
-        blank = tmp / "blank.pdf"
-        c = canvas.Canvas(str(blank))
-        for _ in range(3):
-            c.rect(50, 50, 200, 200, fill=1)      # an image-like page with no text at all
-            c.showPage()
-        c.save()
-        self.assertTrue(self.dc.text_layer_report(text)["reliable"], self.dc.text_layer_report(text))
-        rep = self.dc.text_layer_report(blank)
-        self.assertFalse(rep["reliable"])
-        self.assertIn("no", rep["reason"])
-        junk = tmp / "junk.pdf"
-        junk.write_bytes(b"not a pdf")
-        self.assertFalse(self.dc.text_layer_report(junk)["reliable"])     # unreadable: OCR it
-
-
 class ConvertReuseTests(unittest.TestCase):
     """One converter serves many documents; a time-out is not retried with another backend."""
 

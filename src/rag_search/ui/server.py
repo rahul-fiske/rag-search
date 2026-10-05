@@ -1038,6 +1038,9 @@ def _detach(paths: Paths, port: int, read_only: bool, open_browser: bool) -> int
             return 1
         if (port and _probe(port, paths) == "ours") or (not port and running_port(paths)):
             break
+    else:                                   # ten seconds and it never answered: do not claim it runs
+        print(f"error: the dashboard did not come up; see {paths.log_file('ui')}", file=sys.stderr)
+        return 1
     port = port or running_port(paths)
     if not port:
         print(f"error: the dashboard did not come up; see {paths.log_file('ui')}", file=sys.stderr)

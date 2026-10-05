@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from tests import corpus
 from tests.helpers import TempHome, no_real_reader
 from tests.portable.test_cli_api import run
 from tests.portable.test_ui import Dash
@@ -17,28 +18,10 @@ from tests.portable.test_conversion import HAVE_PDF, TEXT, ConversionBase, write
 from rag_search.core.conversion import gate, pagecache, pagemd, profiler, routed, runview, trace
 from rag_search.core.docling_convert import NoTextError
 
-if HAVE_PDF:
-    import pypdfium2 as pdfium
-    from PIL import Image, ImageDraw
-
 
 def write_routing_pdf(path: Path) -> None:
-    """Two text pages, a scanned page with dark content, and a blank scanned page."""
-    parts = [path.with_name("_t.pdf"), path.with_name("_s.pdf"), path.with_name("_b.pdf")]
-    write_text_pdf(parts[0], [TEXT + " alpha", TEXT + " beta"])
-    scan = Image.new("RGB", (800, 1000), (255, 255, 255))
-    d = ImageDraw.Draw(scan)
-    for y in range(100, 700, 40):
-        d.rectangle((100, y, 700, y + 18), fill=(0, 0, 0))
-    scan.save(parts[1])
-    Image.new("RGB", (800, 1000), (255, 255, 255)).save(parts[2])
-    doc = pdfium.PdfDocument(str(parts[0]))
-    for extra in parts[1:]:
-        other = pdfium.PdfDocument(str(extra))
-        doc.import_pages(other)
-    doc.save(str(path))
-    for f in parts:
-        f.unlink()
+    """Two text pages, a scanned page with dark content, and a blank scanned page (the corpus file)."""
+    corpus.copy("pdf/text-scan-blank.pdf", path)
 
 
 class FakeReader:

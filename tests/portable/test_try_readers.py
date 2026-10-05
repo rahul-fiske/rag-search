@@ -51,9 +51,13 @@ class TryReadersTests(TempHome):
         write_routing_pdf(pdf)
         out = self.tmp / "res"
         buf = io.StringIO()
+
+        def no_docling(src, pages, is_image):                 # the same on every machine, docling installed or not
+            yield None, "docling is not importable here (stubbed by the test)"
+
         with mock.patch.object(applevision, "why_not", return_value=""), \
                 mock.patch.object(applevision, "read_page", side_effect=lambda s, n, **k: f"Account Type PPF page {n}"), \
-                contextlib.redirect_stdout(buf):
+                mock.patch.dict(m.RUNNERS, {"docling": no_docling}), contextlib.redirect_stdout(buf):
             code = m.main([str(pdf), "--readers", "apple-vision,docling", "--pages", "1-2", "--out", str(out)])
         self.assertEqual(code, 0)
         text = buf.getvalue()

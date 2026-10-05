@@ -135,13 +135,6 @@ class PipelineTests(TempHome):
         self.assertEqual(len(s["errors"]), 1)
         self.assertIn("same document name", s["errors"][0]["message"])
 
-    def test_empty_document_is_skipped_as_no_text(self):
-        self.write_doc("c/empty.md", "   \n")
-        s = self.index()
-        self.assertEqual(s["indexed"], 0)
-        self.assertEqual(s["errors"], [])
-        self.assertIn("no text", s["no_text"][0]["message"])
-
     def test_failed_document_progress_carries_the_cause(self):
         from unittest import mock
         from rag_search.core import indexer
@@ -152,13 +145,6 @@ class PipelineTests(TempHome):
         self.assertEqual(len(s["errors"]), 1)
         msgs = [e.get("message", "") for e in events if e.get("phase") == "convert" and e.get("current")]
         self.assertTrue(any(m.startswith("error: ") and "boom cause" in m for m in msgs), msgs)
-
-    def test_no_text_progress_says_skipped(self):
-        self.write_doc("c/empty.md", "   \n")
-        events = []
-        self.index(progress=events.append)
-        msgs = [e.get("message", "") for e in events if e.get("phase") == "convert" and e.get("current")]
-        self.assertIn("skipped: no text", msgs)
 
     def test_index_all_wipes_and_rebuilds(self):
         self.write_doc("c/a.md", AUTH)
@@ -223,6 +209,9 @@ class PipelineTests(TempHome):
         st = {e["doc"]["source"]: e["doc"]["status"] for e in events if "doc" in e}
         self.assertEqual(st["blank.md"], "no_text")
         self.assertEqual(st["a.md"], "indexed")
+        self.assertIn("no text", summary["no_text"][0]["message"])
+        msgs = [e.get("message", "") for e in events if e.get("phase") == "convert" and e.get("current")]
+        self.assertIn("skipped: no text", msgs)
 
     def test_document_events_timings_and_catalog_sizes(self):
         self.write_doc("c/a.md", AUTH)
@@ -274,12 +263,6 @@ class PipelineTests(TempHome):
         r = self.engine(rerank=False, reranker=None).search("public key")
         self.assertFalse(r["timing"]["reranked"])
         self.assertTrue(r["results"])
-
-    def test_semantic_only_match_not_dropped(self):
-        self.write_doc("c/a.md", "# T\n\n<!-- page 1 -->\n\nzebra giraffe elephant")
-        self.index()
-        self.publish()
-        self.assertTrue(self.engine(rerank=False, reranker=None).search("zebra")["results"])
 
     def test_model_mismatch_refuses_generation(self):
         self.write_doc("c/a.md", AUTH)

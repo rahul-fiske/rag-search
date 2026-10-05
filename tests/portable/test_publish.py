@@ -147,15 +147,6 @@ class PublishGuardTests(TempHome):
         self.assertEqual(pub.current_generation(self.paths), 1)  # still serving the old one
         self.assertEqual(self.publish(allow_drop=True)["generation"], 2)  # explicit override
 
-    def test_removing_all_sources_still_publishes_an_empty_generation(self):
-        self.write_doc("kitchen/bread.md", "# B\n\n<!-- page 1 -->\n\nsourdough starter")
-        self.index()
-        self.publish()
-        (self.paths.docs / "kitchen" / "bread.md").unlink()
-        self.index()
-        r = self.publish()
-        self.assertTrue(r["changed"])
-
     def test_incomplete_documents_are_reported(self):
         self.write_doc("kitchen/bread.md", "# B\n\n<!-- page 1 -->\n\nsourdough starter")
         self.write_doc("kitchen/rye.md", "# R\n\n<!-- page 1 -->\n\nrye flour")

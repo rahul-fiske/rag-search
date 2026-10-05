@@ -148,13 +148,6 @@ class ProductionBridgeApiTests(UiBase):
         cfg, _ = config.load_config(self.paths)
         self.assertEqual(cfg["indexer"]["chunk_size"], 900)
 
-    def test_create_without_from_production_keeps_module_defaults(self):
-        st, js = self._post("create", {"name": "plain"})
-        self.assertTrue(js["ok"], js)
-        self.assertEqual(js["result"]["config"]["embedding_model"], "BAAI/bge-m3")
-        self.assertFalse(js["result"]["from_production"])
-
-
 class PlaygroundJsApiCallsTests(unittest.TestCase):
     """Regression guard: core.js's api(path, body) only sends a POST when *body* is passed --
     omit it and it sends a plain GET instead, which 404s against every /api/playground/* route

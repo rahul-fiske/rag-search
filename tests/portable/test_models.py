@@ -866,14 +866,6 @@ class CliTests(TempHome):
         rc, _, err = run_cli("setup", "--models", "nope", "--skip-models")
         self.assertEqual(rc, 2)
 
-    def test_the_cli_reference_lists_models(self):
-        from rag_search.ui import info
-
-        cmds = {c["command"] for c in info.cli_reference()["commands"]}
-        self.assertTrue({"models", "models set", "models use", "models download",
-                         "models verify", "models limit"} <= cmds)
-
-
 class DoctorTests(TempHome):
     def test_doctor_shows_the_models_in_use_and_a_pending_switch(self):
         from rag_search.core import diagnostics

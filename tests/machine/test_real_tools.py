@@ -1,4 +1,9 @@
-"""The real tools and models, through `scripts/sanity_check.py` (the same checks, as unit tests).
+"""What only an Apple Silicon Mac can check, through `scripts/sanity_check.py` (the same checks, as unit tests).
+
+Everything that runs on any machine with docling and small models -- docling conversion, OCR, embedding,
+search, the daemons, the whole corpus -- is in `tests/real/`.  This folder keeps the MLX / Apple Vision part:
+the GPU, the downloaded default models, Apple Vision, the document reader (a vision model) and the routed
+pipeline that uses them.
 
 Run them with the Python of the installed tool, on the Mac:
 
@@ -62,13 +67,10 @@ class RealToolTests(unittest.TestCase):
     def test_3_document_reader_reads_a_scan(self):
         self.check("document reader", lambda: self.sc.check_vlm(self.tmp))
 
-    def test_4_docling_converts_a_digital_pdf(self):
-        self.check("docling", lambda: self.sc.check_docling(self.tmp))
-
-    def test_5_playground_indexes_a_scan_and_a_digital_pdf(self):
+    def test_4_playground_indexes_a_scan_and_a_digital_pdf(self):
         self.check("Playground index", lambda: self.sc.check_e2e(self.tmp))
 
-    def test_6_embedding_model_and_reranker_verify(self):
+    def test_5_embedding_model_and_reranker_verify(self):
         self.check("models verify", self.sc.check_models_verify)
 
 

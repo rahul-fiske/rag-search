@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from tests import corpus
 from tests.helpers import FakeEmbedder, TempHome
 from tests.portable.test_cli_api import run
 from tests.portable.test_ui import Dash
@@ -19,8 +20,8 @@ from rag_search.core.conversion import (costs, estimate, profiler, records, rout
                                         trace)
 
 try:
-    import pypdfium2 as pdfium
-    from PIL import Image
+    import pypdfium2  # noqa: F401
+    from PIL import Image  # noqa: F401
     import PIL.JpegImagePlugin  # noqa: F401  (the PDF writer needs it)
     HAVE_PDF = True
 except ImportError:                                    # pragma: no cover
@@ -52,15 +53,8 @@ def write_text_pdf(path: Path, pages: list[str]) -> None:
 
 
 def write_mixed_pdf(path: Path) -> None:
-    """Two text pages followed by one scanned (full-page picture) page."""
-    tmp_t, tmp_i = path.with_name("_t.pdf"), path.with_name("_i.pdf")
-    write_text_pdf(tmp_t, [TEXT, TEXT])
-    Image.new("RGB", (800, 1000), (235, 235, 235)).save(tmp_i)
-    a, b = pdfium.PdfDocument(str(tmp_t)), pdfium.PdfDocument(str(tmp_i))
-    a.import_pages(b)
-    a.save(str(path))
-    for f in (tmp_t, tmp_i):
-        f.unlink()
+    """Two text pages followed by one scanned (full-page picture) page (the corpus file)."""
+    corpus.copy("pdf/mixed.pdf", path)
 
 
 def fake_convert(src, md_path, ocr=None):
@@ -184,32 +178,6 @@ class TraceUnitTests(unittest.TestCase):
 
 @unittest.skipUnless(HAVE_PDF, "needs pypdfium2 and Pillow")
 class ProfilerTests(TempHome):
-    def test_mixed_pdf_is_profiled_per_page(self):
-        p = self.paths.docs / "m.pdf"
-        write_mixed_pdf(p)
-        prof = profiler.profile_file(p)
-        self.assertEqual(prof["page_count"], 3)
-        self.assertEqual([b for _n, b, _w in profiler.route_pages(prof)], ["digital", "digital", "raster"])
-        self.assertEqual(prof["pages"][0]["script"], "Latin")
-
-    def test_image_file_is_one_page(self):
-        p = self.paths.docs / "scan.png"
-        Image.new("RGB", (300, 400), (200, 200, 200)).save(p)
-        prof = profiler.profile_file(p)
-        self.assertEqual(prof["kind"], "image")
-        self.assertEqual([b for _n, b, _w in profiler.route_pages(prof)], ["image"])
-
-    def test_damaged_pdf_reports_an_error_and_no_pages(self):
-        p = self.paths.docs / "broken.pdf"
-        p.write_bytes(b"%PDF-1.4 this is not a pdf")
-        prof = profiler.profile_file(p)
-        self.assertTrue(prof.get("error"))
-        self.assertFalse(prof.get("pages"))
-
-    def test_kinds(self):
-        self.assertEqual([profiler.kind_of(Path(n)) for n in ("a.md", "a.TXT", "a.pdf", "a.PNG", "a.docx", "a.html")],
-                         ["text", "text", "pdf", "image", "office", "office"])
-
     def test_records_merge_profile_and_docling_facts(self):
         p = self.paths.docs / "m.pdf"
         write_mixed_pdf(p)

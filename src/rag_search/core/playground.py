@@ -388,6 +388,8 @@ def effective_settings(base: Paths, name: str) -> dict[str, Any]:
     default).  The stages are the production ones (``stages.py``); 7 Merge and 8 Publish do not exist here."""
     from .. import effective, stages as stg
 
+    if not get_playground_paths(base, name).home.is_dir():       # defaults for a name that is nothing are misleading
+        raise PlaygroundError(f"no such experiment: {name} (rag-search playground create {name})")
     cfg = get_config(base, name)
     like = _config_like(base, cfg)
     res = effective.resolve(like, os.environ)

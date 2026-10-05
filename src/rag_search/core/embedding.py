@@ -205,6 +205,8 @@ def _load_model(name: str, factory: Callable[..., Any], **kw: Any) -> Any:
                          name, exc)
         try:
             return factory(**kw)
+        except TypeError:
+            raise                          # an unsupported option, not a download problem: the caller may have a fallback
         except Exception as exc:
             if cached:
                 raise

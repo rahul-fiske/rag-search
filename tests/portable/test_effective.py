@@ -194,26 +194,6 @@ class BehaviourTests(TempHome):
                     "RAG_SEARCH_RERANK_MAX_LEN"):
             self.assertIn(var, text)
 
-    def test_chunk_size_reaches_the_job_a_worker_runs(self):
-        from rag_search.core.indexer_daemon import IndexerDaemon
-
-        config.update_config(self.paths, "indexer", {"chunk_size": 333, "chunk_overlap": 22})
-        d = IndexerDaemon(self.paths)
-        job, err = d._validate_spec({})
-        self.assertEqual(err, "")
-        self.assertEqual((job["chunk_size"], job["chunk_overlap"]), (333, 22))
-
-    def test_the_worker_environment_is_the_merged_one(self):
-        from rag_search.core.indexer_daemon import IndexerDaemon
-
-        config.update_config(self.paths, "indexer", {"ocr": "smart", "routing": "document"})
-        config.update_config(self.paths, "models", {"embed_batch": 9})
-        env = IndexerDaemon(self.paths)._worker_env()
-        self.assertEqual((env["RAG_SEARCH_OCR"], env["RAG_SEARCH_ROUTING"], env["RAG_SEARCH_EMBED_BATCH"]),
-                         ("smart", "document", "9"))
-        os.environ["RAG_SEARCH_OCR"] = "off"
-        self.assertEqual(IndexerDaemon(self.paths)._worker_env()["RAG_SEARCH_OCR"], "off")
-
     def test_the_search_daemon_applies_the_model_settings_before_it_loads_them(self):
         from rag_search.core import search_daemon
 

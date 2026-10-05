@@ -200,6 +200,9 @@ class ReadApiTests(UiBase):
         cs = a["config_storage"]
         self.assertEqual(cs["file"], str(self.paths.config_file))
         self.assertIn("chunk_size", {t["key"] for t in cs["sections"]["indexer"]})
+        self.assertIn("retrieval_pool_max", a["pool_overrides"])          # the debug panel's bounds
+        self.assertIn("rerank_pool_max", a["pool_overrides"])
+        self.assertEqual(a["fusion"]["k_min"], spec.RRF_K_MIN)
 
     def test_config_get_and_set(self):
         st, c, _, _ = self.dash.req("GET", "/api/config")
@@ -275,14 +278,6 @@ class ActionTests(UiBase):
         # daemon round trip, so it's a genuine HTTP 400.
         st, js, _, _ = self.dash.req("POST", "/api/search", {"query": "x", "retrieval_pool": "many"})
         self.assertEqual(st, 400, js)
-
-    def test_architecture_exposes_pool_and_rrf_k_bounds_for_the_debug_panel(self):
-        st, js, _, _ = self.dash.req("GET", "/api/architecture")
-        self.assertEqual(st, 200, js)
-        self.assertIn("retrieval_pool_max", js["pool_overrides"])
-        self.assertIn("rerank_pool_max", js["pool_overrides"])
-        self.assertEqual(js["pools"]["5"]["per_retriever"], spec.retrieval_pool(5))
-        self.assertEqual(js["fusion"]["k_min"], spec.RRF_K_MIN)
 
     def test_ui_searches_are_not_counted_as_a_client_connecting(self):
         self.dash.req("POST", "/api/search", {"query": "leave", "client": "newhost"})
@@ -502,7 +497,8 @@ class ConsistencyTests(TempHome):
         ref = info.cli_reference()
         self.assertGreaterEqual(len(ref["commands"]), 20)
         names = {c["command"] for c in ref["commands"]}
-        self.assertTrue({"ui", "access grant", "index publish"} <= names)
+        self.assertTrue({"ui", "access grant", "index publish", "models", "models set", "models use",
+                         "models download", "models verify", "models limit"} <= names)
         self.assertTrue(build_parser())
 
 

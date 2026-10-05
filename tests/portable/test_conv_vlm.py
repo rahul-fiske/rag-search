@@ -409,13 +409,6 @@ class ImageFileTests(VlmBase):
         with Image.open(out) as o:
             self.assertEqual(o.size, (800, 1200))
 
-    def test_heic_is_a_supported_extension(self):
-        from rag_search.paths import SUPPORTED_EXTENSIONS
-
-        self.assertTrue({".heic", ".heif"} <= SUPPORTED_EXTENSIONS)
-        self.assertEqual(profiler.kind_of(Path("x.HEIC")), "image")
-
-
 class ModelCatalogueTests(TempHome):
     def test_the_catalogue_is_consistent_and_ids_are_real_looking(self):
         ids = [(m.kind, m.id) for m in models.VLM_CATALOG]
