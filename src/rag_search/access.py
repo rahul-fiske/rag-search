@@ -24,7 +24,7 @@ class AccessError(ValueError):
 def known_collections(paths: Paths) -> dict[str, dict[str, Any]]:
     """Every collection we know of: published ones, registered source locations and imported
     collections -- with where each one's documents come from (``kind``: location | imported |
-    unregistered, and ``folder`` for a location)."""
+    and ``folder`` for a location): a collection is one or the other."""
     out: dict[str, dict[str, Any]] = {}
     locs = locations.load(paths)[0]
     imported = set(locations.imported_names(paths))
@@ -34,9 +34,11 @@ def known_collections(paths: Paths) -> dict[str, dict[str, Any]]:
             return {"kind": "location", "folder": locs[name]}
         if name in imported:
             return {"kind": "imported", "folder": None}
-        return {"kind": "unregistered", "folder": None}
+        return {"kind": "imported", "folder": None}
 
     for c in live_catalog(paths).get("collections", []):
+        if c["collection"] not in locs and c["collection"] not in imported:
+            continue                          # a leftover index nobody registered: not a collection
         out[c["collection"]] = {"indexed": True, "documents": len(c.get("documents", [])),
                                 "chunks": c.get("chunks", 0), **kind(c["collection"])}
     for name in (*locs, *imported):

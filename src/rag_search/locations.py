@@ -12,9 +12,9 @@ A collection is one of:
   source anywhere; a ``collection.origin.json`` file in its workspace index folder marks it, so
   indexing never scans, prunes, merges or rebuilds it.
 
-A collection that is in the index but is neither (its folder was never registered, or was
-unregistered without deleting its index) keeps being served as it was; registering a folder
-under the same name picks it up again.
+There is no third kind: registering a collection means giving its folder, and removing a location
+deletes its index with it.  An index folder that is neither (a leftover of an older layout or a
+hand-edited ``locations.json``) is removed by the next full indexing run.
 
 Source folders are only ever *read*: rag-search never writes, moves or deletes anything in a
 registered location (``read_source``; a test checks no other module opens files under them for
@@ -116,10 +116,9 @@ def source_root(paths: Paths, collection: str) -> Path | None:
     return source_roots(paths).root_of(collection)
 
 
-def unregistered_names(paths: Paths) -> list[str]:
-    """Collections that are in the index but have no registered folder and are not imported: indexed
-    earlier, their folder never registered (or unregistered with the index kept).  They stay searchable
-    but nothing updates them."""
+def leftover_names(paths: Paths) -> list[str]:
+    """Index folders that are neither a registered location nor imported: nothing can ever update them
+    (``location remove`` deletes the index with the registration), so a full indexing run removes them."""
     locs, imported = set(load(paths)[0]), set(imported_names(paths))
     return [c for c in workspace_collections(paths) if c not in locs and c not in imported]
 
@@ -212,10 +211,10 @@ def sources(paths: Paths) -> dict[str, Any]:
     try:
         locs, err = load(paths)
         return {"locations": [{"collection": n, "folder": f} for n, f in sorted(locs.items())],
-                "imported": imported_names(paths), "unregistered": unregistered_names(paths),
+                "imported": imported_names(paths),
                 **({"error": err} if err else {})}
     except Exception as exc:  # noqa: BLE001 - a status call must always answer
-        return {"locations": [], "imported": [], "unregistered": [], "error": str(exc)}
+        return {"locations": [], "imported": [], "error": str(exc)}
 
 
 # ── reading sources ─────────────────────────────────────────────────────────
@@ -302,10 +301,12 @@ class ScanPlan:
     covered: list[str] = field(default_factory=list)
     unreachable: list[str] = field(default_factory=list)
     frozen: list[str] = field(default_factory=list)    # collections to leave as they are
+    orphans: list[str] = field(default_factory=list)   # index folders nobody registered (a full run removes them)
     target: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {"covered": self.covered, "unreachable": self.unreachable, "frozen": self.frozen}
+        return {"covered": self.covered, "unreachable": self.unreachable, "frozen": self.frozen,
+                "orphans": self.orphans}
 
 
 def _match(name: str, candidates: Iterable[str]) -> str:
@@ -428,6 +429,8 @@ def plan_scan(paths: Paths, raw: str = "") -> ScanPlan:
             plan.covered = [coll]
     frozen = {f.casefold() for f in plan.frozen}
     plan.covered = [c for c in plan.covered if c.casefold() not in frozen]
+    if target is None:                                  # the whole run: nothing registered can own these
+        plan.orphans = leftover_names(paths)
     return plan
 
 

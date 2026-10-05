@@ -383,9 +383,9 @@ rag-search location remove vault --yes              # unregister + delete its Ma
 ```
 
 A location's name must be free (not an imported collection or another location) and its folder
-may not overlap rag-search's data folder or another location. An indexed collection whose location
-is no longer registered stays searchable as *unregistered*: nothing updates or removes it until a
-folder is registered under the same name again, or you delete it.
+may not overlap rag-search's data folder or another location. A collection is always one of two things -- a registered location or an import -- and registering
+one means giving its folder. An index that is neither (a leftover of an older layout, or a hand-edited
+`locations.json`) is not listed and is removed, with its Markdown, by the next full indexing run.
 
 **Source documents are read-only to rag-search.** Indexing never writes, moves or deletes
 anything in a registered location; what it deletes is its own derived data.
@@ -405,7 +405,7 @@ What indexing concludes from a source folder:
 A document only counts as deleted when the run read its whole collection: `index new` (everything)
 or `index new COLLECTION`. A run over one sub-folder or one file never removes anything outside
 what it read. Indexing refuses to run at all while `locations.json` cannot be read (without it every
-collection would look like an unregistered one). On a case-insensitive disk (the macOS default), renaming a folder only in case
+collection would look like a leftover). On a case-insensitive disk (the macOS default), renaming a folder only in case
 (`security` → `Security`) keeps its index.
 
 ## Sharing a collection: export and import
@@ -438,7 +438,7 @@ other, and `collection delete` removes it. If you later switch this installation
 an imported collection embedded with the old one blocks publishing until you delete it (and
 import an export made with the new model).
 
-`collection delete NAME` works on **every** collection -- a location, an unregistered one or an
+`collection delete NAME` works on **every** collection -- a location or an
 import -- and removes only what rag-search built for it in its workspace: the converted Markdown
 (`indexer_workspace/markup/NAME/`) and the index (`indexer_workspace/index/NAME/`), then publishes,
 so it leaves search at once. It **never touches source documents**, and it keeps the collection's

@@ -42,6 +42,7 @@ from ..paths import (
     PASSTHROUGH_EXTENSIONS,
     IndexBusyError,  # noqa: F401 - re-exported: callers catch indexer.IndexBusyError
     Paths,
+    is_within,
     SourceRoots,
     allow_cloud_files,
     ensure_dirs,
@@ -1068,7 +1069,8 @@ def run_plan(paths: Paths, plan: ScanPlan, **kw: Any) -> dict[str, Any]:
     """``run_index`` over a ``locations.ScanPlan``: its sources, pruning the collections it
     fully covers and leaving unreachable ones untouched."""
     return run_index(paths, plan.sources, plan.roots, unsupported=plan.unsupported,
-                     prune=plan.covered, frozen=plan.frozen, plan_info=plan.to_dict(), **kw)
+                     prune=plan.covered, frozen=plan.frozen, orphans=plan.orphans,
+                     plan_info=plan.to_dict(), **kw)
 
 
 POOL_EXIT_GRACE_S = 20.0             # how long a conversion process may take to exit once its work is done
@@ -1128,6 +1130,7 @@ def run_index(
     unsupported: list[dict[str, str]] | None = None,
     prune: Iterable[str] | None = None,
     frozen: Iterable[str] = (),
+    orphans: Iterable[str] = (),
     plan_info: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Index *sources* (all inside the registered locations of *roots*), then merge every
@@ -1180,6 +1183,7 @@ def run_index(
     for u in unsupported:
         doc_event(Path(u["src"]), "unsupported", extension=u["extension"] or "(none)")
 
+    orphans_removed: list[str] = []
     errors: list[dict[str, str]] = []
     no_text: list[dict[str, str]] = []      # converted fine but hold no text: skipped, not failed
     skipped = 0
@@ -1189,6 +1193,11 @@ def run_index(
     with index_lock(paths):
         wiped = _wipe(paths, roots, todo) if wipe else 0
         removed = prune_orphans(paths, roots, sources, prune or ())
+        for name in orphans:                 # an index no location or import owns: derived data, nothing can update it
+            for root in (paths.index, paths.markup):
+                if (root / name).is_dir() and is_within(root / name, paths.workspace):
+                    shutil.rmtree(root / name, ignore_errors=True)
+            orphans_removed.append(name)
         for r in removed:
             parts = r.split("/", 1)
             _sink({"doc": {"collection": parts[0], "source": parts[-1], "status": "removed"}})
@@ -1378,6 +1387,7 @@ def run_index(
         "page_cache": cache_info,
         "scanned": len(sources),
         "removed": removed,
+        "orphans_removed": orphans_removed,
         "not_retried": not_retried,
         **(plan_info or {}),
     }

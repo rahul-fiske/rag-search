@@ -79,7 +79,7 @@ def _kind(paths: Paths, coll: str, locs: dict[str, str]) -> str:
         return "location"
     if locations.is_imported(paths, coll):
         return "imported"
-    return "unregistered"
+    return "imported"
 
 
 def _source(paths: Paths, coll: str, kind: str, locs: dict[str, str]) -> dict[str, Any]:
@@ -306,10 +306,6 @@ def _state(kind: str, src: dict[str, Any], ws: dict[str, Any], pub: dict[str, An
     if kind == "imported":
         return ("imported", "imported from a collection export; it has no source documents and "
                 "is never re-indexed" + ("" if pub else " (not published yet)"))
-    if kind == "unregistered":
-        return ("unregistered", "indexed earlier, but no folder is registered under this name: it "
-                "stays searchable and nothing updates it; register its folder with `rag-search "
-                "location add NAME FOLDER` to keep it current")
     if src.get("reachable") is False:
         return ("unreachable", "the source folder cannot be read right now; indexing leaves this "
                 "collection as it was" + (" and search keeps serving it" if pub else ""))

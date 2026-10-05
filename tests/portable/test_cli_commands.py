@@ -164,6 +164,7 @@ class CollectionAndTraceCommandTests(TempHome):
         self.assertIn("COLLECTION/DOCUMENT", err)
 
     def test_trace_lists_what_each_page_cost_and_what_was_repaired(self):
+        self.source("bank")                                   # a collection is a registered location
         md = self.paths.markup / "bank" / "stmt.md"
         md.parent.mkdir(parents=True)
         md.write_text("<!-- page 1 -->\n\ntext\n\n<!-- page 2 -->\n\nmore", encoding="utf-8")
@@ -173,7 +174,7 @@ class CollectionAndTraceCommandTests(TempHome):
                  trace.page_record(2, "digital", "text", outcome="low", out={"chars": 30})]
         pages[0].update(tokens=120, repair={"tried": 3, "fixed": 2}, time_s={"read": 1.5}, cache="hit")
         pages[1].update(across="continues", across_with=1, reconcile={"role": "continues", "with": 1})
-        meta = self.paths.index / "bank" / "stmt" / "index.meta.json"          # makes "bank" a known collection
+        meta = self.paths.index / "bank" / "stmt" / "index.meta.json"          # the index of "bank"
         meta.parent.mkdir(parents=True)
         meta.write_text(json.dumps({"conversion": trace.summarize(pages)}))
         trace.write_trace(trace.trace_path_for(md), source="stmt.pdf", src_sha=sha256_file(src), pages=pages,

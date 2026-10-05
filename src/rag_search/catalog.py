@@ -19,13 +19,13 @@ def collection_names(catalog: dict[str, Any]) -> list[str]:
 
 
 def known_names(paths: Paths) -> list[str]:
-    """Every collection name rag-search knows of: published, registered source locations and
-    collections in the indexer workspace (imported ones included)."""
+    """Every collection name rag-search knows of: the registered source locations and the imported
+    collections -- a collection has no other origin.  (An index that is neither is a leftover; a full
+    indexing run removes it.)"""
     from . import locations
 
     names: list[str] = []
-    for n in (*collection_names(live_catalog(paths)),
-              *locations.names(paths), *locations.workspace_collections(paths)):
+    for n in (*locations.names(paths), *locations.imported_names(paths)):
         if n not in names:
             names.append(n)
     return names

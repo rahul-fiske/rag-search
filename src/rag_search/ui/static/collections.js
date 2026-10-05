@@ -317,7 +317,7 @@
         pathRow('Index (workspace)', ws.index_folder, `${bytes(ws.index_bytes)}: merged ${bytes(ws.merged_index_bytes)} + per-document ${bytes(ws.per_document_index_bytes)}`),
         pub ? pathRow('Published copy', pub.index_folder, `generation ${pub.generation}; hard links, no extra space`) : null,
       ];
-      parts.push(section(coll, 'where', 'Where it lives', `  ${i.kind === 'location' ? 'location' : i.kind === 'imported' ? 'imported' : 'unregistered'} · ${bytes(i.disk.total_bytes)} on disk`, where, false));
+      parts.push(section(coll, 'where', 'Where it lives', `  ${i.kind === 'location' ? 'location' : 'imported'} · ${bytes(i.disk.total_bytes)} on disk`, where, false));
       parts.push(section(coll, 'indexing', 'Indexing & publishing', b.last_indexed ? `  last indexed ${clock(b.last_indexed)}` : '', h('div', null,
         kv([
           ['Model', b.model ? h('span', null, h('code', null, String(b.model)), b.model_revision ? h('span', { class: 'muted small' }, ` @ ${String(b.model_revision).slice(0, 12)}`) : null) : null],

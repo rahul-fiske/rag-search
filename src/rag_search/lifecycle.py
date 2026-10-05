@@ -7,7 +7,7 @@ Deleting removes what rag-search built for the collection in its workspace, and 
 
 after which the caller publishes, so it disappears from search at once (published generations
 that still hold it age out with the normal rotation).  It works the same for every collection --
-a registered location, an import or an index whose folder is no longer registered.
+a registered location, an import or a leftover index nobody registered.
 
 Source documents are never touched.  Everything else is kept too: the collection's access rule
 (so a rebuilt collection keeps its restrictions), its description and a location's registration.
@@ -53,7 +53,7 @@ def describe_kind(paths: Paths, name: str) -> str:
         return "location"
     if locations.is_imported(paths, name):
         return "imported"
-    return "unregistered"
+    return "leftover"      # an index nobody registered (only `collection delete` reaches it)
 
 
 def delete_collection(paths: Paths, name: str, *, unregister: bool = False) -> dict[str, Any]:

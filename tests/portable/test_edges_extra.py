@@ -189,21 +189,17 @@ class LocationRegistryTests(TempHome):
 
 
 class InventoryStateTests(TempHome):
-    def test_an_indexed_collection_without_a_registered_folder_is_unregistered_and_searchable(self):
+    def test_a_collection_is_a_location_or_an_import_and_nothing_else(self):
         corpus.copy("text/notes.md", self.sdir / "team" / "notes.md")
         corpus.copy("text/readme.txt", self.sdir / "keep" / "readme.txt")
         self.index()
         self.publish()
-        from rag_search import locations
-        locations.remove_entry(self.paths, "team")
-        info = inventory.collection_info(self.paths, "team")
-        self.assertEqual(info["kind"], "unregistered")
+        locations.remove_entry(self.paths, "team")           # the index is left behind
         rows = {r["collection"]: r["kind"] for r in access.overview(self.paths)["collections"]}
-        self.assertEqual(rows, {"team": "unregistered", "keep": "location"})
-        self.index()                                    # nothing updates it, and nothing removes it
-        self.assertIn("team", catalog.collection_names(catalog.live_catalog(self.paths)))
-        self.register_tree()                            # registering the folder again picks it up
-        self.assertEqual(inventory.collection_info(self.paths, "team")["kind"], "location")
+        self.assertEqual(rows, {"keep": "location"})
+        self.assertEqual(sorted(catalog.known_names(self.paths)), ["keep"])
+        with self.assertRaises(inventory.InventoryError):
+            inventory.collection_info(self.paths, "team")
 
     def test_a_collection_with_documents_but_nothing_indexed_yet_says_what_to_run(self):
         corpus.copy("text/notes.md", self.sdir / "team" / "notes.md")

@@ -70,17 +70,21 @@ class DeletedAndCollidingSourcesTests(Base):
         merged = read_json(self.paths.index / "security" / ALL_DIR / "merge.manifest.json")
         self.assertEqual(merged["docs"], ["auth"])
 
-    def test_a_collection_whose_location_is_removed_stays_as_it_was(self):
+    def test_a_full_run_removes_an_index_nobody_registered_and_a_scoped_run_does_not(self):
         self.write_doc("security/auth.md", DOC)
         self.write_doc("hr/leave.md", "# Leave\n\nSixteen weeks.\n")
         self.plan_index()
         self.publish()
-        locations.remove_entry(self.paths, "hr")              # nothing registers it any more
-        s = self.plan_index()
-        self.assertEqual(s["removed"], [])
+        locations.remove_entry(self.paths, "hr")              # a leftover: no location, not imported
+        self.assertEqual(locations.leftover_names(self.paths), ["hr"])
+        self.assertEqual(catalog.known_names(self.paths), ["security"])        # never listed as a collection
+        self.plan_index("security")                           # a run over one collection concludes nothing about it
         self.assertTrue((self.paths.index / "hr" / "leave" / META_FILE).is_file())
+        s = self.plan_index()                                 # a full run removes its derived data
+        self.assertEqual(s["orphans_removed"], ["hr"])
+        self.assertFalse((self.paths.index / "hr").exists() or (self.paths.markup / "hr").exists())
         self.publish()
-        self.assertEqual(catalog.collection_names(catalog.live_catalog(self.paths)), ["hr", "security"])
+        self.assertEqual(catalog.collection_names(catalog.live_catalog(self.paths)), ["security"])
 
     def test_a_scoped_run_prunes_only_what_it_fully_read(self):
         self.write_doc("security/auth.md", DOC)
@@ -851,11 +855,7 @@ class DashboardDescribeTests(UiBase):
         rows = {r["collection"]: r for r in access.overview(self.paths)["collections"]}
         self.assertEqual((rows["garden"]["kind"], rows["garden"]["folder"]),
                          ("location", str(folder.resolve())))
-        self.write_doc("hr/a.md", DOC)
-        self.index()
-        locations.remove_entry(self.paths, "hr")
-        rows = {r["collection"]: r for r in access.overview(self.paths)["collections"]}
-        self.assertEqual(rows["hr"]["kind"], "unregistered")
+        self.assertEqual({r["kind"] for r in rows.values()}, {"location"})
 
 
 if __name__ == "__main__":

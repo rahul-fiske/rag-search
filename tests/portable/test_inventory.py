@@ -146,7 +146,7 @@ class DashboardInfoTests(UiBase):
         st, js, _, _ = self.dash.req("GET", "/api/architecture")
         self.assertEqual(st, 200, js)
         self.assertIn({"collection": "vault", "folder": str(folder.resolve())}, js["sources"]["locations"])
-        self.assertEqual(js["sources"]["unregistered"], [])
+        self.assertNotIn("unregistered", js["sources"])
         self.assertEqual(js["sources"]["imported"], [])
         self.assertIn("max_len", js["models"]["reranker"])
         self.assertGreater(js["chunking"]["size"], js["chunking"]["overlap"])

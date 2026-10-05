@@ -893,9 +893,10 @@ it is the only source of documents (no registered location = nothing to index, `
 `paths.SourceRoots` (the locations, plain data so it travels to the conversion processes) is what
 `mirror_rel`, `index_dir_for` and `markup_path_for` take, so a document gets the workspace path
 `<name>/<path inside the folder>`; a file in no location raises `ValueError`. `add` refuses taken names
-(a location, an import) and folders that overlap the data folder or another location. An indexed
-collection with no registered folder is *unregistered*: searchable, never updated or pruned, picked up again
-when a folder is registered under its name. A playground experiment has its own `locations.json` (its
+(a location, an import) and folders that overlap the data folder or another location. A
+collection is a registered location or an import and nothing else; an index folder that is neither is not
+listed (`catalog.known_names`) and a full indexing run removes its derived data (`ScanPlan.orphans`,
+`summary.orphans_removed`). A playground experiment has its own `locations.json` (its
 `Paths` is rooted in the experiment), so the same module, planner (`plan_scan`/`run_plan`) and
 document/page/Markdown APIs serve it (`?exp=NAME` on the dashboard's `/api/conversion/*`).
 `resolve_target` turns an `index new PATH` argument into a folder (a path starting with a location's
