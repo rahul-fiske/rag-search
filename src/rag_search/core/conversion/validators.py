@@ -19,6 +19,7 @@ only accepts a new read when it equals the hypothesis *and* an independent read 
 
 from __future__ import annotations
 
+import collections
 import re
 from decimal import Decimal
 from typing import Any
@@ -32,6 +33,7 @@ _ROLE_PATTERNS = (
     ("debit", re.compile(r"\bdebits?\b|withdraw|\bdr\.?\b|paid\s*out|\bpayments?\b|money\s*out|\bwdl\b", re.I)),
     ("credit", re.compile(r"\bcredits?\b|deposit|\bcr\.?\b|paid\s*in|\breceipts?\b|money\s*in", re.I)),
     ("amount", re.compile(r"\bamount\b|\btransaction\s*amount\b|\btxn\s*amt\b", re.I)),
+    ("ref", re.compile(r"\bche?q\.?\s*(no|number)?\b|\bcheque\b|\binstrument\b|\bref(erence)?\.?\s*(no|number)?\b|चेक", re.I)),
 )
 _TOTAL_RE = re.compile(r"^\s*(grand\s+|sub[\s-]?|net\s+)?total\b|^\s*total\s*[:(]", re.I)
 
@@ -73,7 +75,8 @@ def stack_header(t: Table) -> tuple[list[str], int]:
 
 def layout_problem(t: Table) -> str:
     """Why the columns of a statement-like table look wrong ("" when they do not): the balance column is
-    mostly empty (its numbers slid into a neighbour), or consecutive rows are exact copies."""
+    mostly empty (its numbers slid into a neighbour), consecutive rows are exact copies, or figures sit in
+    columns they do not belong in (``_column_problem``)."""
     head, h = stack_header(t)
     cols: dict[str, list[int]] = {}
     for col, role in _roles(head).items():
@@ -89,6 +92,38 @@ def layout_problem(t: Table) -> str:
     for a, b2 in zip(body, body[1:]):
         if a[1:] == b2[1:] and sum(1 for c in a if _dec(c) is not None) >= 2:
             return "two consecutive rows repeat each other (apart from the line number)"
+    return _column_problem(body, cols)
+
+
+_MONEY_RE = re.compile(r"\d[\d,]*\.\d{2}\b")
+_DRCR_RE = re.compile(r"\b(dr|cr)\.?\s*$", re.I)
+
+
+def _money(cell: str) -> bool:
+    """An amount as a statement prints it: digits with two decimals (paise)."""
+    return bool(_MONEY_RE.search(cell or "")) and _dec(cell) is not None
+
+
+def _column_problem(body: list[list[str]], cols: dict[str, list[int]]) -> str:
+    """Figures in columns they do not belong in -- what a reader that lost the column grid produces:
+    the same amount in three or more columns of a row, an amount in the cheque / reference column, or
+    balances (``... Cr``) in a debit / credit column.  Each needs several rows to agree, so one odd
+    row (a balance brought forward that equals the deposit) is not enough."""
+    rows = [r for r in body if sum(1 for c in r if _money(c)) >= 3]
+    if len(rows) >= 3:
+        same = sum(1 for r in rows if collections.Counter(
+            norm_number_text(c) for c in r if _money(c)).most_common(1)[0][1] >= 3)
+        if same >= max(3, 0.5 * len(rows)):
+            return "the same amount appears in three or more columns of most rows: the columns are mixed up"
+    for c in cols.get("ref", []):
+        hits = sum(1 for r in body if c < len(r) and _money(r[c]))
+        if hits >= max(3, 0.6 * len(body)):
+            return "amounts sit in the cheque / reference column: the columns are shifted"
+    for role in ("debit", "credit", "amount"):
+        for c in cols.get(role, []):
+            hits = sum(1 for r in body if c < len(r) and _money(r[c]) and _DRCR_RE.search(r[c] or ""))
+            if hits >= max(3, 0.5 * len(body)):
+                return f"balances (with Cr/Dr) sit in the {role} column: the columns are shifted"
     return ""
 
 

@@ -23,14 +23,21 @@ def est_tokens(s: str) -> int:
 
 
 def _blocks(segment: str) -> list[str]:
-    """Split into paragraph-ish blocks, keeping fenced code and tables whole."""
+    """Split into paragraph-ish blocks, keeping fenced code, pipe tables and HTML tables whole (a model's
+    HTML table may have blank lines inside it)."""
     blocks: list[str] = []
     cur: list[str] = []
     in_fence = False
+    in_html = False
     for line in segment.split("\n"):
         if line.strip().startswith("```"):
             in_fence = not in_fence
-        if not in_fence and not line.strip():
+        low = line.lower()
+        if not in_fence and "<table" in low and "</table" not in low.split("<table", 1)[1]:
+            in_html = True
+        if in_html and "</table" in low:
+            in_html = False
+        if not in_fence and not in_html and not line.strip():
             if cur:
                 blocks.append("\n".join(cur))
                 cur = []
@@ -80,12 +87,57 @@ def _split_table(block: str, size: int) -> list[str]:
     return out
 
 
+_ROW_RE = re.compile(r"<tr\b.*?</tr>", re.S | re.I)
+_THEAD_RE = re.compile(r"<thead\b.*?</thead>", re.S | re.I)
+
+
+def _split_html_table(block: str, size: int) -> list[str] | None:
+    """An oversized HTML table cut by rows into valid ``<table>`` pieces, each with the header rows
+    (the ``<thead>``, else the first row) -- or None when the block is not a table of rows."""
+    m = re.match(r"\s*(<table\b[^>]*>)", block, re.I)
+    rows = _ROW_RE.findall(block)
+    if not m or not rows:
+        return None
+    head_m = _THEAD_RE.search(block)
+    head_rows = _ROW_RE.findall(head_m.group(0)) if head_m else rows[:1]
+    body = [r for r in rows if r not in head_rows] if head_m else rows[1:]
+    opener = m.group(1)
+    head_txt = "\n".join(head_rows)
+    frame = est_tokens(opener) + est_tokens(head_txt) + 3
+    out: list[str] = []
+    cur: list[str] = []
+    n = frame
+
+    def flush() -> None:
+        if cur:
+            out.append("\n".join([opener, head_txt, *cur, "</table>"]))
+
+    for r in body:
+        rt = est_tokens(r)
+        if rt > size:                                   # one enormous row: words
+            flush()
+            cur, n = [], frame
+            out.extend(_split_words(re.sub(r"<[^>]+>", " ", r), size))
+            continue
+        if cur and n + rt > size:
+            flush()
+            cur, n = [], frame
+        cur.append(r)
+        n += rt
+    flush()
+    return out or ["\n".join([opener, head_txt, "</table>"])]
+
+
 def _pieces(block: str, size: int) -> list[str]:
     """Break one oversized block into <= size pieces."""
     if est_tokens(block) <= size:
         return [block]
     if block.lstrip().startswith("|"):
         return _split_table(block, size)
+    if block.lstrip().lower().startswith("<table"):
+        html_pieces = _split_html_table(block, size)
+        if html_pieces:
+            return html_pieces
     sentences = _SENT_RE.split(block)
     out: list[str] = []
     cur: list[str] = []

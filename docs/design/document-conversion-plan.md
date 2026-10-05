@@ -549,6 +549,27 @@ through the Mac's own tool environment, see CONTRIBUTING.md "Dev loop"**):
   `--from`; since an experiment's source is a folder, that failed. It now puts the two generated PDFs in a
   folder. Nothing in the product changed; the Mac-only tier passes (5 tests).
 
+- 0.9.18: three findings from the real documents, fixed together.
+  (1) The reader is asked for HTML tables, so some pages came back as `<table>` markup and others (the model's
+  own choice) as pipe tables. Every page now goes through `tables.normalize_html_tables`: a table without merged
+  cells becomes a pipe table, cell for cell; the chunker keeps HTML tables whole and cuts an oversized one by rows
+  with the header repeated (`CHUNKER_VERSION` v2).
+  (2) The gate passed a table whose last four columns all held the same balance, and one whose balances sat in the
+  deposit column: new column checks (one amount in three or more columns, amounts in the cheque column, `Cr`/`Dr` in a
+  debit or credit column).
+  (3) **The 4B reader falls into loops** on dense pages (a 36-page scanned deed: 7 pages, 150-195 s each, one line or
+  phrase repeated hundreds of times, one page in Bengali script; the gate passed six). By a rough test 56 of 578
+  image-read pages in `documents` were runaways (49 passed the gate). New: `degenerate.py` (repeated line or
+  phrase, near-total compressibility, empty-table-row runaway, stray script), a `degenerate` gate check, a loop stop
+  inside the worker (the text is checked every 64 tokens), and a retry ladder in the reader (repetition penalty 1.2
+  and a 3072-token limit, then three strips cut at blank rows). Measured with the real 4B model on the deed: pages
+  20, 21 and 24 came out clean after the penalty retry, 21 in 115 s instead of 190 s; healthy page 13 was read once,
+  unchanged. Page 22 (Marathi read as Bengali) is a runaway the retry cannot fix: it needs another reader.
+  Cached pages that ran away before the guard are read again once (`guard` marker in the cache entry).
+  The document-level conversion profile gained `post=2`, which is not part of the page cache's key: installing
+  re-converts every document from the page cache, re-reads only the runaway pages, and (with the chunker bump)
+  re-embeds everything once. `convert-legacy` was removed: rag-search writes nothing into a source folder.
+
 **First real result** (3-page scanned Marathi/Hindi/English passbook, standard pipeline, Qwen3-VL 4B 4-bit):
 Devanagari headings and the cover page are correct; page 2's table has real rows but one row is missing, one
 merges two rows, and narration pushes numbers one column left; page 3's table is scrambled (shifted and

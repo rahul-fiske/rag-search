@@ -30,7 +30,7 @@ RERANK_BATCH = 8      # cross-encoder pairs per forward pass
 RERANK_MAX_LEN = 1024 # longest query+passage pair (tokens) the reranker scores
 EMBED_BATCH = 32      # default embedding batch (RAG_SEARCH_EMBED_BATCH)
 EMBED_MAX_SEQ = 1024  # default max tokens per chunk fed to the embedder (RAG_SEARCH_MAX_SEQ)
-CHUNKER_VERSION = "v1"    # bump when chunk boundaries change: every document is then re-chunked
+CHUNKER_VERSION = "v2"    # bump when chunk boundaries change: every document is then re-chunked
 TOKENIZER_VERSION = "v1"  # bump when BM25 tokenisation changes
 
 # Debugging/tuning overrides (search.py): a caller may ask for a different pool size or RRF

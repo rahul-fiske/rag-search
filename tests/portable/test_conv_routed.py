@@ -436,7 +436,7 @@ class RoutedIndexTests(RoutedBase):
         self.go()
         self.assertEqual(self.reader.calls, [])
         t = trace.read_trace(self.trace_file("reports/r"))
-        self.assertEqual(t["convert"].split("|")[-1], "route=document")
+        self.assertIn("route=document", t["convert"].split("|"))
         self.assertFalse(any(p.get("cache") for p in t["pages"]))
 
     def test_a_failing_reader_falls_back_to_whole_document_conversion(self):

@@ -40,6 +40,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from . import degenerate
+
 DEFAULT_BACKEND = "mlx"
 LOAD_TIMEOUT_S = 900.0               # first start: the weights may still be read from disk
 PAGE_TIMEOUT_S = 300.0               # one page; a dense page at 4k tokens takes ~1-2 minutes on a Mac
@@ -47,6 +49,10 @@ RENDER_PX = 2000                     # long side of the page image sent to the m
 MEMORY_HEADROOM_GB = 2.0             # free memory wanted on top of the model's own size
 MAX_RESTARTS = 2                     # a run restarts a dead reader this many times, then gives up
 MAX_TOKENS = 4096
+GUARD_VERSION = 1                    # the loop guard below; a page cached before it, and looping, is read again
+RETRY_MAX_TOKENS = 3072              # a page that looped is read again with this limit,
+RETRY_PENALTY = 1.2                  # a repetition penalty, and if that fails
+STRIPS = 3                           # ... in this many horizontal strips
 
 PROMPT_VERSION = "p2"                # bump when a prompt changes: pages are then read again
 PROMPT_PAGE = (
@@ -238,11 +244,14 @@ class Worker:
     def alive(self) -> bool:
         return bool(self.proc and self.proc.poll() is None)
 
-    def read(self, image: Path, prompt: str, *, timeout: float, max_tokens: int = MAX_TOKENS) -> dict[str, Any]:
+    def read(self, image: Path, prompt: str, *, timeout: float, max_tokens: int = MAX_TOKENS,
+             repetition_penalty: float | None = None) -> dict[str, Any]:
         if not self.alive():
             raise ReaderCrashed("the reader process is not running")
         self.seq += 1
         req = {"op": "read", "id": self.seq, "image": str(image), "prompt": prompt, "max_tokens": max_tokens}
+        if repetition_penalty:
+            req["repetition_penalty"] = float(repetition_penalty)
         try:
             assert self.proc and self.proc.stdin
             self.proc.stdin.write(json.dumps(req) + "\n")
@@ -286,6 +295,29 @@ class Worker:
                     s.close()
             except OSError:
                 pass
+
+
+def split_bands(img: Path, n: int) -> list[Path]:
+    """Cut the image file *img* into *n* horizontal strips, each cut at the whitest row near the even split
+    (so a line of print is not cut in half); the strips are written next to it."""
+    from PIL import Image
+
+    out: list[Path] = []
+    with Image.open(img) as im:
+        w, h = im.size
+        grey = im.convert("L").resize((1, h), Image.BOX)
+        rows = list(grey.tobytes())                        # one brightness per row of the page
+        cuts = [0]
+        for i in range(1, n):
+            mid, span = int(h * i / n), max(4, int(h * 0.06))
+            lo, hi = max(cuts[-1] + 1, mid - span), min(h - 1, mid + span)
+            cuts.append(max(range(lo, hi + 1), key=lambda y: rows[y]) if lo <= hi else mid)
+        cuts.append(h)
+        for i in range(n):
+            p = img.with_name(f"{img.stem}.strip{i + 1}.png")
+            im.crop((0, cuts[i], w, cuts[i + 1])).save(p)
+            out.append(p)
+    return out
 
 
 # ── page images ───────────────────────────────────────────────────────────────────────────
@@ -440,16 +472,77 @@ class VlmReader:
             self.tmp = None
 
     # -- reading
-    def read_image(self, image: Path, what: str = "page") -> dict[str, Any]:
+    def read_image(self, image: Path, what: str = "page", *, max_tokens: int = MAX_TOKENS,
+                   repetition_penalty: float | None = None) -> dict[str, Any]:
         """``{"md", "tokens", "seconds", "rss_mb"}`` for one image file."""
         self.ensure_started()
         assert self.worker
-        res = self.worker.read(image, prompt_for(self.style, what), timeout=page_timeout())
+        res = self.worker.read(image, prompt_for(self.style, what), timeout=page_timeout(),
+                               max_tokens=max_tokens, repetition_penalty=repetition_penalty)
         self.tokens += int(res.get("tokens") or 0)
         self.pages_read += 1
         self.gpu_s += float(res.get("seconds") or 0.0)
         self.peak_mb = max(self.peak_mb, float(res.get("rss_mb") or 0.0))
         return dict(res, md=clean_reply(res.get("md")))
+
+    def read_page_guarded(self, img: Path) -> tuple[dict[str, Any], str]:
+        """One page image, read with a guard against a runaway.  A small model decoding greedily can fall
+        into a loop on a dense page (the same line hundreds of times, or a stray script); the worker stops
+        it after a few hundred tokens (``stopped == "loop"``) and this reads the page again: first with a
+        repetition penalty and a lower limit, then in horizontal strips.  The first reading that is not a
+        runaway is kept; when none is, the least repetitive one is, and the gate flags the page.  Returns
+        (reading, a note saying what happened or "")."""
+        first = self.read_image(img, "page")
+        bad = first.get("stopped") == "loop" or degenerate.assess(first["md"])["bad"]
+        if not bad:
+            return first, ""
+        tried = [first]
+        extra = {"tokens": int(first.get("tokens") or 0), "seconds": float(first.get("seconds") or 0.0)}
+
+        def keep(res: dict[str, Any], how: str) -> tuple[dict[str, Any], str]:
+            res = dict(res, tokens=extra["tokens"], seconds=extra["seconds"])
+            return res, f"the reader repeated itself on this page; read again {how}"
+
+        for how, fn in (("with a repetition penalty", lambda: self.read_image(
+                            img, "page", max_tokens=RETRY_MAX_TOKENS, repetition_penalty=RETRY_PENALTY)),
+                        (f"in {STRIPS} strips", lambda: self.read_strips(img))):
+            try:
+                res = fn()
+            except ReaderError:
+                if self.dead:
+                    raise
+                continue
+            extra["tokens"] += int(res.get("tokens") or 0)
+            extra["seconds"] += float(res.get("seconds") or 0.0)
+            tried.append(res)
+            if res.get("stopped") != "loop" and not degenerate.assess(res["md"])["bad"] and res["md"].strip():
+                return keep(res, how)
+
+        def runaway(r: dict[str, Any]) -> int:
+            a = degenerate.assess(r["md"])
+            return a["line_repeats"] + a["phrase_repeats"] + (10 ** 6 if not r["md"].strip() else 0)
+
+        best = min(tried, key=runaway)
+        res, _ = keep(best, "")
+        return res, "the reader repeated itself on this page and two more readings did too; the least repetitive was kept"
+
+    def read_strips(self, img: Path) -> dict[str, Any]:
+        """Read *img* as STRIPS horizontal strips (cut where the page is blank) and join the texts."""
+        parts, tokens, seconds = [], 0, 0.0
+        strips = split_bands(img, STRIPS)
+        try:
+            for strip in strips:
+                res = self.read_image(strip, "page")
+                parts.append(res["md"].strip())
+                tokens += int(res.get("tokens") or 0)
+                seconds += float(res.get("seconds") or 0.0)
+                if res.get("stopped") == "loop":
+                    return {"md": "\n\n".join(p for p in parts if p), "tokens": tokens, "seconds": seconds,
+                            "stopped": "loop"}
+        finally:
+            for strip in strips:
+                strip.unlink(missing_ok=True)
+        return {"md": "\n\n".join(p for p in parts if p), "tokens": tokens, "seconds": seconds, "stopped": ""}
 
     def read(self, src: Path, first: int, last: int, mode: str) -> dict[str, Any]:
         """Read pages *first*..*last* of the PDF (or frames of the image file) *src*, one model call
@@ -469,7 +562,7 @@ class VlmReader:
                     render_pdf_page(src, n, img)
                 else:
                     render_image_frame(src, n, img)
-                res = self.read_image(img, "page")
+                res, note = self.read_page_guarded(img)
             except ReaderError as exc:
                 failed[n] = f"{exc.reason}: {exc}"
                 if self.dead:                          # nothing more will be read this run
@@ -486,7 +579,7 @@ class VlmReader:
             stats[n] = {"chars": len("".join(pages[n].split())), "tokens": int(res.get("tokens") or 0),
                         "gpu_s": round(float(res.get("seconds") or 0.0), 3),
                         "read_s": round(time.perf_counter() - t_page, 3),
-                        "model": self.model}
+                        "model": self.model, "note": note}
         return {"pages": pages, "stats": stats, "failed": failed,
                 "seconds": round(time.perf_counter() - t0, 2)}
 

@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..docling_convert import NoTextError, convert_profile, convert_settings, has_real_text
-from . import applevision, gate, pagecache, pagemd, profiler, reconcile, tables, trace, vlm
+from . import applevision, degenerate, gate, pagecache, pagemd, profiler, reconcile, tables, trace, vlm
 from .records import PROFILE_KEEP
 
 READ_CHUNK = 20                      # pages per docling call at most
@@ -172,6 +172,9 @@ class _Converter:
     def finish(self, n: int) -> None:
         e, r = self.by_no[n], self.results[n]
         kind = "digital" if e["mode"] == "digital" else ("scan" if e["mode"] else "other")
+        r["md"], n_tables = tables.normalize_html_tables(r["md"])        # one table format, whoever read the page
+        if n_tables:
+            r["note"] = "; ".join(x for x in (r.get("note"), f"{n_tables} HTML table(s) written as Markdown tables") if x)
         t_gate = time.perf_counter()
         conf = r.get("confidence") or (r.get("stats") or {}).get("confidence")
         g = gate.check_page(r["md"], branch_kind=kind, profile=e["profile"], confidence=conf)
@@ -270,7 +273,8 @@ class _Converter:
                                  "branch": res.get("branch") or res.get("was_branch") or self.by_no[n]["branch"],
                                  "reader_info": res.get("reader_info") or res.get("reader"),
                                  "tokens": res.get("tokens"), "gpu_s": res.get("gpu_s"),
-                                 "model": res.get("model"), "repair": res.get("repair")})
+                                 "model": res.get("model"), "repair": res.get("repair"),
+                                 "guard": vlm.GUARD_VERSION if res.get("via") == "vlm" else None})
 
     # -- the work
     def plan_reads(self) -> dict[str, list[int]]:
@@ -285,6 +289,9 @@ class _Converter:
                 continue
             self.keys[n] = key = self.key(e)
             hit = self.cache.get(key) if (self.cache and key) else None
+            if (hit and (hit.get("reader_info") or {}).get("tool") == "vlm" and hit.get("guard") != vlm.GUARD_VERSION
+                    and degenerate.assess(hit.get("md") or "")["bad"]):
+                hit = None                    # read before the loop guard existed and it ran away: read it again
             if not hit and self.cache and e["mode"] == "scan" and not self.vlm_ok():     # a page Apple Vision read earlier
                 av_key = self.key(e, f"{applevision.ID}:scan")
                 hit = self.cache.get(av_key) if av_key else None
@@ -377,6 +384,7 @@ class _Converter:
                         st = res["stats"].get(n) or {}
                         r = {"md": res["pages"][n], "stats": st, "time_s": float(st.get("read_s") or 0.0),
                              "cache": "miss", "via": "vlm", "model": self.vlm.model, "tokens": st.get("tokens"),
+                             "note": st.get("note") or "",
                              "reader_info": {"tool": "vlm", "model": self.vlm.model, "mode": "page"},
                              "gpu_s": st.get("gpu_s"), "branch": "image" if self.is_image else "raster"}
                         self.results[n] = r

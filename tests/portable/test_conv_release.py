@@ -27,15 +27,15 @@ class ProfileTests(unittest.TestCase):
 
     def test_the_defaults_add_nothing_to_the_profile(self):
         p = docling_convert.convert_profile()
-        self.assertTrue(p.endswith("|route=pages"), p)
+        self.assertTrue(p.endswith("|route=pages|post=" + docling_convert.POST_VERSION), p)
 
     def test_a_reader_or_repair_that_is_off_is_part_of_the_profile(self):
         os.environ["RAG_SEARCH_VLM"] = "off"
-        self.assertTrue(docling_convert.convert_profile().endswith("|route=pages|vlm=off"))
+        self.assertTrue(docling_convert.convert_profile().endswith("|post=" + docling_convert.POST_VERSION + "|vlm=off"))
         os.environ["RAG_SEARCH_REPAIR"] = "off"
         self.assertTrue(docling_convert.convert_profile().endswith("|vlm=off|repair=off"))
         os.environ["RAG_SEARCH_VLM"] = "auto"
-        self.assertTrue(docling_convert.convert_profile().endswith("|route=pages|repair=off"))
+        self.assertTrue(docling_convert.convert_profile().endswith("|post=" + docling_convert.POST_VERSION + "|repair=off"))
 
     def test_the_page_cache_does_not_see_them(self):
         base = docling_convert.convert_profile(readers=False)

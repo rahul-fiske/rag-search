@@ -340,6 +340,55 @@ def to_markdown(t: Table) -> str:
     return "\n".join(lines)
 
 
+_HTML_TABLE_RE = re.compile(r"<table\b.*?</table>", re.S | re.I)
+
+
+def _plain_html_table(raw: str) -> Table | None:
+    """The table of one ``<table>...</table>`` text, or None when it cannot be written as a pipe table
+    without losing something: merged cells (a pipe table has none), a table inside a table, or markup
+    that does not parse."""
+    if len(re.findall(r"<table\b", raw, flags=re.I)) != 1:
+        return None
+    p = _HtmlTables()
+    try:
+        p.feed(raw)
+        p.close()
+    except Exception:  # noqa: BLE001 - broken HTML from a model: leave it as it is
+        return None
+    if len(p.tables) != 1 or not p.tables[0]["rows"]:
+        return None
+    if any(c["rs"] > 1 or c["cs"] > 1 for row in p.tables[0]["rows"] for c in row):
+        return None
+    rows, nh = _expand_html(p.tables[0]["rows"])
+    return Table(rows, nh or 1, kind="html") if rows and any(c for r in rows for c in r) else None
+
+
+def normalize_html_tables(md: str) -> tuple[str, int]:
+    """*md* with every HTML table that has no merged cells written as a Markdown pipe table, and how many
+    were changed.  A document VLM is asked for HTML tables (they can carry merged cells) but one table
+    format is what the chunker, the viewers and the search results handle best; docling writes pipe
+    tables.  Cell text is kept exactly (a ``|`` inside a cell is escaped); a table with merged cells,
+    nested tables, an unclosed table and everything outside the tables are left untouched.  Idempotent."""
+    spans = []
+    for m in _HTML_TABLE_RE.finditer(md):
+        t = _plain_html_table(m.group(0))
+        if t is not None:
+            spans.append((m.start(), m.end(), to_markdown(t)))
+    if not spans:
+        return md, 0
+    out, last = [], 0
+    for start, end, pipe in spans:
+        before, after = md[last:start], md[end:]
+        out.append(before)
+        lead = "" if (not (md[:start].strip()) or md[:start].endswith("\n\n")) else ("\n" if md[:start].endswith("\n") else "\n\n")
+        out.append(lead + pipe)
+        trail = len(after) - len(after.lstrip("\n"))
+        out.append("" if not after.strip() and trail else "\n" * max(0, 2 - trail) if after else "\n")
+        last = end
+    out.append(md[last:])
+    return "".join(out), len(spans)
+
+
 def table_text(t: Table) -> str:
     return " ".join(c for r in t.rows for c in r if c)
 

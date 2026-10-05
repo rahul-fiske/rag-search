@@ -183,8 +183,7 @@ class ReaderProcessTests(VlmBase):
         self.assertIn("could not read this page", res["failed"][3])
 
 
-@unittest.skipUnless(HAVE_PDF, "needs pypdfium2 and Pillow")
-class RoutedVlmTests(VlmBase):
+class RoutedVlmBase(VlmBase):
     def setUp(self):
         super().setUp()
         self.pdf = self.tmp / "r.pdf"
@@ -198,6 +197,10 @@ class RoutedVlmTests(VlmBase):
         return routed.convert_pdf(self.pdf, self.out, self.profile, cache=self.cache, reader=self.docling,
                                   scan_reader=scan_reader)
 
+
+
+@unittest.skipUnless(HAVE_PDF, "needs pypdfium2 and Pillow")
+class RoutedVlmTests(RoutedVlmBase):
     def test_scanned_pages_go_to_the_document_reader(self):
         r = self.reader()
         res = self.convert(r)
@@ -332,6 +335,107 @@ class RoutedVlmTests(VlmBase):
                          "Open daily 9 to 5.")
         tab = "<table><tr><td>a</td><td>1</td></tr></table>"
         self.assertEqual(routed._new_text(page, tab), tab)
+
+
+@unittest.skipUnless(HAVE_PDF, "needs pypdfium2 and Pillow")
+class LoopGuardTests(VlmBase):
+    """A reader that falls into a loop on a dense page: stopped early, read again, never kept silently."""
+
+    def page(self):
+        return self.png("page.png", size=(1000, 2000))
+
+    def test_a_healthy_page_is_read_once(self):
+        res, note = self.reader().read_page_guarded(self.page())
+        self.assertEqual((self.calls(), note), (1, ""))
+        self.assertFalse(vlm.degenerate.assess(res["md"])["bad"])
+
+    def test_a_page_that_loops_is_read_again_with_a_repetition_penalty(self):
+        self.plan(loop_over=1500, penalty_fixes=True)
+        res, note = self.reader().read_page_guarded(self.page())
+        self.assertEqual(self.calls(), 2)
+        self.assertIn("repetition penalty", note)
+        self.assertFalse(vlm.degenerate.assess(res["md"])["bad"])
+        self.assertGreater(res["tokens"], 900)                      # the tokens of the loop count too
+        self.assertIn("\t1.2", self.calls_log.read_text().splitlines()[1])   # the second call carried the penalty
+
+    def test_when_a_penalty_does_not_help_the_page_is_read_in_strips(self):
+        self.plan(loop_over=1500)
+        res, note = self.reader().read_page_guarded(self.page())
+        self.assertEqual(self.calls(), 1 + 1 + vlm.STRIPS)
+        self.assertIn(f"in {vlm.STRIPS} strips", note)
+        self.assertFalse(vlm.degenerate.assess(res["md"])["bad"])
+        self.assertEqual(res["md"].count("Scanned statement page"), vlm.STRIPS)
+        self.assertEqual(list(self.tmp.glob("*.strip*.png")), [])   # the strips are removed
+
+    def test_a_loop_the_worker_did_not_notice_is_found_in_the_text(self):
+        self.plan(loop_over=1500, penalty_fixes=True, quiet_loop=True)
+        _, note = self.reader().read_page_guarded(self.page())
+        self.assertEqual(self.calls(), 2)
+        self.assertIn("repetition penalty", note)
+
+    def test_when_every_reading_runs_away_the_least_repetitive_is_kept_and_the_page_is_flagged(self):
+        self.plan(always_loop=True)
+        res, note = self.reader().read_page_guarded(self.page())
+        self.assertEqual(self.calls(), 3)                           # first, penalty, the first strip
+        self.assertIn("least repetitive", note)
+        self.assertTrue(vlm.degenerate.assess(res["md"])["bad"])
+        self.assertIn("degenerate", gate.failed(gate.check_page(res["md"], branch_kind="scan")))
+
+    def test_the_strips_are_cut_in_blank_rows_and_cover_the_page(self):
+        img = self.png("cut.png", size=(300, 900))
+        strips = vlm.split_bands(img, 3)
+        try:
+            with Image.open(strips[0]) as first_strip:
+                heights = [first_strip.size[1]]
+            for s in strips[1:]:
+                with Image.open(s) as im:
+                    heights.append(im.size[1])
+            self.assertEqual(sum(heights), 900)
+            self.assertTrue(all(200 < h < 400 for h in heights), heights)
+        finally:
+            for s in strips:
+                s.unlink()
+
+
+@unittest.skipUnless(HAVE_PDF, "needs pypdfium2 and Pillow")
+class RoutedGuardTests(RoutedVlmBase):
+    """Through the router: tables, the page cache and the gate."""
+
+    def test_html_tables_of_the_reader_are_written_as_pipe_tables_and_noted(self):
+        self.plan(text="Statement\n\n<table><tr><th>Date</th><th>Amount</th></tr>"
+                       "<tr><td>01/02/2020</td><td>5.00</td></tr></table>")
+        res = self.convert(vlm.VlmReader("fake/model", style="instruct", need_gb=1.0))
+        text = self.out.read_text()
+        self.assertIn("| Date | Amount |", text)
+        self.assertNotIn("<table", text)
+        p3 = [x for x in res["records"] if x["page"] == 3][0]
+        self.assertIn("HTML table(s) written as Markdown tables", p3["note"])
+
+    def test_a_page_that_runs_away_is_low_confidence_and_says_why(self):
+        self.plan(always_loop=True)
+        res = self.convert(vlm.VlmReader("fake/model", style="instruct", need_gb=1.0))
+        p3 = [x for x in res["records"] if x["page"] == 3][0]
+        self.assertEqual(p3["outcome"], "low")
+        self.assertIn("degenerate", [c["name"] for c in p3["gate"]["checks"]])
+        self.assertIn("repeated itself", p3["note"])
+
+    def test_a_cached_page_that_ran_away_before_the_guard_is_read_again_once(self):
+        r = vlm.VlmReader("fake/model", style="instruct", need_gb=1.0)
+        self.convert(r)
+        entries = [f for f in self.cache.root.rglob("*.json") if "vlm" in f.read_text()]
+        self.assertEqual(len(entries), 1)
+        e = json.loads(entries[0].read_text())
+        self.assertEqual(e.get("guard"), vlm.GUARD_VERSION)
+        e["md"] = "The said property shall be conveyed to the purchaser. " * 120
+        e.pop("guard")
+        entries[0].write_text(json.dumps(e))                        # what an older version left behind
+        before = self.calls()
+        self.convert(vlm.VlmReader("fake/model", style="instruct", need_gb=1.0))
+        self.assertGreater(self.calls(), before)                    # read again
+        self.assertNotIn("shall be conveyed", self.out.read_text())
+        again = self.calls()
+        self.convert(vlm.VlmReader("fake/model", style="instruct", need_gb=1.0))
+        self.assertEqual(self.calls(), again)                       # and now it is a hit
 
 
 @unittest.skipUnless(HAVE_PDF, "needs pypdfium2 and Pillow")

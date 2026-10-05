@@ -113,6 +113,11 @@ document outside the pipeline and compares what each finds; use it to judge a re
   MCP transport); log to stderr / `run/*.log`.
 * Anything that can block (sockets, file walks, subprocesses) runs in a worker thread with a bound.
 * Errors on one document are reported in the run summary; they must not abort the run.
+* Bump `docling_convert.POST_VERSION` when something done to a page *after* it was read changes (table
+  normalisation, the loop guard, a gate check): documents are then converted again from the page cache, which
+  reads no page again. Bump `CONVERT_VERSION` only when the readers' own output changes (it is part of every
+  page's cache key, so it re-reads everything), and `vlm.PROMPT_VERSION` / `vlm.GUARD_VERSION` when a prompt or
+  the loop guard should make cached pages be read again.
 * Bump `protocol.PROTOCOL_VERSION` on incompatible wire changes, `chunker.CHUNKER_VERSION` /
   `bm25.TOKENIZER_VERSION` when indexing output changes (existing indexes become stale and are
   rebuilt by the next `index new`).

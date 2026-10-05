@@ -50,6 +50,10 @@ IMAGES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 
 # Bump when the conversion code changes what it writes, so that documents are converted again.
 CONVERT_VERSION = "c5"
+POST_VERSION = "2"                  # what is done to a page after it was read (HTML tables written as pipe tables,
+                                    # the loop guard and its gate check): part of a document's conversion profile,
+                                    # *not* of a page's cache key, so a change re-converts documents from the page
+                                    # cache without reading a page again (only pages that ran away are read again)
 
 OCR_MODES = ("auto", "off", "force", "smart")
 ROUTING_MODES = ("pages", "document")
@@ -151,6 +155,7 @@ def convert_profile(ocr: bool | None = None, *, readers: bool = True) -> str:
     out = (f"{CONVERT_VERSION}|ocr={s['ocr']}|engine={s['engine']}|lang={','.join(s['lang'])}"
            f"|table={s['table']}|pipeline={s['pipeline']}|pdf={s['pdf_backend']}|route={s['routing']}")
     if readers:
+        out += f"|post={POST_VERSION}"
         if _switched_off("RAG_SEARCH_VLM"):
             out += "|vlm=off"
         if _switched_off("RAG_SEARCH_REPAIR"):

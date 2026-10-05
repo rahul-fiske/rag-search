@@ -10,6 +10,9 @@ Checks, each returning ``{"name", "ok", "detail"}``:
 4. ``table_shape``   a table is ragged, almost empty, or has no header text
 5. ``low_resolution`` an image page at under 150 dpi (or a small image of unknown dpi)
 6. ``running_balance`` / ``totals``  the arithmetic of a table holds (``validators.py``)
+7. ``degenerate``    a page read as an image is a runaway of the reader: one line or phrase repeated
+                     hundreds of times, text that is nothing but repetition, a script that is not on
+                     the page (``degenerate.py``)
 
 ``verdict`` is ``ok``, ``suspect`` (at least one check failed) or ``empty`` (nothing was read and
 nothing is expected).  ``violations`` are the validators' suspect cells (with a hypothesis each) for
@@ -21,7 +24,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..docling_convert import dominant_script, page_text_ok
-from . import tables, validators
+from . import degenerate, tables, validators
 
 MIN_LAYER_CHARS = 100                # below this the text layer is too short to judge coverage by
 LOST_TEXT_RATIO = 0.5                # a digital page keeps at least this share of its layer's characters
@@ -103,6 +106,14 @@ def _grade(conf: dict[str, Any] | None) -> dict[str, Any]:
     return _check("docling_grade", True)
 
 
+def _degenerate(md: str, branch_kind: str) -> dict[str, Any]:
+    """A page that a generative reader produced (not docling's text layer) and that is a runaway."""
+    if branch_kind == "digital":
+        return _check("degenerate", True)
+    d = degenerate.assess(md)
+    return _check("degenerate", not d["bad"], d["why"])
+
+
 def _table_shape(md: str) -> dict[str, Any]:
     for t in tables.find_tables(md):
         if t.kind == "pipe":
@@ -135,7 +146,7 @@ def check_page(md: str, *, branch_kind: str, profile: dict[str, Any] | None = No
         if not wanted and not (branch_kind == "scan" and isinstance(ink, (int, float)) and ink >= INK_PAGE):
             return {"verdict": "empty", "checks": []}
     checks = [_coverage(md, branch_kind, prof), _script(md, branch_kind, prof), _grade(confidence),
-              _table_shape(md), _resolution(branch_kind, prof)]
+              _table_shape(md), _resolution(branch_kind, prof), _degenerate(md, branch_kind)]
     violations: list[dict[str, Any]] = []
     if validate:
         violations = validators.page_violations(md)

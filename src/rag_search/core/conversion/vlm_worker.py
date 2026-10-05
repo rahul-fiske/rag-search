@@ -4,7 +4,7 @@ Loads one model through a *backend*, then answers read requests on stdin until t
 ``vlm.py`` for the protocol).  Standard output carries the protocol only: whatever a library prints
 is moved to standard error.
 
-A backend is a class with ``__init__(model_id)``, ``read(image_path, prompt, max_tokens) ->
+A backend is a class with ``__init__(model_id)``, ``read(image_path, prompt, max_tokens[, repetition_penalty]) ->
 {"md": str, "tokens": int}`` and optionally ``close()``.  ``mlx`` is the real one; any
 ``module:attr`` works (the tests use a fake).  Nothing here is imported by the rest of rag-search
 except through a subprocess, so mlx-vlm is needed only on the machine that runs a reader.
@@ -22,6 +22,9 @@ import time
 from typing import Any
 
 
+LOOP_CHECK_EVERY = 64                # tokens between two looks at the text for a loop
+
+
 def rss_mb() -> float:
     """Peak resident memory of this process, MB (ru_maxrss is bytes on macOS, KB on Linux)."""
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
@@ -33,24 +36,35 @@ class MlxBackend:
 
     def __init__(self, model_id: str) -> None:
         try:
-            from mlx_vlm import generate, load
+            from mlx_vlm import load, stream_generate
             from mlx_vlm.prompt_utils import apply_chat_template
             from mlx_vlm.utils import load_config
         except ImportError as exc:
             raise RuntimeError("mlx-vlm is not installed (pip install 'rag-search[mac-vlm]'; "
                                f"Apple Silicon only): {exc}") from exc
-        self._generate, self._template = generate, apply_chat_template
+        self._stream, self._template = stream_generate, apply_chat_template
         self.model, self.processor = load(model_id)
         self.config = load_config(model_id)
 
-    def read(self, image_path: str, prompt: str, max_tokens: int) -> dict[str, Any]:
+    def read(self, image_path: str, prompt: str, max_tokens: int,
+             repetition_penalty: float | None = None) -> dict[str, Any]:
+        """Greedy decoding; the text is checked while it is generated and generation stops as soon as the
+        model starts repeating itself (``stopped: "loop"``) instead of running to the token limit."""
+        from rag_search.core.conversion import degenerate
+
         formatted = self._template(self.processor, self.config, prompt, num_images=1)
-        out = self._generate(self.model, self.processor, formatted, [image_path],
-                             max_tokens=max_tokens, temperature=0.0, verbose=False)
-        text = getattr(out, "text", out)                      # newer mlx-vlm: a result object
-        tokens = getattr(out, "generation_tokens", None)
-        text = str(text or "")
-        return {"md": text, "tokens": int(tokens) if tokens else max(1, len(text) // 4)}
+        kw: dict[str, Any] = {"max_tokens": max_tokens, "temperature": 0.0}
+        if repetition_penalty:
+            kw["repetition_penalty"] = float(repetition_penalty)
+        parts: list[str] = []
+        n, stopped = 0, ""
+        for chunk in self._stream(self.model, self.processor, formatted, [image_path], **kw):
+            parts.append(str(getattr(chunk, "text", "") or ""))
+            n = int(getattr(chunk, "generation_tokens", 0) or (n + 1))
+            if n % LOOP_CHECK_EVERY == 0 and degenerate.looping("".join(parts)):
+                stopped = "loop"
+                break
+        return {"md": "".join(parts), "tokens": n, "stopped": stopped}
 
     def close(self) -> None:
         try:
@@ -101,8 +115,10 @@ def serve(backend_spec: str, model: str) -> int:
             continue
         t1 = time.perf_counter()
         try:
-            res = backend.read(req["image"], req.get("prompt", ""), int(req.get("max_tokens") or 4096))
+            extra = {"repetition_penalty": float(req["repetition_penalty"])} if req.get("repetition_penalty") else {}
+            res = backend.read(req["image"], req.get("prompt", ""), int(req.get("max_tokens") or 4096), **extra)
             send({"id": req.get("id"), "ok": True, "md": res.get("md", ""), "tokens": res.get("tokens", 0),
+                  "stopped": res.get("stopped", ""),
                   "seconds": round(time.perf_counter() - t1, 3), "rss_mb": rss_mb()})
         except Exception as exc:  # noqa: BLE001 - one page failed; the process stays up
             send({"id": req.get("id"), "ok": False, "error": f"{type(exc).__name__}: {exc}"})

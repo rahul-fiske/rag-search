@@ -101,8 +101,6 @@ rag-search collection info NAME                                documents, folder
 rag-search collection export NAME [-o FILE]                    one .rag.tgz file to share (see "Sharing")
 rag-search collection import FILE [--as NAME] [--replace]      add someone's exported collection
 rag-search collection delete NAME [-y]                         delete a collection's Markdown + index (never documents)
-rag-search convert-legacy PATH [--ext doc,xls,ppt,rtf] [--dry-run] [--delete-originals] [--force]
-                                                                 .doc/.xls/.ppt/.rtf -> modern formats
 rag-search register [--desktop] [--code] | unregister | mcp-config [--profile NAME]
 ```
 
@@ -113,9 +111,7 @@ Change the file, change a conversion setting, or tick *re-convert to Markdown* (
 
 Every command accepts `--json`, `--home PATH` and `--client NAME`. `PATH` arguments are files or
 folders inside a registered location (`vault/projects` = the `projects` folder of location
-`vault`), except `convert-legacy`'s, which is an ordinary filesystem path (required) since it's a
-standalone utility, not an indexing scope. Exit codes: 0
-ok, 1 error, 2 usage, 3 daemon not ready/unavailable.
+`vault`). Exit codes: 0 ok, 1 error, 2 usage, 3 daemon not ready/unavailable.
 `list` and `grep` keep working when the search daemon is down (they read the published files
 directly); `search` starts the daemon on demand.
 
@@ -389,8 +385,7 @@ one means giving its folder. An index that is neither (a leftover of an older la
 
 **Source documents are read-only to rag-search.** Indexing never writes, moves or deletes
 anything in a registered location; what it deletes is its own derived data.
-(The one command that writes into a source folder is `convert-legacy`, and only because you ask
-it to: it adds converted copies and keeps the originals unless you pass `--delete-originals`.)
+No rag-search command writes into a source folder, whatever you ask it to.
 
 What indexing concludes from a source folder:
 
@@ -689,12 +684,10 @@ with the model that built it, until a re-embedded index is complete.
 ## Supported files
 
 `.pdf .docx .pptx .xlsx .html .htm .csv .adoc .md .txt .png .jpg .jpeg .tif .tiff .bmp .webp`.
-Legacy `.doc`/`.xls`/`.ppt`/`.rtf` are not read directly (docling only reads modern Office
-formats reliably); a file with any other extension is skipped and shown in the Indexing tab /
-`index status` as `unsupported_extension`, never silently dropped. Run
-`rag-search convert-legacy [PATH]` to convert legacy files to their modern equivalent with
-LibreOffice (`brew install --cask libreoffice`) -- one file at a time, deleting each original
-only once its replacement is verified; `--dry-run` first, `--keep-originals` to keep both.
+Legacy `.doc`/`.xls`/`.ppt`/`.rtf` are not read (docling only reads modern Office formats reliably); a
+file with any other extension is skipped and shown in the Indexing tab / `index status` as
+`unsupported_extension`, never silently dropped. To index a legacy file, save a modern copy yourself (Word,
+LibreOffice) in a folder that is registered as a location: rag-search never changes your files.
 PDF pages are OCRed by default (`RAG_SEARCH_OCR`, `RAG_SEARCH_PDF_BACKEND`). Images inside
 documents are not stored: docling writes a placeholder, so only text found in them by OCR is
 searchable. Two files with the same name in one folder (e.g. `a.pdf` and `a.docx`) collide; the

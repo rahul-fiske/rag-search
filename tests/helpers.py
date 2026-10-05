@@ -58,6 +58,11 @@ class FakeVlmBackend:
     ``{"load_error": "...", "crash_on": [3], "hang_on": [2], "error_on": [4], "empty": true,
        "text": "custom page text", "log": "/path/calls.log"}``
 
+    A runaway reader: ``"loop_over": 1500`` makes an image taller than that (a whole page; its strips are
+    shorter) answer with a loop and ``stopped: "loop"``; ``"penalty_fixes": true`` lets a repetition
+    penalty cure it; ``"always_loop": true`` loops on every image; ``"quiet_loop": true`` leaves out the
+    ``stopped`` flag (the text alone gives it away).
+
     ``crash_on`` / ``hang_on`` / ``error_on`` count calls across all child processes (the counter
     lives next to the plan file), 1-based.
     """
@@ -80,14 +85,14 @@ class FakeVlmBackend:
         f.write_text(str(n))
         return n
 
-    def read(self, image_path, prompt, max_tokens):
+    def read(self, image_path, prompt, max_tokens, repetition_penalty=None):
         import hashlib
         import time
         plan = self._plan()
         n = self._count() if os.environ.get("RAG_TEST_VLM_PLAN") else 0
         if plan.get("log"):
             with open(plan["log"], "a", encoding="utf-8") as fh:
-                fh.write(f"{Path(image_path).name}\t{prompt[:20]}\n")
+                fh.write(f"{Path(image_path).name}\t{prompt[:20]}\t{repetition_penalty or ''}\n")
         if plan.get("native_write"):
             os.write(1, b"native library chatter on fd 1\n")      # must not reach the protocol channel
         if n in plan.get("crash_on", []):
@@ -102,6 +107,15 @@ class FakeVlmBackend:
             return {"md": text, "tokens": 3}
         if plan.get("empty"):
             return {"md": "", "tokens": 0}
+        runaway = plan.get("always_loop")
+        if plan.get("loop_over") is not None:
+            from PIL import Image
+            with Image.open(image_path) as im:
+                runaway = runaway or im.size[1] > plan["loop_over"]
+        if runaway and not (plan.get("penalty_fixes") and repetition_penalty):
+            loop = {"md": "The said property shall be conveyed to the purchaser free of all charges. " * 80,
+                    "tokens": 900}
+            return loop if plan.get("quiet_loop") else dict(loop, stopped="loop")
         time.sleep(0.02)
         digest = hashlib.sha256(Path(image_path).read_bytes()).hexdigest()[:8]
         text = (plan.get("text_by_model") or {}).get(self.model) or plan.get("text") or (

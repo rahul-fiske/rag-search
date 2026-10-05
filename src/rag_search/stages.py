@@ -85,7 +85,7 @@ INDEXING: tuple[Stage, ...] = (
           env_only=("RAG_SEARCH_THREADS", "RAG_SEARCH_VLM_PAGE_TIMEOUT", "RAG_SEARCH_VLM_FREE_GB",
                     "RAG_SEARCH_VLM_BACKEND")),
     Stage("3.3", "gate", "Gate", DOCUMENT, CPU,
-          "deterministic checks on every page: coverage, script, tables, resolution, running balances and totals",
+          "deterministic checks on every page: coverage, script, tables, resolution, running balances and totals, runaway output",
           constants=(("min characters on a scanned page with ink", 20), ("share of a text layer that must survive", 0.5),
                      ("single-letter word share that marks OCR noise", 0.4), ("minimum resolution (dpi)", 150))),
     Stage("3.4", "repair", "Repair", DOCUMENT, GPU,

@@ -271,7 +271,7 @@ pages):
 | 3 | Convert | CPU+GPU | document | turn the file into page-marked Markdown, page by page, through the steps below; several documents are converted side by side when the machine has the memory for it | `indexer.jobs` |
 | 3.1 | Profile | CPU | document | look at every page once: text layer, scan or photo, pictures, ink, resolution, script | – |
 | 3.2 | Read | CPU+GPU | document | each page goes to the reader it needs: 3.2a docling for text pages and Office files, 3.2b the document reader (a vision model) for scans and images, 3.2c the same reader for large pictures on text pages | `indexer.routing`, `indexer.ocr`, `indexer.ocr_engine`, `indexer.ocr_lang`, `indexer.table_mode`, `indexer.pdf_backend`, `indexer.pipeline`, `indexer.vlm`, `models.reader`, `models.memory_limit_gb`, `indexer.docling_batch`, `indexer.doc_timeout`; env `RAG_SEARCH_THREADS`, env `RAG_SEARCH_VLM_PAGE_TIMEOUT`, env `RAG_SEARCH_VLM_FREE_GB`, env `RAG_SEARCH_VLM_BACKEND` |
-| 3.3 | Gate | CPU | document | deterministic checks on every page: coverage, script, tables, resolution, running balances and totals | – |
+| 3.3 | Gate | CPU | document | deterministic checks on every page: coverage, script, tables, resolution, running balances and totals, runaway output | – |
 | 3.4 | Repair (optional) | GPU | document | a table cell that breaks the arithmetic is cut out, read again and replaced only when a second, independent reader and the arithmetic agree | `indexer.repair`, `models.repair`; env `RAG_SEARCH_REPAIR_SECOND` |
 | 3.5 | Reconcile | CPU | document | a table that runs across a page break is joined (the continuation gets the header) and checked across the break | – |
 | 4 | Chunk | CPU | document | split the Markdown into passages that never cross a page; tables and code stay whole where they fit | `indexer.chunk_size`, `indexer.chunk_overlap` |
@@ -418,8 +418,12 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   text, or a scanned page with clear ink came out empty), `script` (garbled text, OCR noise, a script
   that differs from the text layer's), `docling_grade` (poor confidence), `table_shape` (ragged or
   empty tables, a statement whose balance column is mostly empty because its numbers slid into a
-  neighbouring column, consecutive rows that repeat each other), `low_resolution` (an image page under 150 dpi, or a small image of unknown dpi) and the
-  table validators (`running_balance`, `totals`) -- and ends `pass`, `low`
+  neighbouring column, consecutive rows that repeat each other, one amount repeated in three or more
+  columns of most rows, amounts in the cheque / reference column, `Cr`/`Dr` balances in a debit or credit
+  column), `low_resolution` (an image page under 150 dpi, or a small image of unknown dpi), `degenerate` (a
+  page read as an image that is a runaway of the reader: one line or phrase repeated hundreds of times, text
+  that is nothing but repetition, a script that is not on the page; `degenerate.py`; not applied to a text
+  layer) and the table validators (`running_balance`, `totals`) -- and ends `pass`, `low`
   (a check failed: indexed, flagged) or `no_text`. Failed checks and the validators' suspect cells (with
   a hypothesis value each, and the number of the table) are stored in the page record's `gate`. Suspect cells are repaired by `repair.py` (5.1.4).
   (A bug fixed on the way: `_page_text_ok` counted the combining vowel signs of Indic scripts as
@@ -505,6 +509,22 @@ EXIF orientation applied; HEIC with `pillow-heif`) and large pictures on text pa
   native library that writes to it cannot corrupt the protocol. The memory check is per process: with `jobs > 1` two workers
   can both pass it before either has loaded the model (the cost is swapping, not a wrong result; use `jobs=1` for
   scan-heavy runs on a small machine). The reader is closed as soon as conversion is over, before the embedder loads.
+* **Loop guard.** A small model decoding greedily can fall into a loop on a dense page (an annexure table,
+  close Devanagari print): the same line hundreds of times until the token limit, minutes per page, or a stray
+  script. The worker checks the text every 64 tokens (`degenerate.looping`) and stops a loop after a few
+  hundred tokens (`stopped: "loop"`); the page is then read again (`VlmReader.read_page_guarded`) with a
+  repetition penalty of 1.2 and a limit of 3072 tokens, and if that also runs away in three horizontal strips
+  cut at blank rows. The first reading that is not a runaway (`degenerate.assess`) is kept; when none is, the
+  least repetitive one is, the page's note says so and the gate marks the page `low`. A healthy page is read
+  once. A page cached by a version without the guard (`guard` of the cache entry < `vlm.GUARD_VERSION`)
+  whose text is a runaway is read again once instead of being served from the cache.
+* **Table format.** The reader is asked for HTML tables (they can carry merged cells), but every page goes
+  through `tables.normalize_html_tables` in the router's finish step: a table without merged cells, nesting
+  or unclosed markup becomes a Markdown pipe table, cell for cell (a `|` is escaped); the rest stays HTML. The
+  chunker keeps an HTML table whole across blank lines and, when it is larger than a chunk, cuts it by `<tr>`
+  rows into valid `<table>` pieces that each carry the header rows (`CHUNKER_VERSION` v2).
+  The conversion profile of a document carries `post=<POST_VERSION>` (not the page cache's key), so a change
+  to this kind of post-processing re-converts documents from the page cache and reads no page again.
 * **Fallback, always per page.** Whatever the VLM cannot read goes to docling with full-page OCR: branch
   `fallback`, and the page's `note` says why (`crashed: ...`, `timeout: ...`, `unavailable: only 1.5 GB of
   memory is free ...`). Image files have no page fallback: the reader raises and the indexer converts the file
