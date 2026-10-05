@@ -351,6 +351,17 @@ class ConfigTunablesTests(IndexerCase):
         self.assertEqual(env["RAG_SEARCH_HOME"], str(self.paths.home))
         self.assertNotIn("RAG_SEARCH_PDF_BACKEND", env)  # unset in config -- no override at all
 
+    def test_publishing_is_a_phase_of_the_run_with_its_own_duration(self):
+        from unittest import mock
+        d = IndexerDaemon(self.paths)
+        seen = []
+        with mock.patch.object(d, "_update", side_effect=lambda rec, **kw: seen.append(kw)), \
+                mock.patch("rag_search.api.publish_and_reload", return_value={"publish": {"generation": 3}}):
+            d._auto_publish({"id": "x"})
+        self.assertEqual(seen[0]["progress"]["phase"], "publish")
+        self.assertEqual((seen[1]["publish"], seen[1]["progress"]), ({"generation": 3}, {"phase": "done"}))
+        self.assertIn("publish_s", seen[1])
+
     def test_a_run_with_nothing_registered_is_refused(self):
         from rag_search import locations
         spec, err = IndexerDaemon(self.paths)._validate_spec({"mode": "new"})

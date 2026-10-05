@@ -76,6 +76,19 @@ class WorkerMainTests(TempHome):
         self.assertEqual([r["event"] for r in rows], ["progress", "progress", "progress", "doc", "stage"])
         self.assertIn("pid", rows[-1])
 
+    def test_a_change_of_document_is_never_throttled_and_work_and_phase_events_pass(self):
+        w = worker.EventWriter(self.tmp / "t.jsonl")
+        w.progress({"phase": "embed", "done": 1, "total": 9, "current": "a/x.md"})
+        w.progress({"phase": "embed", "done": 1, "total": 9, "current": "a/x.md"})      # same document, too soon: dropped
+        w.progress({"phase": "embed", "done": 1, "total": 9, "current": "a/y.md"})      # another document: kept at once
+        w.progress({"work": {"phase": "embed", "file": "a/y.md", "status": "start"}})
+        w.progress({"phase_event": {"phase": "embed", "status": "start", "total": 9}})
+        w.close()
+        rows = [json.loads(x) for x in (self.tmp / "t.jsonl").read_text().splitlines()]
+        self.assertEqual([(r["event"], r.get("current")) for r in rows],
+                         [("progress", "a/x.md"), ("progress", "a/y.md"), ("work", None), ("phase", None)])
+        self.assertTrue(all("pid" in r for r in rows[2:]))
+
 
 if __name__ == "__main__":
     unittest.main()

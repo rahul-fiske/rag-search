@@ -344,7 +344,7 @@
       body.push(h('div', { class: 'bar ' + (job.status === 'failed' ? 'bad' : !isRunning ? 'ok' : ''), style: { marginTop: '10px' } }, h('i', { style: { width: pct + '%' } })),
         h('div', { class: 'row small muted', style: { marginTop: '6px' } },
           isRunning ? h('span', null, `${p.done || 0} / ${p.total || '?'} in this phase (${p.phase === 'embed' ? PL.label('embed') : p.phase === 'convert' ? PL.label('convert') : p.phase === 'merge' ? PL.label('merge') : p.phase || 'starting'})`) : null,
-          p.current && isRunning ? h('span', null, '· now: ', h('b', { class: 'mono' }, p.current), p.current_since ? ` for ${since(p.current_since)}` : '', p.message ? ` (${p.message})` : '') : null));
+          isRunning && d.run && d.run.now && d.run.now.file ? h('span', null, '· now: ', h('b', { class: 'mono' }, d.run.now.file), d.run.now.since ? ` for ${since(d.run.now.since)}` : '', d.run.now.stage ? ` · stage ${d.run.now.stage}` : '') : null));
       if (isRunning && d.run) {
         body.push(CV.live(d.run.live) ? h('div', { style: { marginTop: '12px' } }, h('h4', null, 'Pages read right now'), CV.live(d.run.live)) : null,
           CV.lanes(d.run.lanes) ? h('div', { style: { marginTop: '12px' } }, h('h4', null, 'Workers'), CV.lanes(d.run.lanes)) : null);

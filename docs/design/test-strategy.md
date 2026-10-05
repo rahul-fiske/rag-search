@@ -35,7 +35,7 @@ Measured on a 4-CPU Linux machine, CPU only.
 
 | Tier | Tests | Time | Statements covered |
 |---|---|---|---|
-| A portable | 962 | about 3 min (4.3 min under coverage) | **92 %** of `src/rag_search` (85 % at the start of this work) |
+| A portable | 974 | about 3 min (4.3 min under coverage) | **92 %** of `src/rag_search` (85 % at the start of this work) |
 | B real | 10 | about 2.5 min | 41 % alone; adds 318 statements to A, mostly `docling_convert`, `embedding`, `model_tasks`, `vlm_worker` |
 | C machine | 5 | on the Mac | MLX, Apple Vision, the document reader, the default models: not measurable here |
 
@@ -61,8 +61,8 @@ moment.
 
 ## Verification (all green)
 
-* A in the minimal environment (numpy, pypdfium2, Pillow, mcp only): 962 tests, 1 skipped (`.heic`, no pillow-heif).
-* A in the full environment with the heavy imports blocked: 962 tests.
+* A in the minimal environment (numpy, pypdfium2, Pillow, mcp only): 974 tests, 1 skipped (`.heic`, no pillow-heif).
+* A in the full environment with the heavy imports blocked: 974 tests.
 * B in an environment built from scratch by `scripts/cloud_setup.sh`: 10 tests.
 * Not run: anything on the Mac. The new tests were written and run on Linux; the ones that touch platform behaviour
   (launchd, `desktop_config_path`, `default_home`, device choice) pretend the platform, but a first run on the Mac

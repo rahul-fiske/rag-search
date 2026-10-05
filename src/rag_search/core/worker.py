@@ -40,6 +40,7 @@ class EventWriter:
         self.fh = open(path, "a", encoding="utf-8", buffering=1)  # line buffered
         self._last = 0.0
         self._last_phase = ""
+        self._last_current = ""
 
     def emit(self, event: str, **fields: Any) -> None:
         self.fh.write(json.dumps({"ts": round(time.time(), 3), "event": event, **fields},
@@ -53,12 +54,21 @@ class EventWriter:
         if "stage" in ev:        # one document entering / leaving a pipeline stage
             self.emit("stage", **{"pid": os.getpid(), **ev["stage"]})
             return
+        if "work" in ev:         # one unit of work (a document, a collection) starting / ending in a phase
+            self.emit("work", **{"pid": os.getpid(), **ev["work"]})
+            return
+        if "phase_event" in ev:  # a phase of the run starting / ending
+            self.emit("phase", **{"pid": os.getpid(), **ev["phase_event"]})
+            return
         now = time.monotonic()
         phase = ev.get("phase", "")
+        current = str(ev.get("current") or "")
         final = ev.get("total") and ev.get("done") == ev.get("total")
-        if phase == self._last_phase and not final and now - self._last < PROGRESS_MIN_INTERVAL:
+        # a change of phase or of the document being worked on is never dropped: only repeats of the same are
+        if (phase == self._last_phase and current == self._last_current and not final
+                and now - self._last < PROGRESS_MIN_INTERVAL):
             return
-        self._last, self._last_phase = now, phase
+        self._last, self._last_phase, self._last_current = now, phase, current
         self.emit("progress", **ev)
 
     def close(self) -> None:

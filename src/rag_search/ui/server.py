@@ -116,6 +116,7 @@ def _scoped_paths(base: Any, q: dict[str, list[str]]) -> Any:
         raise ValueError(f"no such experiment: {exp}")
     return get_playground_paths(base, exp)
 
+
 class Live:
     """Samples the daemons in the background; SSE clients wait on `cond` for changes."""
 

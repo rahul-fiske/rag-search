@@ -19,7 +19,8 @@ class ExtraIndexerTests(TempHome):
 
     def _stage_events(self, log):
         import json
-        return [json.loads(x) for x in log.read_text().splitlines() if x.strip()]
+        rows = [json.loads(x) for x in log.read_text().splitlines() if x.strip()]
+        return [r for r in rows if r.get("event") == "stage"]
 
     def test_every_file_reports_each_pipeline_stage_serial_and_parallel(self):
         for jobs in (1, 2):

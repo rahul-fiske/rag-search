@@ -441,14 +441,29 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   automatically -- and on the document's `doc` event. A failed or empty document keeps no trace
   but its pages still count in the run totals.
 * **Run totals** (`trace.RunTotals`) are live in the job's `progress.conversion` and frozen in
-  `summary.conversion`; `stage` events carry the writing process id (`pid`), from which
-  `runview.lanes_for` derives one lane per docling worker incrementally (the events log is read
-  from a remembered offset, so a dashboard tick costs only the new lines). No new stage names.
-* **API** (`api.conversion_*`): `conversion_run` (totals + lanes), `conversion_documents` (a run's
+  `summary.conversion`.
+* **Run events and the run view** (`runview`, stdlib). Every phase of a run reports in the same way, through
+  four kinds of line in the job's event log, each carrying the writing process id (`pid`): `phase` (Convert,
+  Embed, Merge start / end, with their totals: files, documents, chunks, model, collections), `work` (a
+  process starts / ends one unit of work -- a document in Convert (`indexer.prepare_document`, framed in a
+  `try/finally`, so a failed document closes its work too) or Embed, a collection in Merge -- with its
+  outcome), `stage` (the numbered stage reached inside that work) and `page`. Publish is a phase of the
+  job record (`progress.phase = "publish"`, then `publish`, `publish_s`, `search_reload`). Workers are
+  generic processes, not docling's: `worker N` is a conversion-pool process, `main process` embeds and merges
+  (with `jobs=1` it does everything), and a lane shows the phase, document (its path inside the collection,
+  the one spelling used everywhere), pipeline stage and page progress of the work it holds, plus its documents
+  per phase. `runview.run_view` returns one snapshot -- `now` (the one active work of the current phase), `phases`
+  (status, counts, timing and per-phase figures: chunks per second for Embed, collections for Merge, generation
+  and reload for Publish), `lanes`, `live` (pages), `totals` -- read from a remembered file offset, so a
+  dashboard tick costs only the new lines. The Indexing tab's *Current run* card takes its "now:" from `now`
+  (not from the throttled `progress.current`, which `EventWriter` also no longer drops when the document changes),
+  *Phase detail* shows the picked or current phase, and *Workers* is its own card. Logs written before these
+  events existed still show their convert / embed lanes from `stage` events.
+* **API** (`api.conversion_*`): `conversion_run` (totals, now, phases, lanes), `conversion_documents` (a run's
   documents filtered by branch / outcome; `index_status` takes the same `doc_branch` / `doc_outcome`),
   `conversion_trace` (summary + a line per page, or one page's full record; confined to the
-  workspace), `conversion_page_image` (PNG of a source page; only for sources inside the docs
-  folder or a registered location; the source is `src_path` of `index.meta.json`, and for a document
+  workspace), `conversion_page_image` (PNG of a source page; only for sources inside a
+  registered location; the source is `src_path` of `index.meta.json`, and for a document
   that is converted but not embedded yet -- no meta -- the file the trace names, looked for in the
   collection's own folder), `conversion_markdown` (the converted Markdown of a document or of one
   page, read from `markup/`; at most 2 million characters per reply), `conversion_estimate` (dry run: profiles the sources and

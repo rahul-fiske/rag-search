@@ -324,6 +324,98 @@ class RunViewTests(TempHome):
         self.assertEqual(lanes[0]["docs"], 1)
         self.assertGreater(lanes[0]["busy_pct"], 50)
 
+    def log(self, name, rows):
+        f = self.paths.jobs / f"{name}.events.jsonl"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        return f
+
+    def test_a_process_is_a_lane_whatever_phase_it_works_in(self):
+        t = time.time() - 100
+        w = lambda ts, pid, phase, file, status, **kw: {"ts": t + ts, "event": "work", "pid": pid, "phase": phase,  # noqa: E731
+                                                       "file": file, "status": status, **kw}
+        self.log("g1", [
+            {"ts": t, "event": "phase", "pid": 1, "phase": "convert", "status": "start", "total": 3, "workers": 2},
+            w(1, 2, "convert", "a/x.md", "start"),
+            {"ts": t + 2, "event": "stage", "pid": 2, "file": "a/x.md", "stage": "convert", "id": "3", "status": "start"},
+            w(1, 3, "convert", "a/bad.md", "start"),
+            w(3, 3, "convert", "a/bad.md", "done", outcome="error"),        # a failure closes the lane's work
+            w(4, 2, "convert", "a/x.md", "done", outcome="prepared"),
+            {"ts": t + 5, "event": "phase", "pid": 1, "phase": "convert", "status": "done", "total": 3},
+            {"ts": t + 6, "event": "phase", "pid": 1, "phase": "embed", "status": "start", "total": 1, "chunks": 8, "model": "m"},
+            w(6, 1, "embed", "a/x.md", "start", chunks=8),
+        ])
+        st = runview._read_new(self.paths.jobs / "g1.events.jsonl")
+        lanes = runview.lanes_for(self.paths, "g1", True, now=t + 10, state=st)
+        by = {x["name"]: x for x in lanes}
+        self.assertEqual(sorted(by), ["main process", "worker 1", "worker 2"])
+        self.assertEqual((by["main process"]["state"], by["main process"]["phase"], by["main process"]["kind"]),
+                         ("working", "embed", "gpu"))
+        self.assertEqual(by["main process"]["file"], "a/x.md")              # the same spelling as the pool's
+        self.assertEqual((by["worker 1"]["state"], by["worker 1"]["docs_by_phase"]), ("idle", {"convert": 1}))
+        self.assertEqual((by["worker 2"]["state"], by["worker 2"]["file"]), ("idle", ""))   # not stuck on the failed file
+        ph = {x["phase"]: x for x in runview.phases_view(st, {"progress": {"phase": "embed"}}, True)}
+        self.assertEqual((ph["convert"]["status"], ph["convert"]["done"], ph["convert"]["outcomes"]),
+                         ("done", 2, {"error": 1, "prepared": 1}))
+        self.assertEqual((ph["embed"]["status"], ph["embed"]["chunks"], ph["embed"]["model"]), ("running", 8, "m"))
+        self.assertEqual((ph["merge"]["status"], ph["publish"]["status"]), ("pending", "pending"))
+        now = runview.now_view(st, lanes, {"progress": {"phase": "embed"}}, True)
+        self.assertEqual((now["phase"], now["file"]), ("embed", "a/x.md"))
+
+    def test_merge_work_and_the_publish_phase_are_reported_like_the_others(self):
+        t = time.time() - 50
+        self.log("g2", [
+            {"ts": t, "event": "phase", "pid": 1, "phase": "merge", "status": "start"},
+            {"ts": t + 1, "event": "work", "pid": 1, "phase": "merge", "file": "hr", "status": "start"},
+            {"ts": t + 2, "event": "work", "pid": 1, "phase": "merge", "file": "hr", "status": "done", "outcome": "merged"},
+            {"ts": t + 3, "event": "phase", "pid": 1, "phase": "merge", "status": "done", "total": 1}])
+        st = runview._read_new(self.paths.jobs / "g2.events.jsonl")
+        rec = {"progress": {"phase": "publish", "since": t + 4}}
+        ph = {x["phase"]: x for x in runview.phases_view(st, rec, True)}
+        self.assertEqual((ph["merge"]["status"], ph["merge"]["done"]), ("done", 1))
+        self.assertEqual(ph["publish"]["status"], "running")
+        rec = {"progress": {"phase": "done"}, "publish": {"generation": 4, "changed": True, "documents": 9},
+               "publish_s": 1.5, "search_reload": {"ok": True}}
+        pub = runview.phases_view(st, rec, False)[-1]
+        self.assertEqual((pub["status"], pub["generation"], pub["seconds"]), ("done", 4, 1.5))
+        rec["publish"] = {"error": "disk full"}
+        self.assertEqual(runview.phases_view(st, rec, False)[-1]["status"], "failed")
+
+    def test_a_run_writes_phase_and_work_events_and_all_name_the_file_alike(self):
+        self.write_doc("reports/a.md", "# T\n\n<!-- page 1 -->\n\nquarterly figures\n")
+        from rag_search.core.worker import EventWriter
+        f = self.paths.jobs / "g3.events.jsonl"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        w = EventWriter(f)
+        srcs = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
+        indexer.run_index(self.paths, srcs, self.roots(), jobs=1, embedder=FakeEmbedder(), stage_log=f,
+                          progress=w.progress)
+        w.close()
+        evs = [json.loads(x) for x in f.read_text().splitlines()]
+        phases = [(e["phase"], e["status"]) for e in evs if e["event"] == "phase"]
+        self.assertEqual(phases, [("convert", "start"), ("convert", "done"), ("embed", "start"), ("embed", "done"),
+                                  ("merge", "start"), ("merge", "done")])
+        work = [(e["phase"], e["status"], e["file"]) for e in evs if e["event"] == "work"]
+        files = {x[2] for x in work if x[0] in ("convert", "embed")}
+        self.assertEqual(len(files), 1)                                    # one spelling for one document
+        self.assertIn(("merge", "start", "reports"), work)
+        self.assertEqual({e["file"] for e in evs if e["event"] == "stage"}, files)
+        st = runview._read_new(f)
+        lanes = runview.lanes_for(self.paths, "g3", False, state=st)
+        self.assertEqual([x["name"] for x in lanes], ["main process"])      # jobs=1: one process does every phase
+        self.assertEqual(lanes[0]["docs_by_phase"], {"convert": 1, "embed": 1, "merge": 1})
+
+    def test_a_failing_conversion_closes_its_work(self):
+        from unittest import mock
+        f = self.paths.jobs / "g4.events.jsonl"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        self.write_doc("c/a.md", "# T\n\ntext\n")
+        srcs = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
+        with mock.patch.object(indexer, "convert_source", side_effect=RuntimeError("boom")):
+            indexer.run_index(self.paths, srcs, self.roots(), jobs=1, embedder=FakeEmbedder(), stage_log=f)
+        evs = [json.loads(x) for x in f.read_text().splitlines() if '"work"' in x]
+        self.assertEqual([(e["status"], e.get("outcome")) for e in evs], [("start", None), ("done", "error")])
+
     def test_run_view_without_jobs(self):
         self.assertEqual(runview.run_view(self.paths)["job"], None)
         self.assertEqual(runview.run_view(self.paths, "../etc")["job"], None)

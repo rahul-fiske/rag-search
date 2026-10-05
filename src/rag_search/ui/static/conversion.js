@@ -107,10 +107,12 @@ const CV = (function () {
     return h('div', { class: 'cv-lanes' }, list.map(l => h('div', { class: 'cv-lane ' + l.state },
       h('span', { class: 'cv-lane-name' }, hw(l.kind), l.name),
       h('span', { class: 'cv-lane-state' }, l.state === 'working'
-        ? h('span', null, 'working on ', h('b', { class: 'mono' }, l.file || '…'), l.progress ? ` (page ${l.progress.done} of ${l.progress.of})` : '', l.since ? ' for ' + since(l.since) : '')
+        ? h('span', null, l.phase ? h('span', { class: 'chip' }, l.phase) : null, ' ', h('b', { class: 'mono' }, l.file || '…'),
+          l.stage ? ` · stage ${l.stage}${l.stage_name ? ' ' + (PL.name ? PL.name(l.stage_name) : l.stage_name) : ''}` : '',
+          l.progress && l.progress.of ? ` · page ${l.progress.done} of ${l.progress.of}` : '', l.since ? ' for ' + since(l.since) : '')
         : h('span', { class: 'muted' }, 'idle')),
       h('span', { class: 'bar cv-lane-bar', title: `busy ${l.busy_pct}% of the time since it started` }, h('i', { style: { width: l.busy_pct + '%' } })),
-      h('span', { class: 'muted small nowrap' }, `${l.busy_pct}% busy · ${num(l.docs)} docs`))));
+      h('span', { class: 'muted small nowrap' }, `${l.busy_pct}% busy · ` + (l.docs_by_phase && Object.keys(l.docs_by_phase).length ? Object.entries(l.docs_by_phase).map(([k, n]) => `${num(n)} ${k}`).join(', ') : `${num(l.docs)} docs`)))));
   }
 
   function tiles(t) {

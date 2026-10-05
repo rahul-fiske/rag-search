@@ -361,3 +361,5 @@ table.plain tr:hover td { background: var(--panel-2); }
 .ov-daemons > summary::-webkit-details-marker { display: none; }
 .steps.sub { margin-top: 0; }
 @media (max-width: 760px) { .ov-arrow { flex-direction: row; min-width: 100%; justify-content: center; gap: 6px; } .ov-arrow i { transform: rotate(90deg); } }
+.step.clickable { cursor: pointer; }
+.step.picked { outline: 2px solid var(--accent); outline-offset: 1px; }

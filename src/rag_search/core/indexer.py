@@ -278,6 +278,22 @@ def stage_event(path: str | os.PathLike | None, rel: str, stage: str, status: st
         pass
 
 
+def work_event(path: str | os.PathLike | None, rel: str, phase: str, status: str, **fields: Any) -> None:
+    """Append one "this process starts / ends a unit of work" line (``status`` start | done) to the job's
+    event log.  *phase* is the run phase the work belongs to (``convert``, ``embed``, ``merge``), *rel* the
+    document's path inside its collection (or the collection's name).  Written by the conversion processes
+    too, hence the append to the file itself; never raises."""
+    if not path:
+        return
+    try:
+        line = json.dumps({"ts": round(time.time(), 3), "event": "work", "pid": os.getpid(), "phase": phase,
+                           "file": rel, "status": status, **fields}, ensure_ascii=False)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except (OSError, ValueError, TypeError):
+        pass
+
+
 def page_event(path: str | os.PathLike | None, rel: str, rec: dict[str, Any], total: int) -> None:
     """Append one finished page to the job's event log (a compact line: the dashboard's live pipeline
     and per-document progress are built from these).  Never raises."""
@@ -473,7 +489,26 @@ def _failed_conversion(kind: str, profile: dict[str, Any] | None, outcome: str, 
 
 
 def prepare_document(task: dict[str, Any]) -> dict[str, Any]:
-    """Phase-1 worker (runs in a pool process; takes/returns plain dicts).
+    """Phase-1 worker (runs in a pool process; takes/returns plain dicts): ``_prepare_document`` framed by
+    a ``work`` start / done event, so the dashboard knows which process holds which document whatever the
+    outcome (a failure closes the work too)."""
+    slog, src = task.get("stage_log"), Path(task["src"])
+    try:
+        rel = mirror_rel(src, _roots(task["roots"])).as_posix()
+    except (ValueError, TypeError, KeyError):
+        rel = src.name
+    work_event(slog, rel, "convert", "start")
+    outcome = "error"
+    try:
+        res = _prepare_document(task)
+        outcome = str(res.get("status", "error"))
+        return res
+    finally:
+        work_event(slog, rel, "convert", "done", outcome=outcome)
+
+
+def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
+    """Profiles the pages, converts the source, chunks it and writes ``nodes.json`` -- see ``prepare_document``.
 
     Profiles the pages, converts the source, chunks it and writes ``nodes.json`` and the
     conversion trace.  No embedding model is loaded here.  Returns status
@@ -814,7 +849,7 @@ def merge_collection(coll_dir: Path, *, force: bool = False) -> dict[str, Any]:
 
 
 def merge_all(index_root: Path, *, force: bool = False,
-              frozen: Iterable[str] = ()) -> list[dict[str, Any]]:
+              frozen: Iterable[str] = (), on_collection: Any = None) -> list[dict[str, Any]]:
     """Merge every generated collection.  Imported collections (no per-document sources, their
     merged index came with the import) and *frozen* ones (source folder unreachable this run)
     are left exactly as they are."""
@@ -822,6 +857,7 @@ def merge_all(index_root: Path, *, force: bool = False,
     if not index_root.is_dir():
         return out
     keep = {f.casefold() for f in frozen}
+    note = on_collection or (lambda _name, _status, **_kw: None)      # (collection, "start" | "done", **fields)
     for coll in sorted(index_root.iterdir()):
         if coll.is_dir() and not coll.name.startswith("."):
             if index_is_imported(index_root, coll.name):
@@ -832,10 +868,13 @@ def merge_all(index_root: Path, *, force: bool = False,
             if coll.name.casefold() in keep:
                 out.append({"collection": coll.name, "skipped": True, "unreachable": True})
                 continue
+            note(coll.name, "start")
             try:
                 out.append(merge_collection(coll, force=force))
+                note(coll.name, "done", outcome="merged", docs=out[-1].get("docs"), nodes=out[-1].get("nodes"))
             except Exception as exc:  # noqa: BLE001
                 out.append({"collection": coll.name, "error": str(exc)})
+                note(coll.name, "done", outcome="error")
     return out
 
 
@@ -1215,6 +1254,8 @@ def run_index(
             os.environ["RAG_SEARCH_THREADS"] = str(
                 max(2, min(os.cpu_count() or 4, 8) // max(1, min(jobs, total))))
         emit({"phase": "convert", "done": 0, "total": total, "message": f"{total} file(s)"})
+        _sink({"phase_event": {"phase": "convert", "status": "start", "total": total,
+                               "workers": min(jobs, total) if total else 0}})
         if jobs > 1 and total > 1:
             try:
                 pool = cf.ProcessPoolExecutor(max_workers=min(jobs, total),
@@ -1240,6 +1281,7 @@ def run_index(
                 _collect(prepare_document(t))
 
         phase_s["convert"] = round(time.perf_counter() - t_phase, 1)
+        _sink({"phase_event": {"phase": "convert", "status": "done", "total": total, "seconds": phase_s["convert"]}})
         vlm.close_shared()                 # conversion is over: free the reader's memory before the embedder loads
 
         # Phase 2 — embeddings (one model, this process)
@@ -1250,6 +1292,8 @@ def run_index(
                 from .embedding import make_embedder
 
                 embedder = make_embedder()
+            _sink({"phase_event": {"phase": "embed", "status": "start", "total": len(prepared),
+                                   "chunks": sum(int(r.get("nodes") or 0) for r in prepared), "model": model}})
             for i, res in enumerate(prepared, 1):
                 src = Path(res["src"])
                 since = round(time.time(), 3)      # when work on this document began
@@ -1260,6 +1304,8 @@ def run_index(
                 rel_name = mirror_rel(src, roots).as_posix()
                 _sink({"stage": {"file": rel_name, "stage": "embed", "id": stages.id_of("embed"),
                                  "status": "start", "chunks": res["nodes"]}})
+                _sink({"work": {"phase": "embed", "file": rel_name, "status": "start", "chunks": res["nodes"]}})
+                embed_outcome = "error"
                 try:
                     def _within(done_chunks: int, all_chunks: int, _n=src.name, _i=i,
                                 _t=len(prepared), _s=since) -> None:
@@ -1274,6 +1320,7 @@ def run_index(
                                 "chunk_s": res.get("chunk_s", 0.0)},
                         conversion=res.get("conversion"))
                     indexed += 1
+                    embed_outcome = "indexed"
                     conv.time_s["embed"] = conv.time_s.get("embed", 0.0) + meta["embed_s"]
                     _sink({"stage": {"file": rel_name, "stage": "embed", "id": stages.id_of("embed"),
                                      "status": "done", "seconds": meta["embed_s"], "chunks": meta["nodes"]}})
@@ -1288,14 +1335,24 @@ def run_index(
                     errors.append({"src": str(src), "message": f"embedding failed: {exc}"})
                     doc_event(src, "error", message=f"embedding failed: {exc}",
                               total_s=round(res.get("elapsed_s", 0.0) + time.perf_counter() - t_doc, 2))
+                finally:
+                    _sink({"work": {"phase": "embed", "file": rel_name, "status": "done", "outcome": embed_outcome}})
             emit({"phase": "embed", "done": len(prepared), "total": len(prepared)})
+            _sink({"phase_event": {"phase": "embed", "status": "done", "total": len(prepared), "indexed": indexed}})
 
         phase_s["embed"] = round(time.perf_counter() - t_phase, 1)
 
         # Phase 3 — merge (cheap: concatenation)
         t_phase = time.perf_counter()
         emit({"phase": "merge", "done": 0, "total": 0})
-        merged = merge_all(paths.index, force=wipe, frozen=frozen)
+        _sink({"phase_event": {"phase": "merge", "status": "start"}})
+
+        def _merge_note(name: str, status: str, **fields: Any) -> None:
+            _sink({"work": {"phase": "merge", "file": name, "status": status, **fields}})
+
+        merged = merge_all(paths.index, force=wipe, frozen=frozen, on_collection=_merge_note)
+        _sink({"phase_event": {"phase": "merge", "status": "done",
+                               "total": len([m for m in merged if not m.get("skipped")])}})
         _drop_empty_collections(paths)
         phase_s["merge"] = round(time.perf_counter() - t_phase, 1)
         for m in merged:

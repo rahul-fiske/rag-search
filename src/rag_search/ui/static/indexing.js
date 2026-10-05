@@ -22,6 +22,7 @@
   let docFetch = { sig: '', data: null, at: 0, loading: false };
   let collapsedGroups = new Set();
   let searchTimer = null;
+  let focusPhase = '';                 // the phase tab the person picked ('' = follow the run's current phase)
 
   function statusPill(st) {
     const cls = st === 'succeeded' ? 'ok' : (st === 'failed' || st === 'error') ? 'bad' : (st === 'running' || st === 'queued') ? 'warn' : '';
@@ -59,8 +60,30 @@
     let idx = STEPS.findIndex(s => s.key === p.phase);
     const finished = !running;
     if (p.phase === 'done' || finished) idx = job.status === 'succeeded' || job.status === 'partial' ? STEPS.length : Math.max(idx, 0);
-    return h('div', { class: 'steps' }, STEPS.map((s, i) => h('div', { class: 'step ' + (i < idx ? 'done' : i === idx && running ? 'now' : '') },
+    const shown = shownPhase(job, running);
+    return h('div', { class: 'steps' }, STEPS.map((s, i) => h('div', {
+      class: 'step clickable ' + (i < idx ? 'done' : i === idx && running ? 'now' : '') + (s.key === shown ? ' picked' : ''),
+      title: 'Show the details of this phase below', on: { click: () => { focusPhase = focusPhase === s.key ? '' : s.key; RS.views.indexing.update(); } } },
       (i < idx ? '✓ ' : '') + s.title, h('small', null, `stages ${s.ids} · ${s.note}`))));
+  }
+
+  // the phase whose details the Phase card shows: the one picked, else the one the run is in (the last one when it is over)
+  function shownPhase(job, running) {
+    if (focusPhase) return focusPhase;
+    const cur = (job.progress || {}).phase;
+    if (running && STEPS.some(s => s.key === cur)) return cur;
+    return running ? 'convert' : (job.publish || job.publish_s != null ? 'publish' : 'convert');
+  }
+
+  // One snapshot for every card: what the run is working on, from the events the processes write.
+  const convLive = () => (RS.state.live && RS.state.live.conversion) || {};
+  function nowLine(job, running) {
+    const n = running ? convLive().now : null;
+    if (!n) return null;
+    if (!n.file) return h('span', null, '· ', STEPS.find(s => s.key === n.phase)?.title || n.phase, ' …');
+    return h('span', null, '· now: ', h('b', { class: 'mono' }, n.file), n.since ? ` for ${since(n.since)}` : '',
+      n.stage ? ` · stage ${n.stage}` : '', n.progress && n.progress.of ? ` · page ${n.progress.done} of ${n.progress.of}` : '',
+      n.workers > 1 ? ` (+${n.workers - 1} more in parallel)` : '');
   }
 
   function eta(job) {
@@ -116,7 +139,7 @@
       h('div', { class: 'bar ' + (job.status === 'failed' ? 'bad' : !running ? 'ok' : ''), style: { marginTop: '10px' } }, h('i', { style: { width: pct + '%' } })),
       h('div', { class: 'row small muted', style: { marginTop: '6px' } },
         running ? h('span', null, `${p.done || 0} / ${p.total || '?'} document(s) in this phase`) : null,
-        p.current ? h('span', null, '· now: ', h('b', { class: 'mono' }, p.current), p.current_since ? ` for ${since(p.current_since)}` : '', p.message ? ` (${p.message})` : '') : null,
+        nowLine(job, running),
         left !== null ? h('span', { style: { marginLeft: 'auto' } }, `≈ ${dur(left)} left in this phase (estimate)`) : null),
       h('div', { class: 'grid g4', style: { marginTop: '14px' } },
         statCard(dur(job.elapsed_s), running ? 'running for' : 'took'),
@@ -287,25 +310,96 @@
     sel.value = keys.includes(current) ? current : '';
   }
 
-  // ---------- Conversion: what the run did to the pages (live) ----------
-  function conversionCard() {
-    const live = RS.state.live && RS.state.live.conversion;
-    const idx = RS.state.live && RS.state.live.index; const job = idx && idx.job;
-    if (!job) return null;
-    const totals = (live && live.totals) || {};
-    const running = job.status === 'running' || job.status === 'queued';
-    const p = job.progress || {};
-    return h('div', { class: 'card', style: { marginTop: '16px' } },
-      h('div', { class: 'card-head' }, h('h2', null, 'Conversion'), running ? pill('live', 'warn', true) : null,
-        h('div', { class: 'spacer' }, h('span', { class: 'muted small' }, 'colour = how the page was read · chips = where it runs'))),
+  // ---------- Phase detail: the next level of detail for one phase of the run (live) ----------
+  const phaseOf = (live, key) => ((live.phases || []).find(x => x.phase === key)) || { phase: key, status: 'pending' };
+  const phaseTitle = key => (STEPS.find(s => s.key === key) || {}).title || key;
+
+  function convertPanel(live, running, p) {
+    const totals = live.totals || {}, ph = phaseOf(live, 'convert');
+    return [
+      ph.total != null ? h('p', { class: 'small muted', style: { margin: '0 0 8px' } },
+        `${num(ph.done || 0)} of ${num(ph.total)} document(s) through discover → chunk` + (ph.workers ? ` on ${ph.workers} worker process(es)` : '')
+        + Object.entries(ph.outcomes || {}).map(([k, n]) => ` · ${k} ${num(n)}`).join('')) : null,
       CV.flow(totals),
-      CV.live(live && live.live) ? h('div', { style: { marginTop: '14px' } }, h('h4', null, 'Pages read right now'), CV.live(live.live)) : null,
+      CV.live(live.live) ? h('div', { style: { marginTop: '14px' } }, h('h4', null, 'Pages read right now'), CV.live(live.live)) : null,
       totals.pages ? h('div', { style: { marginTop: '14px' } },
         h('h4', null, 'How the finished documents’ pages were read'), CV.bands(totals.branches),
         h('p', { class: 'small muted', style: { margin: '6px 0 0' } }, 'Text-layer pages are read by docling without forced OCR, scanned pages with full-page OCR, repeats come from the page cache; every page then passes the quality gate.')) : null,
-      CV.lanes(live && live.lanes) ? h('div', { style: { marginTop: '14px' } }, h('h4', null, 'Workers'), CV.lanes(live.lanes)) : null,
       totals.pages ? h('div', { class: 'grid g4', style: { marginTop: '14px' } }, CV.tiles(totals)) : (running && p.phase === 'convert' ? h('p', { class: 'small muted', style: { marginTop: '12px' } }, 'Page figures appear as the first documents finish.') : null),
-      totals.outcomes && Object.keys(totals.outcomes).length ? h('div', { style: { marginTop: '8px' } }, CV.outcomeChips(totals.outcomes)) : null);
+      totals.outcomes && Object.keys(totals.outcomes).length ? h('div', { style: { marginTop: '8px' } }, CV.outcomeChips(totals.outcomes)) : null];
+  }
+
+  function embedPanel(live, running) {
+    const ph = phaseOf(live, 'embed');
+    if (ph.status === 'pending') return [h('p', { class: 'small muted' }, 'The embedding phase starts when every document has been converted.')];
+    const mine = (live.lanes || []).filter(l => l.phase === 'embed' && l.state === 'working');
+    return [
+      h('div', { class: 'grid g4' },
+        statCard(`${num(ph.done || 0)} / ${num(ph.total || 0)}`, 'documents embedded'),
+        statCard(ph.chunks ? `${num(ph.chunks_done || 0)} / ${num(ph.chunks)}` : '–', 'chunks embedded'),
+        statCard(ph.chunks_per_s ? `${num(ph.chunks_per_s)}/s` : '–', 'chunks per second'),
+        statCard(dur(ph.elapsed_s || 0), ph.status === 'done' ? 'phase took' : 'phase running for')),
+      ph.model ? h('p', { class: 'small muted', style: { margin: '8px 0 0' } }, 'Embedding model ', h('code', null, ph.model), ' (loaded once per run), vectors written next to each document’s chunks.') : null,
+      mine.length ? h('div', { style: { marginTop: '10px' } }, mine.map(l => h('div', { class: 'small' }, 'now: ', h('b', { class: 'mono' }, l.file), l.since ? ` for ${since(l.since)}` : ''))) : null,
+      Object.keys(ph.outcomes || {}).length ? h('div', { style: { marginTop: '8px' } }, Object.entries(ph.outcomes).map(([k, n]) => pill(`${k} ${num(n)}`, k === 'error' ? 'bad' : 'ok'))) : null];
+  }
+
+  function mergePanel(live, job) {
+    const ph = phaseOf(live, 'merge');
+    if (ph.status === 'pending') return [h('p', { class: 'small muted' }, 'Merging starts after the last document is embedded: one index per collection, made by concatenating the stored vectors (nothing is embedded again).')];
+    const cols = (job.summary && job.summary.collections) || [];
+    const mine = (live.lanes || []).filter(l => l.phase === 'merge' && l.state === 'working');
+    return [
+      h('div', { class: 'grid g4' }, statCard(num(ph.done || 0), 'collections merged'), statCard(dur(ph.elapsed_s || 0), ph.status === 'done' ? 'phase took' : 'phase running for')),
+      mine.length ? h('p', { class: 'small', style: { margin: '8px 0 0' } }, 'now merging ', h('b', { class: 'mono' }, mine[0].file)) : null,
+      cols.length ? h('div', { class: 'table-wrap', style: { marginTop: '10px' } }, h('table', null,
+        h('thead', null, h('tr', null, ['Collection', 'Documents', 'Chunks'].map(t => h('th', null, t)))),
+        h('tbody', null, cols.map(c => h('tr', null, h('td', { class: 'mono' }, c.collection), h('td', null, c.skipped ? 'left as it was' : num(c.docs)), h('td', null, c.skipped ? '' : num(c.nodes))))))) : null];
+  }
+
+  function publishPanel(live, job) {
+    const ph = phaseOf(live, 'publish');
+    if (ph.status === 'pending') return [h('p', { class: 'small muted' }, 'After a successful run the workspace is published as a new generation and the search daemon is told to load it.')];
+    if (ph.status === 'running') return [h('p', { class: 'small' }, pill('publishing', 'warn', true), ' building the new generation and telling the search daemon…', ph.started ? ` (${since(ph.started)})` : '')];
+    const rl = ph.reload || {};
+    return [
+      h('div', { class: 'grid g4' },
+        statCard(ph.generation ? `generation ${ph.generation}` : (ph.changed === false ? 'unchanged' : '–'), ph.status === 'failed' ? 'publish failed' : 'published'),
+        ph.documents != null ? statCard(num(ph.documents), 'documents in the generation') : null,
+        ph.seconds != null ? statCard(dur(ph.seconds), 'publish and reload took') : null,
+        statCard(rl.ok === false ? 'failed' : rl.ok ? (rl.changed === false ? 'already current' : 'loaded') : '–', 'search daemon')),
+      ph.error ? h('div', { class: 'notice bad', style: { marginTop: '10px' } }, ph.error) : null,
+      rl.ok === false && rl.error ? h('div', { class: 'notice warn', style: { marginTop: '10px' } }, rl.error) : null];
+  }
+
+  function phaseCard() {
+    const live = convLive();
+    const idx = RS.state.live && RS.state.live.index; const job = idx && idx.job;
+    if (!job) return null;
+    const running = job.status === 'running' || job.status === 'queued';
+    const p = job.progress || {}, shown = shownPhase(job, running);
+    const tabs = h('div', { class: 'subnav', style: { margin: '8px 0 12px' } }, STEPS.map(s => {
+      const st = phaseOf(live, s.key).status;
+      return h('button', { class: 'btn small' + (s.key === shown ? ' primary' : ''), on: { click: () => { focusPhase = s.key; RS.views.indexing.update(); } } },
+        s.title, st === 'running' ? ' ●' : st === 'done' ? ' ✓' : '');
+    }));
+    const body = shown === 'convert' ? convertPanel(live, running, p) : shown === 'embed' ? embedPanel(live, running)
+      : shown === 'merge' ? mergePanel(live, job) : publishPanel(live, job);
+    return h('div', { class: 'card', style: { marginTop: '16px' } },
+      h('div', { class: 'card-head' }, h('h2', null, `Phase detail · ${phaseTitle(shown)}`), running ? pill('live', 'warn', true) : null,
+        h('div', { class: 'spacer' }, h('span', { class: 'muted small' }, focusPhase ? 'showing the phase you picked · click it again in the run above to follow the run' : 'following the run’s current phase · pick another above'))),
+      tabs, body);
+  }
+
+  // ---------- Workers: the processes of the run and the work each is doing, whatever the phase ----------
+  function workersCard() {
+    const live = convLive();
+    const idx = RS.state.live && RS.state.live.index; const job = idx && idx.job;
+    if (!job || !CV.lanes(live.lanes)) return null;
+    return h('div', { class: 'card', style: { marginTop: '16px' } },
+      h('div', { class: 'card-head' }, h('h2', null, 'Workers'),
+        h('div', { class: 'spacer' }, h('span', { class: 'muted small' }, 'one line per process · the phase, the document and the pipeline stage it is in · CPU outlined, GPU dark'))),
+      CV.lanes(live.lanes));
   }
 
   // ---------- Sources: one per collection (registered folders, imports) ----------
@@ -381,7 +475,7 @@
       refs.sources = h('div', { style: { marginTop: '10px' } });
       refs.supportedExt = h('span', { class: 'muted small' });
       refs.plcard = h('div', { style: { marginTop: '16px' } });
-      refs.run = h('div'); refs.conv = h('div'); refs.hist = h('div', { style: { marginTop: '16px' } });
+      refs.run = h('div'); refs.conv = h('div'); refs.workers = h('div'); refs.hist = h('div', { style: { marginTop: '16px' } });
 
       refs.docHeadline = h('span', { class: 'muted small' });
       refs.docQ = h('input', {
@@ -413,7 +507,7 @@
           h('div', { class: 'row', style: { marginTop: '12px' } }, refs.btnStart, refs.btnAll, refs.btnEstimate, refs.btnCancel, refs.btnPublish,
             h('span', { class: 'muted small' }, 'Only one run exists at a time. New documents become searchable automatically when it finishes.')),
           refs.est),
-        h('div', { style: { marginTop: '16px' } }, refs.run), refs.conv, refs.docs, refs.plcard, refs.hist);
+        h('div', { style: { marginTop: '16px' } }, refs.run), refs.conv, refs.workers, refs.docs, refs.plcard, refs.hist);
     },
     update() {
       const idx = RS.state.live && RS.state.live.index;
@@ -428,7 +522,8 @@
       controls();
       maybeFetchDocs(job);
       patch(refs.run, runCard());
-      patch(refs.conv, conversionCard() || '');
+      patch(refs.conv, phaseCard() || '');
+      patch(refs.workers, workersCard() || '');
       patch(refs.est, estimate.busy ? h('p', { class: 'small muted', style: { marginTop: '10px' } }, 'Profiling the sources…') : estimate.error ? h('div', { class: 'notice bad', style: { marginTop: '12px' } }, estimate.error) : estimate.data ? CV.estimateView(estimate.data) : '');
       updateDocsCard();
       patch(refs.hist, historyCard());

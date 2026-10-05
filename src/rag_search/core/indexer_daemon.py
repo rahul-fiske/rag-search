@@ -397,8 +397,11 @@ class IndexerDaemon(DaemonBase):
         self._gc_jobs()
 
     def _auto_publish(self, rec: dict[str, Any]) -> None:
+        t0 = time.time()
+        self._update(rec, progress={"phase": "publish", "since": round(t0, 3)})    # publishing is a phase of the run, shown like the others
         pub = api.publish_and_reload(self.paths)
-        self._update(rec, publish=pub.get("publish"), search_reload=pub.get("search_reload"))
+        self._update(rec, publish=pub.get("publish"), search_reload=pub.get("search_reload"),
+                     publish_s=round(time.time() - t0, 1), progress={"phase": "done"})
 
     # ── request handling ────────────────────────────────────────────────────
     def dispatch(self, req: dict[str, Any], conn: socket.socket) -> dict[str, Any] | None:
