@@ -47,6 +47,7 @@ from ..paths import (
     playground_root,
     read_json,
     write_json_atomic,
+    pasted_path,
 )
 from ..effective import settings_env
 from ..spec import TUNABLES_BY_KEY, TUNABLES_BY_SECTION, parse_stages, validate_section, validate_tunable
@@ -312,7 +313,7 @@ def _copy_sources(dest_dir: Path, sources: list[Path]) -> int:
     dest_dir.mkdir(parents=True, exist_ok=True)
     n = 0
     for src in sources:
-        src = src.expanduser()
+        src = Path(pasted_path(src)).expanduser()
         if not src.exists():
             raise PlaygroundError(f"not found: {src}")
         if src.is_dir():

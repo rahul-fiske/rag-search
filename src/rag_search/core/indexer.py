@@ -34,6 +34,7 @@ from .docling_convert import (
     EXIT_NO_TEXT,
     ConversionTimeout,
     NoTextError,
+    ProtectedPdfError,
     convert_profile,
     convert_settings,
     describe_error,
@@ -64,6 +65,7 @@ from ..paths import (
     read_json,
     sha256_file,
     write_json_atomic,
+    allow_cloud_files,
 )
 
 log = logging.getLogger("rag_search.indexer")
@@ -123,6 +125,57 @@ def is_fresh(idx_dir: Path, src_sha: str, chunk_size: int, chunk_overlap: int,
         return False
     want = _params(chunk_size, chunk_overlap, model)
     return all(meta.get(k) == v for k, v in want.items())
+
+
+# ── documents that cannot be indexed, and will not be until they change ──────
+# A document that works is skipped next time by its checksum (index.meta.json).  One that cannot
+# be read for a reason of its own -- a password-protected PDF, a file without any text -- gets the
+# same treatment: ``outcome.json`` in its index folder records the source's checksum, the
+# conversion settings and the reason, and the next run reports that reason again without opening
+# the file in a converter.  A changed file, changed conversion settings, a rebuild or
+# "re-convert" (force_md) tries again.  Errors that may pass by themselves (a file the cloud app
+# could not fetch, a timeout, a crash, a reader that was not available) are never remembered.
+
+OUTCOME_FILE = "outcome.json"
+OUTCOME_VERSION = 1
+# wordings of a "no text" result that say a reader did not get its turn (routed.no_text_message,
+# docling_convert, prepare_document)
+NOT_EVERY_READER = ("did not read any page", "document reader not used", "Apple Vision not used",
+                    "install the document reader", "unavailable", "crashed", "timeout", "page routing failed")
+
+
+def lasting_reason(status: str, exc: BaseException | None, message: str) -> str:
+    """``protected`` / ``no_text`` when this result will be the same next time, else ""."""
+    if isinstance(exc, ProtectedPdfError):
+        return "protected"
+    # "no text" is final only when every reader had its turn: when the document reader was not
+    # used (not installed, short of memory, failed) a later run may well find text
+    if status == "no_text" and not any(x in message for x in NOT_EVERY_READER):
+        return "no_text"
+    return ""
+
+
+def remember_outcome(idx_dir: Path, sha: str, status: str, reason: str, message: str,
+                     ocr: bool | None) -> None:
+    with contextlib.suppress(OSError):
+        idx_dir.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(idx_dir / OUTCOME_FILE, {
+            "version": OUTCOME_VERSION, "src_sha256": sha, "convert": convert_profile(ocr),
+            "status": status, "reason": reason, "message": message, "at": _now()})
+
+
+def known_outcome(idx_dir: Path, sha: str, ocr: bool | None) -> dict[str, Any] | None:
+    """The remembered result of this exact file with these conversion settings, or None."""
+    rec = read_json(idx_dir / OUTCOME_FILE) if (idx_dir / OUTCOME_FILE).exists() else None
+    if (not rec or rec.get("version") != OUTCOME_VERSION or rec.get("src_sha256") != sha
+            or rec.get("convert") != convert_profile(ocr) or rec.get("status") not in ("error", "no_text")):
+        return None
+    return rec
+
+
+def forget_outcome(idx_dir: Path) -> None:
+    with contextlib.suppress(OSError):
+        (idx_dir / OUTCOME_FILE).unlink()
 
 
 # ── step 1: source -> Markdown ───────────────────────────────────────────────
@@ -416,11 +469,21 @@ def prepare_document(task: dict[str, Any]) -> dict[str, Any]:
     ``core/conversion/trace.py``) whenever the pages were profiled.
     """
     t0 = time.perf_counter()
+    allow_cloud_files()                    # sources in a cloud-storage folder may be online-only
     src = Path(task["src"])
     kind = profiler.kind_of(src)
     profile: dict[str, Any] | None = None
     prof_s = convert_s = 0.0
     meter = costs.Meter().start()
+    idx_dir: Path | None = None
+    sha = ""
+
+    def lasting(status: str, exc: BaseException | None, message: str) -> None:
+        """Remember a result that will not change until the file does (see ``lasting_reason``)."""
+        reason = lasting_reason(status, exc, message)
+        if reason and idx_dir is not None and sha:
+            remember_outcome(idx_dir, sha, status, reason, message, task.get("ocr"))
+
     try:
         docs_root = _roots(task["docs_root"])
         markup_root, index_root = Path(task["markup_root"]), Path(task["index_root"])
@@ -436,6 +499,14 @@ def prepare_document(task: dict[str, Any]) -> dict[str, Any]:
             stage_event(slog, rel_name, "fingerprint", "done", seconds=round(time.perf_counter() - t_fp, 3),
                         unchanged=True)
             return {"status": "skipped", "src": str(src), "idx_dir": str(idx_dir)}
+        known = None if task["rebuild"] or task["force_md"] else known_outcome(idx_dir, sha, task.get("ocr"))
+        if known:
+            stage_event(slog, rel_name, "fingerprint", "done", seconds=round(time.perf_counter() - t_fp, 3),
+                        unchanged=True)
+            since = str(known.get("at") or "")[:10]
+            return {"status": known["status"], "src": str(src), "known": True,
+                    "message": f"{known.get('message', '')} [unchanged since {since}: not tried again]",
+                    "elapsed_s": round(time.perf_counter() - t0, 2)}
         stage_event(slog, rel_name, "fingerprint", "done", seconds=round(time.perf_counter() - t_fp, 3),
                     unchanged=False)
 
@@ -502,6 +573,7 @@ def prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         chunk_s = round(time.perf_counter() - t_chunk, 2)
         stage_event(slog, rel_name, "chunk", "done", seconds=chunk_s, chunks=len(raw_nodes))
         if not raw_nodes:
+            lasting("no_text", None, "no text content found in document")
             return {"status": "no_text", "src": str(src),
                     "message": "no text content found in document",
                     "conversion": _failed_conversion(kind, profile, "no_text", prof_s, convert_s,
@@ -575,16 +647,19 @@ def prepare_document(task: dict[str, Any]) -> dict[str, Any]:
                           indent=None)
         stage_event(slog, rel_name, "write", "done", seconds=round(time.perf_counter() - t_write, 3),
                     part="nodes.json")
+        forget_outcome(idx_dir)
         return {"status": "prepared", "src": str(src), "idx_dir": str(idx_dir), "sha": sha,
                 "nodes": len(nodes), "markdown": how, "convert_s": convert_s, "chunk_s": chunk_s,
                 "profile_s": prof_s, "conversion": conversion,
                 "elapsed_s": round(time.perf_counter() - t0, 2)}
     except NoTextError as exc:     # a photo, a blank document: nothing to index, not a failure
+        lasting("no_text", exc, str(exc))
         return {"status": "no_text", "src": str(src), "message": str(exc),
                 "conversion": _failed_conversion(kind, profile, "no_text", prof_s, convert_s,
                                                  meter.cpu_now()),
                 "elapsed_s": round(time.perf_counter() - t0, 2)}
     except Exception as exc:  # noqa: BLE001 - reported per document
+        lasting("error", exc, describe_error(exc))
         return {"status": "error", "src": str(src), "message": describe_error(exc),
                 "conversion": _failed_conversion(kind, profile, "error", prof_s, convert_s,
                                                  meter.cpu_now()),
@@ -759,7 +834,8 @@ def _doc_dirs_any(coll_dir: Path) -> list[Path]:
     out = []
     for dp, dirnames, filenames in os.walk(coll_dir):
         dirnames[:] = [d for d in dirnames if d != ALL_DIR and not d.startswith(".")]
-        if META_FILE in filenames or NODES_FILE in filenames or EMB_FILE in filenames:
+        if (META_FILE in filenames or NODES_FILE in filenames or EMB_FILE in filenames
+                or OUTCOME_FILE in filenames):
             out.append(Path(dp))
     return out
 
@@ -767,7 +843,7 @@ def _doc_dirs_any(coll_dir: Path) -> list[Path]:
 def _remove_doc_index(d: Path) -> None:
     """Delete one document's index files.  Not ``rmtree``: a folder next to a document with the
     same name (``a.pdf`` and ``a/b.pdf``) nests ``b``'s index inside ``a``'s folder."""
-    for f in (META_FILE, EMB_FILE, NODES_FILE, EMB_FILE + ".tmp"):   # completion marker first
+    for f in (META_FILE, EMB_FILE, NODES_FILE, EMB_FILE + ".tmp", OUTCOME_FILE):   # completion marker first
         with contextlib.suppress(OSError):
             (d / f).unlink()
     with contextlib.suppress(OSError):
@@ -1057,6 +1133,7 @@ def run_index(
     errors: list[dict[str, str]] = []
     no_text: list[dict[str, str]] = []      # converted fine but hold no text: skipped, not failed
     skipped = 0
+    not_retried = 0                         # failed or empty before, file unchanged: reported, not tried again
     todo = _assign_names(paths, sources, docs_root, errors)
 
     with index_lock(paths):
@@ -1087,8 +1164,9 @@ def run_index(
         done = 0
 
         def _collect(res: dict[str, Any]) -> None:
-            nonlocal done, skipped
+            nonlocal done, skipped, not_retried
             done += 1
+            not_retried += 1 if res.get("known") else 0
             name = Path(res["src"]).name
             if res["status"] != "skipped":
                 conv.add(res.get("conversion"))
@@ -1232,6 +1310,7 @@ def run_index(
         "page_cache": cache_info,
         "scanned": len(sources),
         "removed": removed,
+        "not_retried": not_retried,
         **(plan_info or {}),
     }
     emit({"phase": "done", "done": 1, "total": 1})

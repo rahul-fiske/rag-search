@@ -20,7 +20,7 @@ import time
 from typing import Any
 
 from .. import __version__, protocol
-from ..paths import Paths, ensure_dirs
+from ..paths import Paths, allow_cloud_files, ensure_dirs
 
 log = logging.getLogger("rag_search.daemon")
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -133,6 +133,7 @@ class DaemonBase:
                 self.stop.set()
 
     def run(self) -> int:
+        allow_cloud_files()                # launchd starts daemons without it; the worker inherits it
         ensure_dirs(self.paths)
         lock_fd = os.open(self.paths.alive_lock(self.kind), os.O_CREAT | os.O_RDWR, 0o600)
         # a client probing the lock (client.alive_lock_held) holds it for an instant: retry

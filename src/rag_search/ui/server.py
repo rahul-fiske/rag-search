@@ -34,7 +34,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .. import __version__, access, api, catalog, model_tasks, models, playground_runs, policy, spec
 from ..config import ConfigStore, update_config
-from ..paths import Paths, detached_start, ensure_dirs, get_paths, parse_collections
+from ..paths import Paths, allow_cloud_files, detached_start, pasted_path, ensure_dirs, get_paths, parse_collections
 from . import info, markdown
 
 _INSTALLED: dict[str, Any] = {"at": -1e9, "version": ""}
@@ -758,7 +758,7 @@ class Handler(BaseHTTPRequestHandler):
             r = api.collection_import(paths, text("file"), as_name=text("as_name") or None,
                                       replace=body.get("replace") is True)
         elif name == "collection/export":
-            folder = text("folder") or str(paths.home / "exports")
+            folder = pasted_path(text("folder")) or str(paths.home / "exports")
             try:
                 Path(folder).expanduser().mkdir(parents=True, exist_ok=True)
             except OSError as exc:
@@ -863,6 +863,7 @@ class UiServer(ThreadingHTTPServer):
 def make_server(paths: Paths, port: int = DEFAULT_PORT, read_only: bool = False,
                 token: str | None = None) -> UiServer:
     """Bind 127.0.0.1:port (0 = any free port) and start the sampler; caller runs serve_forever()."""
+    allow_cloud_files()                    # "Add collection" lists a folder that may be a cloud placeholder
     app = UiApp(paths, token or load_token(paths), read_only)
     server = UiServer(("127.0.0.1", port), app)
     app.live.start()

@@ -589,6 +589,11 @@ def describe_error(exc: BaseException) -> str:
     """'Type: message [at package/file.py:line in function]' - where inside docling (or a library
     it uses) the failure happened, which the bare message never says."""
     text = f"{type(exc).__name__}: {exc}"
+    # EDEADLK (11) on macOS: an online-only file of a cloud-storage folder that could not be fetched
+    if isinstance(exc, OSError) and exc.errno == 11 and sys.platform == "darwin":
+        text = ("the file is kept online-only by a cloud-storage app (Box, Google Drive, iCloud, OneDrive) and "
+                "could not be fetched: check that the app is running and online, or mark the folder "
+                f"\"available offline\", then index again ({text})")
     try:
         last = traceback.extract_tb(exc.__traceback__)[-1]
         text += f" [at {'/'.join(Path(last.filename).parts[-2:])}:{last.lineno} in {last.name}]"

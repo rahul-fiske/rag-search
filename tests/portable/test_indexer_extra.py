@@ -132,3 +132,88 @@ class PoolShutdownTests(unittest.TestCase):
         pool = cf.ProcessPoolExecutor(max_workers=1, mp_context=mp.get_context("spawn"))
         self.assertEqual(pool.submit(abs, -3).result(timeout=60), 3)
         self.assertEqual(indexer._shutdown_pool(pool, grace=30.0), 0)
+
+
+class RememberedOutcomeTests(TempHome):
+    """A file that cannot be indexed for a reason of its own is not converted again until it changes."""
+
+    def setUp(self):
+        super().setUp()
+        from unittest import mock
+
+        from rag_search.core.docling_convert import NoTextError, ProtectedPdfError
+
+        os.environ["RAG_SEARCH_ROUTING"] = "document"
+        self.calls: list[str] = []
+        self.fail = {"locked": ProtectedPdfError("password-protected PDF, it cannot be opened without the password"),
+                     "empty": NoTextError("no text extracted from empty.html"),
+                     "unread": NoTextError("no text could be read from unread.html (1 page(s)); the document "
+                                           "reader (a vision model) did not read any page"),
+                     "flaky": RuntimeError("the converter fell over")}
+
+        def convert(src, md_path, **kw):
+            self.calls.append(src.stem)
+            if src.stem in self.fail:
+                raise self.fail[src.stem]
+            md_path.parent.mkdir(parents=True, exist_ok=True)
+            md_path.write_text("<!-- page 1 -->\n\nsome real text about storage systems\n")
+            return "converted"
+
+        p = mock.patch.object(indexer, "convert_source", convert)
+        p.start()
+        self.addCleanup(p.stop)
+        for name in ("locked", "empty", "unread", "flaky", "fine"):
+            self.write_doc(f"c/{name}.html", f"<html><body>{name}</body></html>")
+
+    def run_index(self, **kw):
+        self.calls.clear()
+        srcs = indexer.scan_sources(self.paths.docs, indexer.exclude_dirs(self.paths))
+        return indexer.run_index(self.paths, srcs, self.paths.docs, jobs=1, embedder=FakeEmbedder(), **kw)
+
+    def outcome(self, name):
+        return self.paths.index / "c" / name / indexer.OUTCOME_FILE
+
+    def test_lasting_failures_are_not_converted_again_and_passing_ones_are(self):
+        s = self.run_index()
+        self.assertEqual(sorted(self.calls), ["empty", "fine", "flaky", "locked", "unread"])
+        self.assertEqual((s["indexed"], len(s["errors"]), len(s["no_text"]), s["not_retried"]), (1, 2, 2, 0))
+        self.assertTrue(self.outcome("locked").is_file() and self.outcome("empty").is_file())
+        self.assertFalse(self.outcome("flaky").exists() or self.outcome("unread").exists()
+                         or self.outcome("fine").exists())
+
+        s = self.run_index()                                    # nothing changed
+        self.assertEqual(sorted(self.calls), ["flaky", "unread"])       # only what may pass next time
+        self.assertEqual((s["indexed"], s["skipped_fresh"], len(s["errors"]), len(s["no_text"]), s["not_retried"]),
+                         (0, 1, 2, 2, 2))
+        locked = [e for e in s["errors"] if e["src"].endswith("locked.html")][0]["message"]
+        self.assertIn("password-protected", locked)             # still reported, with its reason
+        self.assertIn("not tried again", locked)
+
+    def test_a_changed_file_other_settings_or_a_forced_run_try_again(self):
+        self.run_index()
+        self.write_doc("c/locked.html", "<html><body>saved again without the password</body></html>")
+        del self.fail["locked"]
+        s = self.run_index()
+        self.assertIn("locked", self.calls)
+        self.assertEqual(s["indexed"], 1)
+        self.assertFalse(self.outcome("locked").exists())       # it works now: nothing is remembered
+
+        self.run_index()
+        self.assertNotIn("empty", self.calls)
+        os.environ["RAG_SEARCH_TABLE_MODE"] = "fast"            # another conversion setting
+        self.run_index()
+        self.assertIn("empty", self.calls)
+        os.environ.pop("RAG_SEARCH_TABLE_MODE")
+        self.run_index()
+        self.run_index()
+        self.assertNotIn("empty", self.calls)
+        self.run_index(force_md=True)
+        self.assertIn("empty", self.calls)
+
+    def test_the_record_goes_when_the_source_is_deleted(self):
+        self.run_index()
+        (self.paths.docs / "c" / "locked.html").unlink()
+        srcs = indexer.scan_sources(self.paths.docs, indexer.exclude_dirs(self.paths))
+        indexer.run_index(self.paths, srcs, self.paths.docs, jobs=1, embedder=FakeEmbedder(), prune=["c"])
+        self.assertFalse((self.paths.index / "c" / "locked").exists())
+        self.assertTrue(self.outcome("empty").is_file())

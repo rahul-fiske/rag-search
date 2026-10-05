@@ -45,8 +45,8 @@
     const now = h('input', { type: 'checkbox', checked: true });
     const body = h('div', null,
       h('p', { class: 'small muted', style: { marginTop: 0 } }, 'Index a folder where it is: its whole tree becomes one collection. rag-search only ever reads it -- nothing in it is changed, moved or deleted. (A folder you create inside the docs folder is a collection without registering it.)'),
-      field('Collection name', name, 'letters, digits, - and _; not used by another collection'),
-      field('Folder', folder, 'the full path (a browser cannot hand a page a folder you pick, so paste it -- in Finder: right-click the folder, hold ⌥ Option, “Copy … as Pathname”)'),
+      field('Collection name', name, 'letters, digits, - and _; not used by another collection. Leave it empty to use the folder\u2019s own name'),
+      field('Folder', folder, 'the full path (a browser cannot hand a page a folder you pick, so paste it -- in Finder: right-click the folder, hold ⌥ Option, “Copy … as Pathname”). Spaces and characters like @ are fine; quotes around it are ignored)'),
       h('label', { class: 'check', style: { display: 'flex', margin: '8px 0 0' } }, now, h('span', null, 'Index it now')));
     if (!await dialog('Add a collection', body, { okText: 'Add' })) return;
     const r = await act('collection/add-location', { name: name.value, folder: folder.value });

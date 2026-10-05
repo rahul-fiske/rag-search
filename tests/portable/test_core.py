@@ -768,3 +768,26 @@ class BuildConverterTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as cm:
             self.dc._build_converter(".pdf", self.cfg(engine="rapidocr"))
         self.assertIn("RAG_SEARCH_OCR_ENGINE=auto", str(cm.exception))
+
+
+class CloudFileTests(unittest.TestCase):
+    def test_allowing_cloud_files_is_harmless_and_repeatable(self):
+        import sys
+
+        from rag_search import paths
+
+        first = paths.allow_cloud_files()
+        self.assertEqual(paths.allow_cloud_files(), first)
+        if sys.platform != "darwin":
+            self.assertFalse(first)                  # nothing to switch on outside macOS
+
+    def test_a_file_the_cloud_app_could_not_fetch_is_explained(self):
+        from unittest import mock
+
+        from rag_search.core import docling_convert
+
+        exc = OSError(11, "Resource deadlock avoided")
+        with mock.patch.object(docling_convert.sys, "platform", "darwin"):
+            self.assertIn("online-only", docling_convert.describe_error(exc))
+        with mock.patch.object(docling_convert.sys, "platform", "linux"):
+            self.assertNotIn("online-only", docling_convert.describe_error(exc))

@@ -108,6 +108,11 @@ rag-search convert-legacy [PATH] [--ext doc,xls,ppt,rtf] [--dry-run] [--delete-o
 rag-search register [--desktop] [--code] | unregister | mcp-config [--profile NAME]
 ```
 
+A file that cannot be indexed for its own reasons (a password-protected PDF, a file with no text at all) is
+converted once: later runs still list it with its reason ("not tried again") but only compute its checksum.
+Change the file, change a conversion setting, or tick *re-convert to Markdown* (`--force-md`) to try again.
+
+
 Every command accepts `--json`, `--home PATH` and `--client NAME`. `PATH` arguments are files or
 folders inside the docs folder or a registered location (`vault/projects` = the `projects` folder
 of location `vault`), except `convert-legacy`'s, which is an ordinary filesystem path
@@ -372,6 +377,7 @@ elsewhere whose whole tree becomes one collection, indexed where it is (nothing 
 
 ```bash
 rag-search location add vault ~/Documents/Notes     # collection "vault" = that folder
+rag-search location add "" "/Users/me/My Drive/Notes"   # no name given: the folder's own name (Notes); spaces, @ etc. are fine
 rag-search location list                            # every location, and whether it can be read now
 rag-search index new --follow                       # indexes it with everything else
 rag-search index new vault/projects                 # just one folder of it

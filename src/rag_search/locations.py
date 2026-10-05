@@ -45,6 +45,8 @@ from .paths import (
     is_within,
     read_json,
     write_json_atomic,
+    pasted_path,
+    name_from_folder,
 )
 
 LOCATIONS_VERSION = 1
@@ -141,24 +143,42 @@ def index_is_imported(index_root: Path, collection: str) -> bool:
 
 # ── reachability ────────────────────────────────────────────────────────────
 
-def reachable(folder: Path, timeout: float = REACH_TIMEOUT_S) -> bool:
-    """True when *folder* exists and can be listed within *timeout* seconds.
+def why_unreachable(folder: Path, timeout: float = REACH_TIMEOUT_S) -> str:
+    """"" when *folder* exists and can be listed within *timeout* seconds, otherwise the reason.
 
     Run in a worker thread: on an unresponsive network share a plain ``listdir`` can hang for
     minutes.  A folder that is missing (an unmounted drive's mount point) or cannot be listed
-    is unreachable -- never "empty"."""
-    result: dict[str, bool] = {}
+    is unreachable -- never "empty".  A listing that fails is tried again until the time is up: a
+    folder kept by a cloud-storage app (Box, Google Drive, iCloud under ``~/Library/CloudStorage``)
+    can refuse the first listing while the app fetches it, and answer a moment later."""
+    result: dict[str, str] = {}
+    deadline = time.monotonic() + max(0.0, timeout)
 
     def probe() -> None:
-        try:
-            result["ok"] = folder.is_dir() and (os.listdir(folder) is not None)
-        except OSError:
-            result["ok"] = False
+        while True:
+            try:
+                if not folder.is_dir():
+                    result["why"] = "it is not a folder" if folder.exists() else "it does not exist"
+                    return                            # nothing to wait for
+                else:
+                    os.listdir(folder)
+                    result["why"] = ""
+                    return
+            except OSError as exc:
+                result["why"] = f"it cannot be listed ({exc.strerror or type(exc).__name__})"
+            if time.monotonic() + 0.5 >= deadline:
+                return
+            time.sleep(0.5)
 
     th = threading.Thread(target=probe, name="reach", daemon=True)
     th.start()
-    th.join(timeout)
-    return bool(result.get("ok"))
+    th.join(timeout + 1.0)
+    return result.get("why", f"it did not answer within {timeout:.0f} s")
+
+
+def reachable(folder: Path, timeout: float = REACH_TIMEOUT_S) -> bool:
+    """True when *folder* exists and can be listed within *timeout* seconds (see ``why_unreachable``)."""
+    return not why_unreachable(folder, timeout)
 
 
 def status(paths: Paths) -> list[dict[str, Any]]:
@@ -294,7 +314,7 @@ def resolve_target(paths: Paths, raw: str) -> tuple[Path, str]:
     (``vault`` or ``vault/projects``).  Raises LocationError with a message for the user."""
     roots = source_roots(paths)
     locs = dict(roots.locations)
-    raw = (raw or "").strip()
+    raw = pasted_path(raw)
     docs = paths.docs.resolve()
     if not raw:
         return docs, ""
@@ -445,10 +465,16 @@ def _save(paths: Paths, locs: dict[str, str]) -> None:
 
 def add(paths: Paths, name: str, folder: str) -> dict[str, Any]:
     """Register *folder* as the source of collection *name*."""
-    name = (name or "").strip()
+    name, folder = pasted_path(name), pasted_path(folder)
+    if not folder and ("/" in name or name.startswith("~")):
+        name, folder = "", name                     # the path was put where the name goes
+    if not name and folder:                         # no name given: the folder's own name
+        name = name_from_folder(Path(folder).expanduser())
+        if not name:
+            raise LocationError(f"give a collection name: none can be made from {folder!r}")
     if not is_plain_name(name):
         raise LocationError(f"{name!r} is not a usable collection name (one folder-name-like "
-                            "word: letters, digits, '-', '_')")
+                            "word: letters, digits, '-', '_'); the folder goes in the other field")
     if name.casefold() == DEFAULT_COLLECTION:
         raise LocationError(f"{DEFAULT_COLLECTION!r} is reserved for files directly in the docs "
                             "folder; choose another name")
@@ -459,8 +485,9 @@ def add(paths: Paths, name: str, folder: str) -> dict[str, Any]:
     if not p.is_absolute():
         p = Path.cwd() / p
     p = p.resolve()
-    if not reachable(p):
-        raise LocationError(f"{p} is not a folder that can be read right now")
+    why = why_unreachable(p)
+    if why:
+        raise LocationError(f"{p} is not a folder that can be read right now: {why}")
     home, docs = paths.home.resolve(), paths.docs.resolve()
     if is_within(p, docs):
         raise LocationError(f"{p} is inside the docs folder ({docs}); its first-level folders "

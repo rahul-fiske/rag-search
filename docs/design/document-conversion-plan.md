@@ -524,6 +524,27 @@ through the Mac's own tool environment, see CONTRIBUTING.md "Dev loop"**):
   document reader now say so themselves (`helpers.no_real_reader`), one that crashed the interpreter by
   importing torch twice is fixed, and the suite no longer leaves daemon processes behind.
 
+- 0.9.14: adding a collection failed for a path pasted with quotes around it (the quoted path had also been
+  put in the name field, which is what the error was about). Pasted paths are now cleaned in one place
+  (`paths.pasted_path`: surrounding quotes, shell escapes), a missing name is taken from the folder, and a path
+  in the name field is taken as the folder. A folder under `~/Library/CloudStorage` (Box) refused its first
+  listing once and answered a moment later: the reachability probe now retries within its 10 s and the error
+  says why a folder cannot be read. Open: files that such a folder keeps online-only are fetched by the
+  cloud app when they are read; how a long run behaves over many of them is not measured.
+
+- 0.9.15: every online-only file of the Box folders failed with `[Errno 11] Resource deadlock avoided` when the
+  run was started by the launchd daemon, and read fine from a terminal. Measured with a temporary launchd job:
+  a launchd-started process has the macOS I/O policy "materialize dataless files" off (1), a terminal has it
+  on (2). `paths.allow_cloud_files` switches it on in every rag-search process (children inherit it); the same
+  launchd job then read a placeholder file in 3.9 s. This also explains the folder listing that was refused in
+  0.9.14. Consequence to know: indexing such a collection makes the cloud app download every file it reads.
+
+- 0.9.16: a document that cannot be indexed for its own reasons (password-protected PDF, no text after every
+  reader had its turn) is remembered by checksum and conversion settings (`outcome.json` in its index folder)
+  and not converted again until it changes; it is still reported, with its reason. Decision: timeouts are
+  *not* remembered, because the page cache lets a later run get further, and neither is any result where a
+  reader did not get its turn. Open: whether to remember a timeout after it has happened several times.
+
 **First real result** (3-page scanned Marathi/Hindi/English passbook, standard pipeline, Qwen3-VL 4B 4-bit):
 Devanagari headings and the cover page are correct; page 2's table has real rows but one row is missing, one
 merges two rows, and narration pushes numbers one column left; page 3's table is scrambled (shifted and

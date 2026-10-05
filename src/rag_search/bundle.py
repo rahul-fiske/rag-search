@@ -61,6 +61,7 @@ from .paths import (
     model_name,
     read_json,
     write_json_atomic,
+    pasted_path,
 )
 
 BUNDLE_FORMAT = "rag-search-collection"
@@ -137,7 +138,7 @@ def export_collection(paths: Paths, name: str, out: str | Path | None = None) ->
     coll = _workspace_name(paths, name)
     cdir = paths.index / coll
     all_dir = cdir / ALL_DIR
-    target = Path(out).expanduser() if out else Path.cwd()
+    target = Path(pasted_path(out)).expanduser() if out else Path.cwd()
     # a folder (existing, or any name that does not look like an archive) gets NAME.rag.tgz
     if target.is_dir() or not target.name.endswith((".tgz", ".tar.gz")):
         target = target / f"{coll}{SUFFIX}"
@@ -238,7 +239,7 @@ def _add(tf: tarfile.TarFile, name: str, data: bytes) -> None:
 
 def read_manifest(archive: str | Path) -> dict[str, Any]:
     """The manifest of an export (checked for format), without unpacking anything else."""
-    p = Path(archive).expanduser()
+    p = Path(pasted_path(archive)).expanduser()
     try:
         with tarfile.open(p, "r:gz") as tf:
             m = tf.getmember("manifest.json")
@@ -346,7 +347,7 @@ def _taken(paths: Paths, name: str) -> tuple[str, str]:
 def import_collection(paths: Paths, archive: str | Path, *, as_name: str | None = None,
                       replace: bool = False) -> dict[str, Any]:
     """Unpack an export into the workspace as an imported collection (then publish it)."""
-    src = Path(archive).expanduser().resolve()
+    src = Path(pasted_path(archive)).expanduser().resolve()
     manifest = read_manifest(src)
     model = check_model(manifest, paths)
     name = (as_name or manifest["collection"]).strip()

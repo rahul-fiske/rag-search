@@ -108,6 +108,11 @@ helpers in `paths.py`: `write_json_atomic` (temp file + `os.replace`, optional m
 `access.json`), `file_lock` (an exclusive `flock` on `.<name>.lock` held across a whole
 read-modify-write, so two concurrent `rag-search access …` commands cannot lose each other's
 change) and `CachedFile` (re-parse only when mtime/size/inode change; `policy.AccessStore` is one).
+A path a person types or pastes (a location's folder, an index target, an export or import file, a
+Playground source) goes through `paths.pasted_path` first: one pair of surrounding quotes and shell escapes
+are shell syntax, not part of the name; spaces, `@` and the like are ordinary characters. `locations.add`
+takes the folder's own name when no collection name is given (`paths.name_from_folder`), and a path put in
+the name field is taken as the folder.
 Collection names are resolved in one place, `catalog.canonical_name`: exact match first, else
 case-insensitive, against every collection rag-search knows (published, docs-folder folders,
 locations, workspace). `policy.resolve_scope` matches the same way and always returns the real
@@ -164,6 +169,7 @@ command reference from the argparse tree.
     markup/<coll>/<doc>.trace.json   conversion trace: one record per page (branch, outcome, profile,
                               docling confidence), see 5.1.1; removed together with its Markdown
     index/<coll>/<doc>/       nodes.json  embeddings.npy  index.meta.json (written last)
+                              outcome.json instead, for a document that cannot be indexed (see Freshness)
     index/<coll>/_all/        merged: nodes.json embeddings.npy merge.manifest.json
     index/<coll>/collection.origin.json   only in an imported collection (see 5.5)
   serving/
@@ -187,7 +193,16 @@ search daemon keeps reading the old generation's files until it swaps. `rollback
 `CHUNKER_VERSION`, `TOKENIZER_VERSION`, the index format or the model differ from
 `index.meta.json`; the Markdown is reused only when the `.md.sha256` sidecar matches. An unchanged
 document found at a new path (moved docs folder) keeps its index and gets its `src_path` updated.
-Merging concatenates stored embeddings; nothing is re-embedded. A document whose source was deleted
+Merging concatenates stored embeddings; nothing is re-embedded.
+A document that **cannot** be indexed for a reason of its own gets the same treatment: `outcome.json` in its
+index folder records the source SHA-256, the conversion settings (`convert_profile`) and the reason, and the
+next run reports that reason again (same status, "not tried again") without converting -- only the checksum
+is computed. Remembered: a password-protected or encrypted PDF, and "no text" when every reader had its turn.
+Never remembered: anything that may pass by itself (a cloud file that could not be fetched, a timeout, a
+crash, a "no text" where the document reader was not used). A changed file, a changed conversion setting,
+`--force-md` ("re-convert to Markdown") or a rebuild tries again; success or a deleted source removes the
+record. The run summary counts them as `not_retried`. Unsupported formats never reach this step: they are
+recognised by extension when the folder is listed and are not opened at all. A document whose source was deleted
 loses its Markdown and index (`prune_orphans`, see 5.1) -- but only when the run read its whole
 collection and the collection's folder could be read; an unreachable folder changes nothing.
 `index.meta.json` also records `model_revision`, the commit of the model's weights in the local
@@ -293,7 +308,8 @@ Settings, Architecture and Playground tabs and `rag-search playground settings` 
  docs/<collection>/<file>      pdf docx pptx xlsx html csv adoc md txt png jpg tif bmp webp
  <location folder>/<file>     (a registered location: its whole tree is one collection)
         │  plan (locations.plan_scan): refuses to run while locations.json is unreadable; every
-        │  source folder is probed for reachability first (in a thread, 10 s bound); one that is
+        │  source folder is probed for reachability first (in a thread, 10 s bound; a listing
+        │  that fails is retried within it, for cloud-storage folders that answer late); one that is
         │  missing, cannot be listed, is completely empty while its collections have an index
         │  (an unmounted mount point), or has a sub-folder the walk could not open, is *frozen*
         │  -- not pruned, not re-merged.  A run over everything, or a whole collection, *covers* it.
@@ -965,10 +981,12 @@ shown as a pill next to each tunable and next to each group on the Settings tab:
 | indexer daemon stopped by a signal or `daemon stop` | the reason is logged and stored on the run (`interrupted`); the next start cleans up |
 | indexer daemon crashes mid-run | worker keeps running until the next daemon start, which kills it and marks the run `interrupted`; rerun is cheap |
 | worker killed by a signal (e.g. out of memory) | run `failed`, error names the signal (`SIGKILL`) |
+| a document that cannot be indexed and has not changed (password-protected PDF, no text at all) | reported with its reason every run, converted only once (`outcome.json`, see Freshness) |
 | one document too slow (`RAG_SEARCH_DOC_TIMEOUT`) | that document is an error, the run continues (`partial`), retried next run |
 | a conversion process cannot exit (docling abandons its OCR / layout threads after a document timeout; one stuck in a native call, e.g. an Apple Vision request, is joined forever by the interpreter) | the pool is closed without waiting (`indexer._shutdown_pool`): every result is already collected, so a process still alive 20 s later is terminated and the run goes on to embedding. The worker and `python -m rag_search.cli` children (Playground runs) end with `worker.leave` (`os._exit` after flushing), so a stuck thread cannot keep a finished run "active" |
 | worker crashes | run `failed`, nothing published, workspace stays consistent (documents are complete only when `index.meta.json` exists) |
 | the folder a daemon was started from is deleted (e.g. `install.sh` run inside a release folder that is rebuilt later) | no effect since 0.9.13: long-lived processes start in the data folder. Before, every document of the next run failed (`FileNotFoundError` from `os.getcwd()`, "partially initialized module 'torch'") until the daemons were restarted |
+| a source is an online-only file of a cloud-storage folder (Box, Google Drive, iCloud, OneDrive under `~/Library/CloudStorage`) | read normally: every rag-search process switches on "fetch online-only files when read" for itself (`paths.allow_cloud_files`, macOS `setiopolicy_np`), which launchd-started daemons do not have by default. Before 0.9.15 each such file failed at once with `[Errno 11] Resource deadlock avoided`. The cloud app downloads the file; if it cannot (app not running, offline) that document is an error with that explanation and is retried next run |
 | second `start` during a run | returns the active run; `restart` kills and restarts |
 | bad `config.json` | defaults are used; the error is shown by `doctor` and in `ping` |
 | models still loading | `list`/`grep` work; `search` says `warming_up` and the client may retry |

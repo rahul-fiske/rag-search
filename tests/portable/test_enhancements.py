@@ -864,3 +864,82 @@ class DashboardDescribeTests(UiBase):
 if __name__ == "__main__":
     unittest.main()
 
+
+
+class PastedPathTests(TempHome):
+    """Paths arrive as people paste them: in quotes, with shell escapes, with spaces and '@'."""
+
+    def folder(self, name="team@cloud/My Drive/manuals_1_2"):
+        f = self.tmp / "outside" / name
+        f.mkdir(parents=True)
+        (f / "a.md").write_text("# A\n\ntext\n")
+        return f
+
+    def test_quotes_and_shell_escapes_are_not_part_of_the_path(self):
+        from rag_search.paths import pasted_path
+
+        f = self.folder()
+        self.assertEqual(pasted_path(f'"{f}"'), str(f))
+        self.assertEqual(pasted_path(f"  '{f}' "), str(f))
+        self.assertEqual(pasted_path(str(f).replace(" ", "\\ ")), str(f))
+        self.assertEqual(pasted_path(str(f)), str(f))
+        self.assertEqual(pasted_path("a\\b"), "a\\b")            # nothing exists either way: left alone
+        self.assertEqual(pasted_path(None), "")
+
+    def test_a_folder_with_spaces_and_at_signs_is_registered(self):
+        f = self.folder()
+        r = locations.add(self.paths, "docs912", f'"{f}"')
+        self.assertEqual((r["collection"], r["folder"]), ("docs912", str(f.resolve())))
+
+    def test_without_a_name_the_folder_gives_it(self):
+        f = self.folder()
+        self.assertEqual(locations.add(self.paths, "", str(f))["collection"], "manuals_1_2")
+        g = self.folder("x@y/My Drive")
+        self.assertEqual(locations.add(self.paths, "", f"'{g}'")["collection"], "My_Drive")
+
+    def test_a_path_put_in_the_name_field_is_taken_as_the_folder(self):
+        f = self.folder()
+        r = locations.add(self.paths, f'"{f}"', "")
+        self.assertEqual((r["collection"], r["folder"]), ("manuals_1_2", str(f.resolve())))
+
+    def test_a_name_that_is_a_path_next_to_a_folder_is_still_refused(self):
+        f = self.folder()
+        with self.assertRaises(locations.LocationError) as cm:
+            locations.add(self.paths, "a/b", str(f))
+        self.assertIn("other field", str(cm.exception))
+
+    def test_a_quoted_file_inside_a_location_can_be_the_index_target(self):
+        f = self.folder()
+        locations.add(self.paths, "docs912", str(f))
+        plan = locations.plan_scan(self.paths, f"'{f / 'a.md'}'")
+        self.assertEqual([Path(s).name for s in plan.sources], ["a.md"])
+
+    def test_a_folder_that_cannot_be_read_says_why_and_a_missing_one_is_not_waited_for(self):
+        import time
+
+        t0 = time.monotonic()
+        self.assertIn("does not exist", locations.why_unreachable(self.tmp / "nowhere"))
+        f = self.folder()
+        (f / "a.md").write_text("x")
+        self.assertIn("not a folder", locations.why_unreachable(f / "a.md"))
+        self.assertLess(time.monotonic() - t0, 2)
+        self.assertEqual(locations.why_unreachable(f), "")
+        with self.assertRaises(locations.LocationError) as cm:
+            locations.add(self.paths, "x", str(f / "a.md"))
+        self.assertIn("not a folder", str(cm.exception))
+
+    def test_a_listing_that_fails_at_first_is_tried_again(self):
+        from unittest import mock
+
+        f = self.folder()
+        real, calls = os.listdir, []
+
+        def flaky(path):
+            calls.append(path)
+            if len(calls) == 1:
+                raise OSError(11, "Resource deadlock avoided")     # what a cloud folder being fetched answers
+            return real(path)
+
+        with mock.patch("os.listdir", flaky):
+            self.assertEqual(locations.why_unreachable(f, timeout=5), "")
+        self.assertEqual(len(calls), 2)

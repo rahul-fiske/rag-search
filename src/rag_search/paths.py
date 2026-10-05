@@ -25,6 +25,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -519,4 +520,59 @@ def detached_start(home: Path, env: dict[str, str] | None = None) -> dict[str, A
             os.path.abspath(e) if e else e for e in env["PYTHONPATH"].split(os.pathsep))
     home = Path(home)
     return {"cwd": str(home if home.is_dir() else Path(home.anchor or "/")), "env": env}
+
+
+def pasted_path(text: str | Path | None) -> str:
+    """A path as a person pastes it, turned into the path itself.
+
+    A path copied from a terminal or from Finder often arrives wrapped in quotes
+    (``'/Users/me/My Drive/x.pdf'``) or with shell escapes (``/Users/me/My\\ Drive``): that is
+    shell syntax, not part of the name.  One matching pair of quotes is removed; backslash escapes
+    are removed only when the text as given does not exist and the unescaped one does, so a real
+    backslash in a name is never lost.  Spaces, ``@``, ``-`` and the like are ordinary characters."""
+    raw = str(text or "").strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "'\"":
+        raw = raw[1:-1].strip()
+    if "\\" in raw and not os.path.exists(os.path.expanduser(raw)):
+        plain = re.sub(r"\\(.)", r"\1", raw)
+        if os.path.exists(os.path.expanduser(plain)):
+            raw = plain
+    return raw
+
+
+def name_from_folder(folder: str | Path) -> str:
+    """A collection name made from a folder's own name: letters, digits, ``-`` and ``_`` are kept,
+    anything else becomes ``_`` (``"My Drive"`` -> ``My_Drive``); "" when nothing usable is left."""
+    base = Path(str(folder)).name
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", base).strip("_-")
+
+
+_CLOUD_FILES: dict[str, bool] = {}
+
+
+def allow_cloud_files() -> bool:
+    """Let this process read files that a cloud-storage app keeps online-only (macOS; a no-op elsewhere).
+
+    Box, Google Drive, iCloud and OneDrive keep a folder under ``~/Library/CloudStorage`` whose files
+    may be placeholders ("dataless"): the app fetches the content when a program reads the file.
+    Whether a process may trigger that fetch is a per-process setting.  A program started from a
+    terminal or an app has it on; one started by launchd -- the daemons installed by ``rag-search
+    service install`` -- has it off, and then every read of such a file fails at once with
+    ``[Errno 11] Resource deadlock avoided``.  This switches it on for the process; children inherit
+    it.  Reading is all that happens: the app downloads the file, nothing in the folder is changed.
+    Returns True when the setting is (now) on."""
+    if "on" in _CLOUD_FILES:
+        return _CLOUD_FILES["on"]
+    ok = False
+    if sys.platform == "darwin":
+        try:
+            import ctypes
+
+            libc = ctypes.CDLL(None, use_errno=True)
+            # IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES = 3, IOPOL_SCOPE_PROCESS = 0, ..._ON = 2
+            ok = libc.setiopolicy_np(3, 0, 2) == 0
+        except (OSError, AttributeError, ValueError):
+            ok = False
+    _CLOUD_FILES["on"] = ok
+    return ok
 

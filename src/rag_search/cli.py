@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__, api, spec
-from .paths import DEFAULT_TOP_K, ensure_dirs, get_paths
+from .paths import DEFAULT_TOP_K, allow_cloud_files, ensure_dirs, get_paths
 
 EXIT_OK, EXIT_FAIL, EXIT_USAGE, EXIT_UNAVAILABLE = 0, 1, 2, 3
 
@@ -248,6 +248,8 @@ def _fmt_job(job: dict[str, Any] | None) -> str:
                  f"no text {summ.get('no_text_count', 0)}, errors {summ.get('error_count', 0)}")
         if summ.get("unsupported_count"):
             line += f", unsupported format {summ['unsupported_count']}"
+        if summ.get("not_retried"):
+            line += f"\n  {summ['not_retried']} of those are unchanged files that failed or had no text before: not tried again"
         if summ.get("removed_count"):
             line += f", removed {summ['removed_count']} (source deleted)"
         if summ.get("unreachable"):
@@ -2810,6 +2812,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     ap = build_parser()
     args = ap.parse_args(argv)
+    allow_cloud_files()
     if args.home:
         os.environ["RAG_SEARCH_HOME"] = str(Path(args.home).expanduser().absolute())
     if args.client:

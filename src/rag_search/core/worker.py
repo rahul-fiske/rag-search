@@ -25,6 +25,7 @@ from ..paths import (
     DEFAULT_CHUNK_OVERLAP,
     DEFAULT_CHUNK_SIZE,
     Paths,
+    allow_cloud_files,
     get_paths,
     read_json,
 )
@@ -112,6 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     from .embedding import prepare_environment
     from .indexer import IndexBusyError
 
+    allow_cloud_files()
     paths = get_paths()
     rec = read_json(job_file(paths, argv[0])) or {}
     events = EventWriter(events_file(paths, argv[0]))
