@@ -118,9 +118,12 @@ def _table_shape(md: str) -> dict[str, Any]:
     for t in tables.find_tables(md):
         if t.kind == "pipe":
             raw = md[t.start:t.end].strip("\n").split("\n")
-            widths = {len(tables._split_pipe_row(r)) for i, r in enumerate(raw) if i != 1}
-            if len(widths) > 1:
-                return _check("table_shape", False, f"table rows have different numbers of cells ({sorted(widths)})")
+            widths = [len(tables._split_pipe_row(r)) for i, r in enumerate(raw) if i != 1]
+            head = widths[0] if widths else 0
+            # a row may leave out the header's last (empty) column; any other difference is a shifted row
+            if any(w > head or w < head - 1 for w in widths):
+                return _check("table_shape", False,
+                              f"table rows have different numbers of cells ({sorted(set(widths))})")
         body = t.body
         cells = [c for r in body for c in r]
         if len(body) >= 3 and cells and sum(1 for c in cells if not c.strip()) / len(cells) > 0.6:

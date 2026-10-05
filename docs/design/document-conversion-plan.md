@@ -577,6 +577,27 @@ through the Mac's own tool environment, see CONTRIBUTING.md "Dev loop"**):
   runaways live (the rest are caught by `assess` after the full generation) and 3 healthy pages; and among the
   readings that are not runaways the most complete is kept, so a false alarm costs time, not text.
 
+- 0.9.20 and the reader experiments (4B and 8B 4-bit, PaddleOCR-VL bf16, Tesseract `mar+hin+eng`) on three PPF
+  passbook pages and nine pages of the scanned deed, scored without hand transcription (gate, running-balance
+  arithmetic, the share of English words that are real words, Devanagari share, time; the 4B and 8B readers also
+  agree on every money amount of the passbook, so the digits were right and only the *columns* were wrong).
+  * **Page 2 of the passbook was never verified**: the reader wrote a blank line between the header lines and
+    the data rows, so the table was three rows long and the balance check ran over 0 rows. Joined (0.9.20), 24 rows
+    are checked and the arithmetic holds; two rows are one cell short (a shifted narration) and the page is now
+    flagged.
+  * **8B 4-bit vs 4B 4-bit** (machine otherwise idle; the 4B's first timings were taken while two indexing workers
+    shared the GPU): the 8B puts the passbook's values in the right columns (pages 2 and 4 pass the gate, page 3 fails
+    one balance), needs a retry on 3 of the 9 deed pages against 8 for the 4B, and reads the Marathi on deed
+    page 24 that the 4B leaves out. It is about twice as slow per page, drops the Devanagari header lines of the
+    passbook, and neither reader can read deed page 22 (a sheet of photographed cards).
+  * **PaddleOCR-VL 1.5 bf16** is not usable here: whole pages come back as 16 to 37 characters on three pages and as
+    runaways on others, and on a cropped passbook table it writes OTSL cells of junk until the token limit.
+  * **Tesseract** (`mar+hin+eng`, psm 4) takes 1 to 13 s a page, cannot loop, matches the 4B on English-word
+    validity on the healthy pages (0.79 to 0.90) and finds the Devanagari the VLMs miss on pages 22 to 24; it writes
+    no tables. Candidate: a last-resort reader for a page the VLM ladder cannot read, next to the Apple Vision rescue.
+  * Candidate for a decision: escalate a scanned page that the gate flags to the 8B (the repair step already
+    re-reads a page with a different repair model) instead of re-reading everything with it.
+
 **First real result** (3-page scanned Marathi/Hindi/English passbook, standard pipeline, Qwen3-VL 4B 4-bit):
 Devanagari headings and the cover page are correct; page 2's table has real rows but one row is missing, one
 merges two rows, and narration pushes numbers one column left; page 3's table is scrambled (shifted and

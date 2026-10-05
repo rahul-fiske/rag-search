@@ -389,6 +389,49 @@ def normalize_html_tables(md: str) -> tuple[str, int]:
     return "".join(out), len(spans)
 
 
+def join_split_pipe_tables(md: str) -> tuple[str, int]:
+    """*md* with the blank lines removed that cut a pipe table in two, and how many places were joined.
+
+    A reader sometimes writes the header lines of a table, a blank line, and then the data rows with no
+    header of their own: the parser (and the chunker, which splits blocks at blank lines) then sees a
+    table of three header rows and, apart from it, loose lines -- so the arithmetic of the statement is
+    never checked.  Rows that follow a table after a blank line, start with ``|``, are not a separator row
+    and have the header's number of cells (or up to two fewer: a reader leaves out trailing empty cells)
+    belong to it.  A second table (it has its own separator row) is left alone.  Idempotent."""
+    lines = md.split("\n")
+    out: list[str] = []
+    joined = 0
+    width = 0                                   # cells per row of the table just above, 0 = not in a table
+    pending: list[str] = []                     # blank lines seen since that table's last row
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        is_row = s.startswith("|") and s.count("|") >= 2
+        starts_a_table = i + 1 < len(lines) and bool(_SEP_RE.match(lines[i + 1])) and "|" in lines[i + 1]
+        if (is_row and width and pending and not _SEP_RE.match(ln) and not starts_a_table
+                and max(2, width - 2) <= len(_split_pipe_row(ln)) <= width):
+            pending = []                        # a continuation: drop the blank lines between
+            joined += 1
+            out.append(ln)
+        elif is_row:
+            out.extend(pending)
+            pending = []
+            if _SEP_RE.match(ln):               # a separator row: the line above it is this table's header
+                width = len(_split_pipe_row(out[-1])) if out and out[-1].strip().startswith("|") else 0
+            out.append(ln)
+        elif not s:
+            if width:
+                pending.append(ln)
+            else:
+                out.append(ln)
+        else:
+            out.extend(pending)
+            pending = []
+            width = 0
+            out.append(ln)
+    out.extend(pending)
+    return "\n".join(out), joined
+
+
 def table_text(t: Table) -> str:
     return " ".join(c for r in t.rows for c in r if c)
 

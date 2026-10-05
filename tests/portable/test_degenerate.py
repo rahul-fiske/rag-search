@@ -110,6 +110,14 @@ class ColumnCheckTests(unittest.TestCase):
             f"{5000 - sum(range(2, i + 1)) * 10}.00 | |" for i in range(2, 9)]
         self.assertEqual(self.check(carried)["verdict"], "ok")
 
+    def test_rows_may_leave_out_the_last_empty_column_but_not_a_middle_one(self):
+        head = "| Date | Particulars | Place | Remarks | For use |\n|---|---|---|---|---|\n"
+        short = head + "\n".join(f"| 0{i}/02/2020 | UPI/{i} | Pune | note {i} |" for i in range(1, 7))
+        self.assertEqual(gate.check_page(short, branch_kind="scan")["verdict"], "ok")
+        shifted = short + "\n| 07/02/2020 | Pune | note 7 |"
+        res = gate.check_page(shifted, branch_kind="scan")
+        self.assertIn("different numbers of cells", res["checks"][0]["detail"])
+
     def test_a_cheque_number_that_is_a_number_is_fine(self):
         rows = [f"| {i} | 0{i}/02/2020 | CHEQUE | 00{i}4711 | {i * 10}.00 | | {5000 - i * 10}.00 | |"
                 for i in range(1, 9)]

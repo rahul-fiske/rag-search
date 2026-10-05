@@ -175,6 +175,9 @@ class _Converter:
         r["md"], n_tables = tables.normalize_html_tables(r["md"])        # one table format, whoever read the page
         if n_tables:
             r["note"] = "; ".join(x for x in (r.get("note"), f"{n_tables} HTML table(s) written as Markdown tables") if x)
+        r["md"], n_joined = tables.join_split_pipe_tables(r["md"])
+        if n_joined:
+            r["note"] = "; ".join(x for x in (r.get("note"), "a table that the reader cut in two with a blank line was joined") if x)
         t_gate = time.perf_counter()
         conf = r.get("confidence") or (r.get("stats") or {}).get("confidence")
         g = gate.check_page(r["md"], branch_kind=kind, profile=e["profile"], confidence=conf)

@@ -73,3 +73,48 @@ class NormalizeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JoinSplitTableTests(unittest.TestCase):
+    HEAD = "| Date | Narration | Amount |\n|---|---|---|\n| DATE | PARTICULARS | AMOUNT |\n"
+    ROWS = "| 01/02/2020 | UPI/IMPS/1 | 5.00 |\n| 02/02/2020 | UPI/IMPS/2 | 6.00 |\n"
+
+    def test_data_rows_after_a_blank_line_join_the_table_above(self):
+        md = "Intro\n\n" + self.HEAD + "\n" + self.ROWS + "\nText after.\n"
+        out, n = tables.join_split_pipe_tables(md)
+        self.assertEqual(n, 1)                                      # one place was cut
+        self.assertEqual([len(t.rows) for t in find_tables(out)], [4])
+        self.assertIn("Text after.", out)
+        self.assertEqual(tables.join_split_pipe_tables(out), (out, 0))
+
+    def test_a_second_table_with_its_own_header_is_left_alone(self):
+        md = self.HEAD + self.ROWS + "\n| A | B |\n|---|---|\n| 1 | 2 |\n"
+        out, n = tables.join_split_pipe_tables(md)
+        self.assertEqual(n, 0)
+        self.assertEqual(out, md)
+
+    def test_rows_of_another_width_or_after_prose_are_not_joined(self):
+        md = self.HEAD + "\n| only |\n\nSome text\n\n" + self.ROWS
+        self.assertEqual(tables.join_split_pipe_tables(md)[1], 0)
+        wide = self.HEAD + "\n| a | b | c | d | e |\n"
+        self.assertEqual(tables.join_split_pipe_tables(wide)[1], 0)
+
+    def test_rows_that_leave_out_trailing_empty_cells_still_join(self):
+        md = self.HEAD + "\n| 01/02/2020 | UPI |\n| 02/02/2020 | UPI |\n"
+        out, n = tables.join_split_pipe_tables(md)
+        self.assertEqual(n, 1)
+        self.assertEqual([len(t.rows) for t in find_tables(out)], [4])
+
+    def test_the_arithmetic_of_a_cut_statement_is_checked_after_joining(self):
+        from rag_search.core.conversion import validators
+
+        head = ("| Date | Particulars | Debit | Credit | Balance |\n|---|---|---|---|---|\n"
+                "| DATE | PARTICULARS | DEBIT | CREDIT | BALANCE |\n")
+        rows = ("| 01/02/2020 | a | | 100.00 | 1,100.00 Cr |\n| 02/02/2020 | b | 50.00 | | 1,050.00 Cr |\n"
+                "| 03/02/2020 | c | | 25.00 | 1,075.00 Cr |\n| 04/02/2020 | d | 5.00 | | 1,070.00 Cr |\n")
+        cut = head + "\n" + rows
+        before = [validators.running_balance(t).get("checked") for t in find_tables(cut)]
+        out, _ = tables.join_split_pipe_tables(cut)
+        after = [validators.running_balance(t).get("checked") for t in find_tables(out)]
+        self.assertEqual(before, [0])
+        self.assertGreater(after[0], 0)

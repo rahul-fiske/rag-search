@@ -524,6 +524,11 @@ EXIF orientation applied; HEIC with `pillow-heif`) and large pictures on text pa
   or unclosed markup becomes a Markdown pipe table, cell for cell (a `|` is escaped); the rest stays HTML. The
   chunker keeps an HTML table whole across blank lines and, when it is larger than a chunk, cuts it by `<tr>`
   rows into valid `<table>` pieces that each carry the header rows (`CHUNKER_VERSION` v2).
+  `tables.join_split_pipe_tables` (same step) joins the data rows of a pipe table that a reader cut from its
+  header with a blank line (rows with the header's number of cells, or up to two fewer): the parser, the chunker
+  and the running-balance check otherwise see a table of three header rows and nothing to verify. In a real
+  passbook page this was 28 rows whose arithmetic had never been checked. `table_shape` accepts a row that
+  leaves out the header's last (empty) column; any other difference in the number of cells is a shifted row.
   The conversion profile of a document carries `post=<POST_VERSION>` (not the page cache's key), so a change
   to this kind of post-processing re-converts documents from the page cache and reads no page again.
 * **Fallback, always per page.** Whatever the VLM cannot read goes to docling with full-page OCR: branch
