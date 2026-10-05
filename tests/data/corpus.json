@@ -121,7 +121,7 @@
      "route": {"pages": 1, "branches": ["image"]},
      "real": {"status": "no_text", "message": "no text extracted"}},
 
-    {"path": "unsupported/legacy.doc", "kind": "skipped", "shows": "a legacy Word file: not indexed (reported), input of 'rag-search convert-legacy'",
+    {"path": "unsupported/legacy.doc", "kind": "skipped", "shows": "a legacy Word file: not indexed (reported)",
      "skip": "unsupported"},
     {"path": "unsupported/notes.rtf", "kind": "skipped", "shows": "RTF: not indexed, reported by extension", "skip": "unsupported"},
     {"path": "unsupported/bundle.zip", "kind": "skipped", "shows": "an archive: not opened, reported by extension", "skip": "unsupported"},

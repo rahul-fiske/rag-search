@@ -46,7 +46,7 @@ implementation differs from the plan's wording:
 - **Phase 1 #5**: `locations.read_source()` exists. Enforcement is a behavioural test rather than
   a static scan: indexing (with pruning and a full rebuild), export and delete run over read-only
   source folders, and the test checks every byte, mode and mtime afterwards. `convert-legacy`, the
-  one command that wrote into sources, now keeps originals unless `--delete-originals` is passed.
+  one command that wrote into sources, was removed in 0.9.18: rag-search never writes to a source.
 - **Phase 2 name collisions**: refused by default; `--as NAME` imports under another name;
   `--replace` replaces only an earlier import (never a docs folder, location or generated
   collection). Import also waits while a model switch is still in progress.

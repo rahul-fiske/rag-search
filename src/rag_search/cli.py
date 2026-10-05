@@ -1808,73 +1808,6 @@ def _cmd_convert(a: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def _cmd_convert_legacy(a: argparse.Namespace) -> int:
-    from .core.legacy_convert import LEGACY_FORMATS, convert_tree, find_soffice
-
-    paths = get_paths()
-    root = Path(a.path).expanduser().resolve()
-    if not root.is_dir():
-        _err(f"not a directory: {root}")
-        return EXIT_USAGE
-
-    raw_exts = [e.strip().lower().lstrip(".") for e in a.ext.split(",") if e.strip()]
-    exts = {"." + e for e in raw_exts}
-    unknown = exts - set(LEGACY_FORMATS)
-    if unknown:
-        _err(f"unsupported extension(s): {', '.join(sorted(unknown))} "
-             f"(this command only handles {', '.join(sorted(LEGACY_FORMATS))})")
-        return EXIT_USAGE
-
-    soffice = find_soffice()
-    if not soffice and not a.dry_run:
-        _err("LibreOffice (soffice) was not found.")
-        _err("Install it with:  brew install --cask libreoffice")
-        _err("then confirm with:  soffice --version")
-        return EXIT_UNAVAILABLE
-
-    log_path = paths.run / "convert-legacy.jsonl"
-    summary = convert_tree(root, exts=exts, soffice=soffice, dry_run=a.dry_run,
-                           keep_originals=not a.delete_originals, force=a.force,
-                           timeout=a.timeout, log_path=log_path)
-
-    if a.json:
-        _json({
-            "root": str(root), "dry_run": a.dry_run,
-            "converted": [{"src": str(r.src), "dest": str(r.dest), "deleted": r.deleted}
-                          for r in summary.converted],
-            "skipped": [str(r.src) for r in summary.skipped],
-            "failed": [{"src": str(r.src), "error": r.error} for r in summary.failed],
-        })
-        return EXIT_FAIL if summary.failed else EXIT_OK
-
-    total = len(summary.converted) + len(summary.skipped) + len(summary.failed)
-    if not total:
-        print(f"no {'/'.join(sorted(exts))} files found under {root}")
-        return EXIT_OK
-
-    if a.dry_run:
-        print(f"would convert {len(summary.converted)} file(s) under {root} "
-              f"({len(summary.skipped)} already done)")
-    else:
-        print(f"converting {len(summary.converted)} file(s) under {root} "
-              f"({len(summary.skipped)} already done, {len(summary.failed)} failed)")
-    for r in summary.skipped:
-        print(f"  [skip]  {r.src.relative_to(root)}  "
-              f"({r.dest.name} already exists; use --force to redo)")
-    for r in summary.converted:
-        if a.dry_run:
-            print(f"  [dry-run] {r.src.relative_to(root)} -> {r.dest.name}")
-        else:
-            kept = "original kept" if not r.deleted else "original deleted"
-            print(f"  [ok]    {r.src.relative_to(root)} -> {r.dest.name}  ({kept})")
-    for r in summary.failed:
-        print(f"  [failed] {r.src.relative_to(root)}  {r.error}")
-
-    if not a.dry_run and total:
-        print(f"\nlog: {log_path}")
-    return EXIT_FAIL if summary.failed else EXIT_OK
-
-
 def _cmd_setup(a: argparse.Namespace) -> int:
     from . import models
     from .core import diagnostics
@@ -2782,31 +2715,6 @@ def build_parser() -> argparse.ArgumentParser:
                         "(default: RAG_SEARCH_OCR_ENGINE)")
     p.add_argument("--table", choices=("accurate", "fast"), default="",
                    help="table structure mode for this run (default: RAG_SEARCH_TABLE_MODE)")
-
-    p = add("convert-legacy", "convert legacy .doc/.xls/.ppt/.rtf files to modern formats "
-                              "(via LibreOffice) so they can be indexed",
-           _cmd_convert_legacy,
-           description="docling only reads modern Office formats reliably; this converts "
-                       ".doc/.rtf -> .docx, .xls -> .xlsx and .ppt -> .pptx with LibreOffice, "
-                       "one file at a time, writing each converted copy next to its original. "
-                       "This is the one rag-search command that writes into a source folder, and "
-                       "only because you ask it to: indexing itself never changes, moves or "
-                       "deletes a source document.  Originals are kept unless you pass "
-                       "--delete-originals.  Requires LibreOffice (brew install --cask "
-                       "libreoffice).")
-    p.add_argument("path", help="folder to scan recursively")
-    p.add_argument("--ext", default="doc,xls,ppt,rtf",
-                   help="comma-separated legacy extensions to convert (default: doc,xls,ppt,rtf)")
-    p.add_argument("--dry-run", action="store_true",
-                   help="show what would be converted; touches nothing")
-    p.add_argument("--delete-originals", action="store_true", dest="delete_originals",
-                   help="delete each legacy file once its converted copy is verified")
-    p.add_argument("--keep-originals", action="store_true",
-                   help="keep the legacy files (the default; accepted for older scripts)")
-    p.add_argument("--force", action="store_true",
-                   help="reconvert even if a modern copy already exists (overwriting it)")
-    p.add_argument("--timeout", type=float, default=120.0,
-                   help="seconds to wait for LibreOffice per file before giving up (default: 120)")
 
     from . import register as _register
 
