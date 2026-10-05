@@ -489,23 +489,22 @@ class VlmReader:
         """One page image, read with a guard against a runaway.  A small model decoding greedily can fall
         into a loop on a dense page (the same line hundreds of times, or a stray script); the worker stops
         it after a few hundred tokens (``stopped == "loop"``) and this reads the page again: first with a
-        repetition penalty and a lower limit, then in horizontal strips.  The first reading that is not a
-        runaway is kept; when none is, the least repetitive one is, and the gate flags the page.  Returns
-        (reading, a note saying what happened or "")."""
+        repetition penalty and a lower limit, then in horizontal strips.  Of the readings that are not
+        runaways the most complete (most text) is kept -- so a false alarm on a healthy page costs time, not
+        text; when none is, the least repetitive one is, and the gate flags the page.  Returns (reading, a
+        note saying what happened or "")."""
         first = self.read_image(img, "page")
-        bad = first.get("stopped") == "loop" or degenerate.assess(first["md"])["bad"]
-        if not bad:
+        first_bad = degenerate.assess(first["md"])["bad"]
+        if first.get("stopped") != "loop" and not first_bad:
             return first, ""
         tried = [first]
+        good = [] if first_bad else [first]
         extra = {"tokens": int(first.get("tokens") or 0), "seconds": float(first.get("seconds") or 0.0)}
-
-        def keep(res: dict[str, Any], how: str) -> tuple[dict[str, Any], str]:
-            res = dict(res, tokens=extra["tokens"], seconds=extra["seconds"])
-            return res, f"the reader repeated itself on this page; read again {how}"
-
-        for how, fn in (("with a repetition penalty", lambda: self.read_image(
-                            img, "page", max_tokens=RETRY_MAX_TOKENS, repetition_penalty=RETRY_PENALTY)),
-                        (f"in {STRIPS} strips", lambda: self.read_strips(img))):
+        ladder = (("with a repetition penalty", lambda: self.read_image(
+                       img, "page", max_tokens=RETRY_MAX_TOKENS, repetition_penalty=RETRY_PENALTY)),
+                  (f"in {STRIPS} strips", lambda: self.read_strips(img)))
+        how_kept = ""
+        for how, fn in ladder:
             try:
                 res = fn()
             except ReaderError:
@@ -515,16 +514,26 @@ class VlmReader:
             extra["tokens"] += int(res.get("tokens") or 0)
             extra["seconds"] += float(res.get("seconds") or 0.0)
             tried.append(res)
-            if res.get("stopped") != "loop" and not degenerate.assess(res["md"])["bad"] and res["md"].strip():
-                return keep(res, how)
+            if res.get("stopped") != "loop" and res["md"].strip() and not degenerate.assess(res["md"])["bad"]:
+                good.append(res)
+                how_kept = how
+                break
 
         def runaway(r: dict[str, Any]) -> int:
             a = degenerate.assess(r["md"])
             return a["line_repeats"] + a["phrase_repeats"] + (10 ** 6 if not r["md"].strip() else 0)
 
-        best = min(tried, key=runaway)
-        res, _ = keep(best, "")
-        return res, "the reader repeated itself on this page and two more readings did too; the least repetitive was kept"
+        def done(res: dict[str, Any], note: str) -> tuple[dict[str, Any], str]:
+            return dict(res, tokens=extra["tokens"], seconds=extra["seconds"]), note
+
+        if good:
+            best = max(good, key=lambda r: len(r["md"].strip()))
+            if best is first:
+                return done(best, "the reader looked as if it was repeating itself, but the first reading was "
+                                  "the most complete and was kept")
+            return done(best, f"the reader repeated itself on this page; read again {how_kept}")
+        return done(min(tried, key=runaway), "the reader repeated itself on this page and two more readings did "
+                                             "too; the least repetitive was kept")
 
     def read_strips(self, img: Path) -> dict[str, Any]:
         """Read *img* as STRIPS horizontal strips (cut where the page is blank) and join the texts."""

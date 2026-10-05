@@ -514,8 +514,9 @@ EXIF orientation applied; HEIC with `pillow-heif`) and large pictures on text pa
   script. The worker checks the text every 64 tokens (`degenerate.looping`) and stops a loop after a few
   hundred tokens (`stopped: "loop"`); the page is then read again (`VlmReader.read_page_guarded`) with a
   repetition penalty of 1.2 and a limit of 3072 tokens, and if that also runs away in three horizontal strips
-  cut at blank rows. The first reading that is not a runaway (`degenerate.assess`) is kept; when none is, the
-  least repetitive one is, the page's note says so and the gate marks the page `low`. A healthy page is read
+  cut at blank rows. Of the readings that are not runaways (`degenerate.assess`) the most complete (most text) is kept, so a
+  false alarm of the live test costs time and not text; when none is, the least repetitive one is, the page's
+  note says so and the gate marks the page `low`. A healthy page is read
   once. A page cached by a version without the guard (`guard` of the cache entry < `vlm.GUARD_VERSION`)
   whose text is a runaway is read again once instead of being served from the cache.
 * **Table format.** The reader is asked for HTML tables (they can carry merged cells), but every page goes

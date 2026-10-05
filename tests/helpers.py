@@ -107,6 +107,10 @@ class FakeVlmBackend:
             return {"md": text, "tokens": 3}
         if plan.get("empty"):
             return {"md": "", "tokens": 0}
+        if plan.get("false_alarm"):                 # a healthy long page the loop test stops by mistake
+            long_page = " ".join(f"Clause{i} binds party{i * 3} to pay sum{i * 100} on date{i * 7} under item{i * 11}." for i in range(60))
+            return ({"md": long_page, "tokens": 500, "stopped": "loop"} if not repetition_penalty
+                    else {"md": "Clause 1 only.", "tokens": 20})
         runaway = plan.get("always_loop")
         if plan.get("loop_over") is not None:
             from PIL import Image

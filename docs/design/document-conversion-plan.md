@@ -570,6 +570,13 @@ through the Mac's own tool environment, see CONTRIBUTING.md "Dev loop"**):
   re-converts every document from the page cache, re-reads only the runaway pages, and (with the chunker bump)
   re-embeds everything once. `convert-legacy` was removed: rag-search writes nothing into a source folder.
 
+- 0.9.19: the first real run of the loop guard stopped a healthy page by mistake (a list of repeated "field: value"
+  lines is not a loop) and the penalty retry came back shorter than the page it replaced. Fixes: the live test looks
+  at the text without tags and needs the last 100 characters seen 15 times in 6000 (or 300 identical lines of
+  empty table rows), measured on the 578 stored image-read pages of `documents`: it would stop 39 of the 56
+  runaways live (the rest are caught by `assess` after the full generation) and 3 healthy pages; and among the
+  readings that are not runaways the most complete is kept, so a false alarm costs time, not text.
+
 **First real result** (3-page scanned Marathi/Hindi/English passbook, standard pipeline, Qwen3-VL 4B 4-bit):
 Devanagari headings and the cover page are correct; page 2's table has real rows but one row is missing, one
 merges two rows, and narration pushes numbers one column left; page 3's table is scrambled (shifted and

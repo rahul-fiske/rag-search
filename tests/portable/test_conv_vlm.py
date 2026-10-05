@@ -373,6 +373,13 @@ class LoopGuardTests(VlmBase):
         self.assertEqual(self.calls(), 2)
         self.assertIn("repetition penalty", note)
 
+    def test_a_false_alarm_keeps_the_most_complete_reading(self):
+        self.plan(false_alarm=True)
+        res, note = self.reader().read_page_guarded(self.page())
+        self.assertEqual(self.calls(), 2)                           # stopped early, read again with a penalty
+        self.assertIn("Clause59", res["md"])                       # but the long first reading won
+        self.assertIn("most complete", note)
+
     def test_when_every_reading_runs_away_the_least_repetitive_is_kept_and_the_page_is_flagged(self):
         self.plan(always_loop=True)
         res, note = self.reader().read_page_guarded(self.page())

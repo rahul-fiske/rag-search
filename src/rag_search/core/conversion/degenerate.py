@@ -84,11 +84,22 @@ def assess(md: str) -> dict[str, Any]:
             "compression": round(ratio, 3), "foreign": foreign[0] if foreign[1] > FOREIGN_SHARE else ""}
 
 
+LOOP_WINDOW = 6000                  # characters of the text (tags removed) looked at,
+LOOP_REPEATS = 15                   # the last 100 characters seen this often in them: a loop, not a legitimate
+                                    # repeated structure (a list of "field: value" lines repeats a few times)
+LOOP_TAIL_LETTERS = 40              # ... and that tail holds this many letters (table furniture is not text)
+EMPTY_ROWS = 300                    # the last this many lines identical: a runaway of empty table rows
+
+
 def looping(text: str) -> bool:
-    """Cheap test while generating: has the end of *text* just repeated itself several times in a row?"""
-    if len(text) < 700:
+    """Cheap test while generating: has the end of *text* just repeated itself many times over?"""
+    if len(text) < 1200:
         return False
-    tail = text[-100:]
-    if not tail.strip() or len(set(tail)) < 4:
-        return text[-400:].count(tail[-20:]) > 15 if tail.strip() else True
-    return text[-2400:].count(tail) >= 4
+    raw = [ln.strip() for ln in text[-EMPTY_ROWS * 80:].split("\n") if ln.strip()]
+    if len(raw) >= EMPTY_ROWS and len(set(raw[-EMPTY_ROWS:])) == 1:
+        return True
+    plain = re.sub(r"\s+", " ", _plain(text))
+    tail = plain[-100:]
+    if len(plain) < 600 or sum(c.isalpha() for c in tail) < LOOP_TAIL_LETTERS:
+        return False
+    return plain[-LOOP_WINDOW:].count(tail) >= LOOP_REPEATS

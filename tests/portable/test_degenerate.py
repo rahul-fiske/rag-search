@@ -57,8 +57,15 @@ class DetectorTests(unittest.TestCase):
 
     def test_looping_sees_a_repeating_tail_only(self):
         self.assertTrue(looping("intro. " + "the said property shall be conveyed. " * 80))
+        self.assertTrue(looping("<table>\n" + "<tr><td></td></tr>\n" * 320))
         self.assertFalse(looping(prose(60) * 2))
         self.assertFalse(looping("short"))
+
+    def test_looping_does_not_stop_a_page_with_a_repeated_structure(self):
+        fields = "\n".join(f"Name: person {i}; Plot: {i * 7}; Share: {i}%; Remarks: nil" for i in range(12))
+        self.assertFalse(looping(prose(30) + "\n\n" + fields))
+        grid = "<table>\n" + "<tr><td></td><td></td><td></td></tr>\n" * 40 + "</table>\n" + prose(40)
+        self.assertFalse(looping(grid))
 
     def test_the_gate_flags_a_runaway_only_for_pages_read_as_images(self):
         loop = "\n".join(["The same long narration text here for every row"] * 60)
