@@ -250,9 +250,10 @@ class BenchRunTests(TempHome):
 
     def setUp(self):
         super().setUp()
-        self.src = self.paths.docs / "bank" / "pass.pdf"
+        self.src = self.sdir / "bank" / "pass.pdf"
         self.src.parent.mkdir(parents=True)
         write_text_pdf(self.src, ["x" * 60, "y" * 60])
+        self.register_tree()
         md = pagemd.join_pages({1: "Intro text of page one", 2: self.TRUTH})
         mdf = self.paths.markup / "bank" / "pass.md"
         mdf.parent.mkdir(parents=True)

@@ -308,24 +308,22 @@
       totals.outcomes && Object.keys(totals.outcomes).length ? h('div', { style: { marginTop: '8px' } }, CV.outcomeChips(totals.outcomes)) : null);
   }
 
-  // ---------- Sources: one per collection (the docs folder's sub-folders, registered folders, imports) ----------
+  // ---------- Sources: one per collection (registered folders, imports) ----------
   function sourcesView(idx) {
     const src = idx && idx.sources;
-    const docsFolder = (src && src.docs_folder) || (idx && idx.docs_folder) || '';
-    if (!src) return docsFolder ? h('p', { class: 'small muted', style: { margin: 0 } }, 'Docs folder: ', h('code', null, docsFolder)) : '';
-    const dc = src.docs_collections || [], locs = src.locations || [], imp = src.imported || [];
-    const n = dc.length + locs.length + imp.length;
-    const parts = [dc.length ? `${dc.length} from the docs folder` : '', locs.length ? `${locs.length} registered folder${locs.length > 1 ? 's' : ''}` : '', imp.length ? `${imp.length} imported` : ''].filter(Boolean);
+    if (!src) return '';
+    const locs = src.locations || [], imp = src.imported || [];
+    const n = locs.length + imp.length;
+    const parts = [locs.length ? `${locs.length} registered folder${locs.length > 1 ? 's' : ''}` : '', imp.length ? `${imp.length} imported` : ''].filter(Boolean);
     const rows = [
-      ...dc.map(c => [c, h('span', null, h('code', null, docsFolder + '/' + c), h('span', { class: 'muted small' }, '  docs folder'))]),
       ...locs.map(l => [l.collection, h('span', null, h('code', null, l.folder), h('span', { class: 'muted small' }, '  registered folder'))]),
       ...imp.map(c => [c, h('span', { class: 'muted' }, 'imported collection: no source folder, never re-indexed here')]),
     ];
     return h('details', { class: 'cmd' },
       h('summary', null, h('span', { class: 'name' }, n ? `Sources · ${num(n)} collection${n > 1 ? 's' : ''}` : 'Sources · none yet'),
-        h('span', { class: 'muted small' }, parts.join(' · ') || 'put documents in the docs folder, or register a folder on the Collections tab')),
+        h('span', { class: 'muted small' }, parts.join(' · ') || 'register a folder on the Collections tab')),
       h('div', { class: 'body' },
-        h('p', { class: 'small muted', style: { marginTop: 0 } }, 'Each collection has its own source. Sources are only ever read, never changed. The docs folder: ', h('code', null, docsFolder), '. Add or remove sources on the ', h('a', { href: '#/collections' }, 'Collections & access'), ' tab.'),
+        h('p', { class: 'small muted', style: { marginTop: 0 } }, 'Each collection has its own source. Sources are only ever read, never changed. Add or remove sources on the ', h('a', { href: '#/collections' }, 'Collections & access'), ' tab.'),
         rows.length ? h('div', { class: 'table-wrap' }, h('table', null, h('thead', null, h('tr', null, h('th', null, 'Collection'), h('th', null, 'Source'))),
           h('tbody', null, rows.map(([c, where]) => h('tr', null, h('td', { class: 'mono' }, c), h('td', null, where)))))) : null));
   }

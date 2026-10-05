@@ -77,7 +77,7 @@ def _clock(ts: Any) -> str:
             d = dt.datetime.fromtimestamp(ts)
         else:
             d = dt.datetime.strptime(str(ts), "%Y-%m-%dT%H:%M:%SZ").replace(
-                tzinfo=dt.timezone.utc).astimezone()
+                tzinfo=dt.UTC).astimezone()
         return d.strftime("%Y-%m-%d %H:%M:%S")
     except (ValueError, OSError, OverflowError):
         return str(ts)
@@ -394,8 +394,7 @@ def _cmd_list(a: argparse.Namespace) -> int:
     if a.json:
         _json(res)
         return EXIT_OK
-    print(f"generation {res.get('generation')}, published {_clock(res.get('published_at'))}  "
-          f"(docs folder: {res['docs_folder']})")
+    print(f"generation {res.get('generation')}, published {_clock(res.get('published_at'))}")
     t = res.get("totals") or {}
     if t.get("collections"):
         print(f"  total: {t['collections']} collection(s), {t['documents']} doc(s), "
@@ -648,7 +647,7 @@ def _cmd_bench_run(a: argparse.Namespace) -> int:
     r = api.bench_run(get_paths(), a.set, engine=a.engine, name=a.name, include_drafts=a.drafts,
                       classes=[c for c in a.classes.split(",") if c] or None, limit=a.limit, progress=progress)
     if not a.json:
-        print("", file=sys.stderr)
+        print(file=sys.stderr)
     if not r.get("ok"):
         return _fail(r)
     rec = r["result"]
@@ -965,7 +964,7 @@ def _cmd_service(a: argparse.Namespace) -> int:
 
 def _cmd_paths(a: argparse.Namespace) -> int:
     p = get_paths()
-    info = {"home": p.home, "docs": p.docs, "workspace": p.workspace, "index": p.index,
+    info = {"home": p.home, "locations": p.locations_file, "workspace": p.workspace, "index": p.index,
             "markup": p.markup, "serving": p.serving, "current": p.current_link, "run": p.run,
             "jobs": p.jobs, "config": p.config_file, "search_socket": p.socket("search"),
             "indexer_socket": p.socket("indexer"), "search_log": p.log_file("search"),
@@ -1052,8 +1051,8 @@ def _cmd_access(a: argparse.Namespace) -> int:
             rows = ov["collections"]
             print("Every collection is open to all clients unless it is restricted below.")
             if not rows:
-                print("\n(no collections yet: put documents in the docs folder, "
-                      f"{paths.docs}, then run `rag-search index new`)")
+                print("\n(no collections yet: register a folder of documents with "
+                      "`rag-search location add NAME FOLDER`, then run `rag-search index new`)")
             else:
                 w = max([len("COLLECTION")] + [len(r["collection"]) for r in rows])
                 print(f"\n  {'COLLECTION'.ljust(w)}  {'ACCESS'.ljust(10)}  "
@@ -1175,7 +1174,6 @@ def _cmd_location(a: argparse.Namespace) -> int:
         res = r["result"]
         if res.get("error"):
             _err(f"warning: {res['error']}")
-        print(f"docs folder: {res['docs_folder']}  (each first-level folder is a collection)")
         if not res["locations"]:
             print("no registered locations.  Add one with:  rag-search location add NAME FOLDER")
         for loc in res["locations"]:
@@ -1373,13 +1371,41 @@ def _cmd_playground_create(a: argparse.Namespace) -> int:
         print(f"  seeded from production: embedding={c['embedding_model']}, "
               f"reranker={c['rerank_model']}, chunk_size={c['chunk_size']}, "
               f"chunk_overlap={c['chunk_overlap']}")
-    if res["documents_added"]:
-        print(f"  added {res['documents_added']} document(s) to collection {res['collection']!r}")
-    else:
-        print(f"  add documents under {res['home']}/docs/{res['collection']}/ "
-              "(or re-run with --from PATH), then: rag-search playground index " + a.name)
+    for src in res["sources"]:
+        print(f"  source {src['collection']!r}: {src['folder']} (read in place, never copied)")
+    if not res["sources"]:
+        print(f"  add a source folder: rag-search playground source {a.name} add FOLDER, "
+              f"then: rag-search playground index {a.name}")
     print(f"  a labeled-query template for benchmarking is at {res['home']}/bench/"
           "queries.jsonl.example")
+    return EXIT_OK
+
+
+def _cmd_playground_source(a: argparse.Namespace) -> int:
+    from .core import playground as pg
+
+    try:
+        if a.action == "add":
+            if not a.arg:
+                raise ValueError("give the folder: playground source NAME add FOLDER [--as COLLECTION]")
+            res: Any = pg.add_source(get_paths(), a.name, a.arg, a.collection)
+            text = f"source {res['collection']!r}: {res['folder']}"
+        elif a.action == "remove":
+            if not a.arg:
+                raise ValueError("give the collection: playground source NAME remove COLLECTION")
+            res = {"removed": pg.remove_source(get_paths(), a.name, a.arg)}
+            text = f"removed source {res['removed']!r} (its index stays until the next build prunes it)"
+        else:
+            res = pg.list_sources(get_paths(), a.name)
+            text = "\n".join(f"{x['collection']}  {x['folder']}" + ("" if x["reachable"] else "  (unreachable)")
+                             for x in res["status"]) or "no sources (rag-search playground source NAME add FOLDER)"
+    except ValueError as exc:
+        _err(f"error: {exc}")
+        return EXIT_USAGE
+    if a.json:
+        _json(res)
+    else:
+        print(text)
     return EXIT_OK
 
 
@@ -1657,7 +1683,7 @@ def _cmd_playground_list(a: argparse.Namespace) -> int:
         return EXIT_OK
     for r in rows:
         cfg = r["config"]
-        print(f"{r['name']}: {r['documents']} doc(s), collections "
+        print(f"{r['name']}: {len(r['sources'])} source folder(s), collections "
               f"{', '.join(r['indexed_collections']) or '(not indexed yet)'}, "
               f"{r['bench_runs']} bench run(s)")
         print(f"  model: {cfg['embedding_model']} + {cfg['rerank_model']}")
@@ -1786,7 +1812,7 @@ def _cmd_convert_legacy(a: argparse.Namespace) -> int:
     from .core.legacy_convert import LEGACY_FORMATS, convert_tree, find_soffice
 
     paths = get_paths()
-    root = Path(a.path).expanduser().resolve() if a.path else paths.docs.resolve()
+    root = Path(a.path).expanduser().resolve()
     if not root.is_dir():
         _err(f"not a directory: {root}")
         return EXIT_USAGE
@@ -1855,7 +1881,7 @@ def _cmd_setup(a: argparse.Namespace) -> int:
 
     paths = get_paths()
     ensure_dirs(paths)
-    print(f"Data folder: {paths.home}\nDocs folder: {paths.docs}")
+    print(f"Data folder: {paths.home}")
     if a.models:
         try:
             emb, rer = models.resolve_preset(a.models)
@@ -2386,8 +2412,8 @@ def build_parser() -> argparse.ArgumentParser:
         q = iadd(mode, text, _cmd_index_start)
         q.set_defaults(mode=mode)
         q.add_argument("path", nargs="?", default="",
-                       help="file or folder inside the docs folder, or a registered location's "
-                            "name (optionally /subfolder) (default: everything)")
+                       help="a registered location's name (optionally /subfolder), or a file or "
+                            "folder inside one (default: everything)")
         q.add_argument("--restart", action="store_true",
                        help="kill a running indexing run and start over")
         q.add_argument("-f", "--follow", action="store_true", help="stream progress until done")
@@ -2460,10 +2486,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("text", nargs="?", default=None, help="new description to set")
     p.add_argument("--clear", action="store_true", help="clear the description")
 
-    loc = add("location", "register folders outside the docs folder as collections", _cmd_location,
-              description="A collection is a first-level folder of the docs folder -- or any "
-              "folder elsewhere registered here (a notes vault, a synced drive, a share): its "
-              "whole tree becomes one collection.  Sources are only ever read.  A location that "
+    loc = add("location", "register the folders whose documents are indexed", _cmd_location,
+              description="A collection is a folder registered here under a name (a notes vault, a "
+              "synced drive, a share, a project folder): its whole tree becomes one collection.  "
+              "Sources are only ever read.  A location that "
               "cannot be read during an indexing run (unmounted, offline) is skipped and keeps "
               "its last index; documents removed from a readable location are removed from the "
               "index.")
@@ -2474,7 +2500,7 @@ def build_parser() -> argparse.ArgumentParser:
         q.set_defaults(fn=_cmd_location)
         return q
 
-    ladd("list", "the docs folder and every registered location, and whether it is readable")
+    ladd("list", "every registered location, and whether it is readable")
     q = ladd("add", "make FOLDER (and everything below it) the collection NAME")
     q.add_argument("name")
     q.add_argument("folder")
@@ -2516,7 +2542,7 @@ def build_parser() -> argparse.ArgumentParser:
     pg_p = add("playground", "a sandbox for trying models/tunables and benchmarking, "
               "structurally separate from your real collections", None,
               description="Everything here lives under <home>/playground/<name>/ -- its own "
-              "docs, its own index, its own config.json -- and is never read by production "
+              "sources, its own index, its own config.json -- and is never read by production "
               "search, indexing or publish. No daemon: each command loads the small index and "
               "the experiment's chosen models, runs, and exits.")
     pgsub = pg_p.add_subparsers(dest="playground_cmd", metavar="ACTION")
@@ -2529,13 +2555,21 @@ def build_parser() -> argparse.ArgumentParser:
     q = pgadd("create", "start a new experiment (optionally seeded with documents)",
               _cmd_playground_create)
     q.add_argument("name")
-    q.add_argument("--from", dest="source", action="append", default=[], metavar="PATH",
-                   help="a file or folder to copy in as sample documents (repeatable)")
-    q.add_argument("--collection", default="sample",
-                   help="collection name for the copied documents (default: sample)")
+    q.add_argument("--from", dest="source", action="append", default=[], metavar="FOLDER",
+                   help="a folder of sample documents to use as a source, read where it is (repeatable)")
+    q.add_argument("--collection", default="",
+                   help="collection name for a single --from folder (default: the folder's name)")
     q.add_argument("--from-production", dest="from_production", action="store_true",
                    help="seed the experiment's embedding/reranker/chunk/search settings from "
                    "production's current config.json, instead of this module's own defaults")
+
+    q = pgadd("source", "list, add or remove the folders an experiment reads its documents from",
+              _cmd_playground_source)
+    q.add_argument("name")
+    q.add_argument("action", choices=["list", "add", "remove"])
+    q.add_argument("arg", nargs="?", default="", help="the folder (add) or the collection (remove)")
+    q.add_argument("--as", dest="collection", default="", metavar="COLLECTION",
+                   help="collection name for the folder (default: the folder's own name)")
 
     q = pgadd("config", "show, or change, an experiment's model/chunk/tunable choices",
               _cmd_playground_config)
@@ -2573,7 +2607,7 @@ def build_parser() -> argparse.ArgumentParser:
               "no generations", _cmd_playground_index)
     q.add_argument("name")
     q.add_argument("--rebuild", action="store_true", help="re-embed even if unchanged")
-    q.add_argument("--wipe", action="store_true", help="drop documents no longer in docs/ first")
+    q.add_argument("--wipe", action="store_true", help="drop documents no longer in the sources first")
     q.add_argument("--force-md", dest="force_md", action="store_true", help="re-convert to Markdown")
     q.add_argument("--jobs", type=int, default=1)
     q.add_argument("--job", default="", help=argparse.SUPPRESS)       # set by the dashboard
@@ -2671,7 +2705,7 @@ def build_parser() -> argparse.ArgumentParser:
             kw["type"] = int
         p.add_argument(t.cli_flag, **kw)
 
-    p = add("paths", "print data/docs/index folder locations", _cmd_paths)
+    p = add("paths", "print data and index folder locations", _cmd_paths)
     p.add_argument("name", nargs="?", default="")
 
     mp = add("models", "list, download and switch the embedding model and the reranker", _cmd_models,
@@ -2760,8 +2794,7 @@ def build_parser() -> argparse.ArgumentParser:
                        "deletes a source document.  Originals are kept unless you pass "
                        "--delete-originals.  Requires LibreOffice (brew install --cask "
                        "libreoffice).")
-    p.add_argument("path", nargs="?", default="",
-                   help="folder to scan recursively (default: the docs folder)")
+    p.add_argument("path", help="folder to scan recursively")
     p.add_argument("--ext", default="doc,xls,ppt,rtf",
                    help="comma-separated legacy extensions to convert (default: doc,xls,ppt,rtf)")
     p.add_argument("--dry-run", action="store_true",

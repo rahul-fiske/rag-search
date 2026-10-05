@@ -4,7 +4,7 @@
 ``.doc``/``.xls``/``.ppt``, only by versions of docling that themselves shell out to
 LibreOffice) -- converting them once, up front, with the well-tested ``soffice
 --convert-to`` CLI means rag-search never has to depend on that machinery at all: it
-just sees an ordinary ``.docx``/``.xlsx``/``.pptx`` sitting in the docs folder.
+just sees an ordinary ``.docx``/``.xlsx``/``.pptx`` sitting in a source folder.
 
 One file per ``soffice`` invocation, on purpose: a batched multi-file invocation is
 faster, but a hang or crash on file N of a batch only shows up after the whole batch's
@@ -26,9 +26,9 @@ import subprocess
 import tempfile
 import time
 import zipfile
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Iterator
 
 # extension -> the format name `soffice --convert-to` should produce
 LEGACY_FORMATS: dict[str, str] = {

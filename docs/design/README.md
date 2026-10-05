@@ -28,3 +28,12 @@ These notes are internal: they are not packaged and are left out of the external
 3. In the same change: update `ARCHITECTURE.md` / `README.md` (and copy them into
    `src/rag_search/ui/static/docs/`, or run `scripts/build_release.sh`, which does it -- a test
    checks the copies), and update the plan's status when an item is done or a decision changes.
+
+## Superseded: the built-in docs folder
+
+The analyses and plans above that mention `<home>/docs`, `RAG_SEARCH_DOCS`, the `default` collection or
+"docs-folder collections" describe the first design. They are kept as the record of why locations were
+introduced. The docs folder has since been removed: every collection comes from a registered location
+(`locations.json`), a playground experiment registers its own source folders the same way, and an indexed
+collection whose folder is not registered is *unregistered* (searchable, never updated). `ARCHITECTURE.md` §5.5
+is the current description.

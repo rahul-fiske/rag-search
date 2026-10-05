@@ -38,7 +38,7 @@ class ManifestTests(unittest.TestCase):
 
 class ScanTests(TempHome):
     def test_the_scan_lists_reads_skips_and_reports_as_described(self):
-        docs = corpus.copy_tree(self.paths.docs)
+        docs = corpus.copy_tree(self.sdir)
         found, unsupported = indexer.scan_sources_with_skips(docs, indexer.exclude_dirs(self.paths))
         rel = {p.relative_to(docs).as_posix() for p in found}
         self.assertEqual(rel, {e["path"] for e in corpus.entries(has="route")})

@@ -66,8 +66,8 @@ class EventWriter:
 
 
 def resolve_sources(paths: Paths, spec: dict[str, Any]) -> tuple[Any, list[Path], list[dict[str, str]]]:
-    """(source roots, sources, unsupported) for a spec.  `path` may be a file or folder inside
-    the docs folder or a registered location (see ``locations.plan_scan``).
+    """(source roots, sources, unsupported) for a spec.  `path` may be a registered location's name or a
+    file or folder inside one (see ``locations.plan_scan``).
 
     `unsupported` is every file seen but left out of `sources` because its extension isn't one
     indexing reads -- `{"src", "extension"}` per file -- so a document with the wrong extension

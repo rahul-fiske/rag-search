@@ -12,7 +12,7 @@ from unittest import mock
 from tests import corpus
 from tests.helpers import TempHome
 
-from rag_search import api, inventory, locations, paths as paths_mod
+from rag_search import access, api, catalog, inventory, locations, paths as paths_mod
 from rag_search.core import chunker
 
 
@@ -72,19 +72,20 @@ class PathHelperTests(TempHome):
     def test_source_roots_tell_the_collection_a_file_belongs_to(self):
         loc = self.tmp / "vault"
         loc.mkdir()
-        roots = paths_mod.SourceRoots(str(self.paths.docs), (("vault", str(loc)),))
-        self.assertEqual(roots.docs_path, self.paths.docs)
-        self.assertEqual(roots.location_names(), ["vault"])
+        other = self.tmp / "notes"
+        roots = paths_mod.SourceRoots((("vault", str(loc)), ("notes", str(other))))
+        self.assertEqual(roots.location_names(), ["vault", "notes"])
         self.assertEqual(roots.root_of("vault"), loc)
-        self.assertEqual(roots.root_of("default"), self.paths.docs)
-        self.assertEqual(roots.root_of("team"), self.paths.docs / "team")
+        self.assertIsNone(roots.root_of("team"))
         self.assertEqual(roots.rel(loc / "p" / "a.md").parts, ("vault", "p", "a.md"))
         with self.assertRaises(ValueError):
             roots.rel(loc)                                      # a location's own folder is not a document
-        self.assertEqual(roots.rel(self.paths.docs / "top.md").parts, ("default", "top.md"))
+        with self.assertRaises(ValueError):
+            roots.rel(self.tmp / "top.md")                      # in no location: there is no default collection
         self.assertIs(paths_mod.SourceRoots.of(roots), roots)
         self.assertEqual(paths_mod.SourceRoots.of(roots.to_dict()), roots)
-        self.assertEqual(paths_mod.SourceRoots.of(self.paths.docs), paths_mod.SourceRoots(str(self.paths.docs)))
+        with self.assertRaises(TypeError):
+            paths_mod.SourceRoots.of(self.tmp)
 
     def test_asking_the_os_to_fetch_cloud_files_is_harmless_where_it_cannot(self):
         with mock.patch.object(paths_mod.sys, "platform", "darwin"), mock.patch("ctypes.CDLL", side_effect=OSError("no libc")):
@@ -123,9 +124,7 @@ class LocationRegistryTests(TempHome):
                  (("x", ""), "give the folder"),
                  (("shared", str(self.folder("other"))), "already registered"),
                  (("again", str(shared / "sub")), None),
-                 (("default", str(self.folder("d"))), "reserved"),
                  (("a/b", str(self.folder("e"))), "not a usable collection name"),
-                 (("inside", str(self.paths.docs)), "inside the docs folder"),
                  (("home", str(self.paths.home)), "overlaps")]
         (shared / "sub").mkdir()
         for (name, folder), text in cases:
@@ -133,10 +132,6 @@ class LocationRegistryTests(TempHome):
                 locations.add(self.paths, name, folder)
             if text:
                 self.assertIn(text, str(cm.exception))
-        (self.paths.docs / "clash").mkdir()
-        with self.assertRaises(locations.LocationError) as cm:
-            locations.add(self.paths, "clash", str(self.folder("c")))
-        self.assertIn("already has a", str(cm.exception))
 
     def test_an_overlap_with_another_location_and_a_relative_folder(self):
         outer = self.folder("outer")
@@ -155,29 +150,34 @@ class LocationRegistryTests(TempHome):
         self.assertEqual(locations.remove_entry(self.paths, "REL"), "rel")
         self.assertEqual(locations.remove_entry(self.paths, "rel"), "")
 
-    def test_targets_are_resolved_against_the_docs_folder_locations_and_refused_when_unreachable(self):
+    def test_targets_are_resolved_against_the_locations_and_refused_when_unreachable(self):
         shared = self.folder()
         locations.add(self.paths, "shared", str(shared))
-        corpus.copy("text/readme.txt", self.paths.docs / "team" / "readme.txt")
-        self.assertEqual(locations.resolve_target(self.paths, ""), (self.paths.docs.resolve(), ""))
+        self.assertEqual(locations.resolve_target(self.paths, ""), (None, ""))
         self.assertEqual(locations.resolve_target(self.paths, "SHARED")[1], "shared")           # case-insensitive
         self.assertEqual(locations.resolve_target(self.paths, "shared/notes.md")[1], "")
-        self.assertEqual(locations.resolve_target(self.paths, "team")[1], "team")
         with self.assertRaises(locations.LocationError) as cm:
             locations.resolve_target(self.paths, "shared/missing.md")
         self.assertIn("not found", str(cm.exception))
         with self.assertRaises(locations.LocationError) as cm:
             locations.resolve_target(self.paths, str(self.tmp))
-        self.assertIn("must be inside the docs folder", str(cm.exception))
+        self.assertIn("must be inside a registered location", str(cm.exception))
+        with self.assertRaises(locations.LocationError) as cm:
+            locations.resolve_target(self.paths, "elsewhere/x")
+        self.assertIn("neither a registered location", str(cm.exception))
         with mock.patch.object(locations, "reachable", return_value=False):
             for target in ("shared", str(shared / "notes.md")):
                 with self.assertRaises(locations.LocationError) as cm:
                     locations.resolve_target(self.paths, target)
                 self.assertIn("not reachable", str(cm.exception))
-        (self.paths.docs / "shared").mkdir()                                  # same name as the location
+
+    def test_nothing_registered_is_refused_with_one_message(self):
         with self.assertRaises(locations.LocationError) as cm:
-            locations.resolve_target(self.paths, str(self.paths.docs / "shared"))
-        self.assertIn("is ignored", str(cm.exception))
+            locations.resolve_target(self.paths, "anything")
+        self.assertEqual(str(cm.exception), locations.NO_LOCATIONS)
+        with self.assertRaises(locations.LocationError) as cm:
+            locations.plan_scan(self.paths)
+        self.assertEqual(str(cm.exception), locations.NO_LOCATIONS)
 
     def test_the_dashboards_source_listing_always_answers_and_a_source_file_can_be_read(self):
         with mock.patch.object(locations, "load", side_effect=RuntimeError("boom")):
@@ -189,17 +189,25 @@ class LocationRegistryTests(TempHome):
 
 
 class InventoryStateTests(TempHome):
-    def test_files_directly_in_the_docs_folder_belong_to_the_default_collection(self):
-        corpus.copy("text/notes.md", self.paths.docs / "notes.md")
-        corpus.copy("unsupported/notes.rtf", self.paths.docs / "notes.rtf")
-        corpus.copy("text/readme.txt", self.paths.docs / "default" / "readme.txt")
+    def test_an_indexed_collection_without_a_registered_folder_is_unregistered_and_searchable(self):
+        corpus.copy("text/notes.md", self.sdir / "team" / "notes.md")
+        corpus.copy("text/readme.txt", self.sdir / "keep" / "readme.txt")
         self.index()
         self.publish()
-        info = inventory.collection_info(self.paths, "default")
-        self.assertEqual((info["source"]["files"], info["source"]["unsupported"]), (2, 1))
+        from rag_search import locations
+        locations.remove_entry(self.paths, "team")
+        info = inventory.collection_info(self.paths, "team")
+        self.assertEqual(info["kind"], "unregistered")
+        rows = {r["collection"]: r["kind"] for r in access.overview(self.paths)["collections"]}
+        self.assertEqual(rows, {"team": "unregistered", "keep": "location"})
+        self.index()                                    # nothing updates it, and nothing removes it
+        self.assertIn("team", catalog.collection_names(catalog.live_catalog(self.paths)))
+        self.register_tree()                            # registering the folder again picks it up
+        self.assertEqual(inventory.collection_info(self.paths, "team")["kind"], "location")
 
     def test_a_collection_with_documents_but_nothing_indexed_yet_says_what_to_run(self):
-        corpus.copy("text/notes.md", self.paths.docs / "team" / "notes.md")
+        corpus.copy("text/notes.md", self.sdir / "team" / "notes.md")
+        self.register_tree()
         info = inventory.collection_info(self.paths, "team")
         self.assertEqual(info["state"], "not_indexed")
         self.assertIn("rag-search index new", info["state_detail"])
@@ -222,10 +230,11 @@ class ApiRefusalTests(TempHome):
         self.assertEqual(out["publish"], {"changed": False, "error": "RuntimeError: disk full"})
 
     def test_a_page_that_cannot_be_drawn_is_a_clean_error(self):
-        corpus.copy("pdf/damaged.pdf", self.paths.docs / "c" / "damaged.pdf")
+        corpus.copy("pdf/damaged.pdf", self.sdir / "c" / "damaged.pdf")
+        self.register_tree()
         meta = self.paths.index / "c" / "damaged" / "index.meta.json"
         meta.parent.mkdir(parents=True)
-        meta.write_text(json.dumps({"src_path": str(self.paths.docs / "c" / "damaged.pdf")}))
+        meta.write_text(json.dumps({"src_path": str(self.sdir / "c" / "damaged.pdf")}))
         r = api.conversion_page_image(self.paths, "c", "damaged", 1)
         self.assertFalse(r["ok"])
         self.assertIn("cannot render", r["error"])

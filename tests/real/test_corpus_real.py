@@ -18,13 +18,16 @@ class CorpusRunTests(RealCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        corpus.copy_tree(cls.paths.docs)
+        cls.sdir = cls.tmp / "sources"
+        corpus.copy_tree(cls.sdir)
+        from rag_search import locations
+        locations._save(cls.paths, {d.name: str(d) for d in sorted(cls.sdir.iterdir()) if d.is_dir()})
         out = cls.cli_json("index", "foreground", ok_codes=(1,))
         cls.summary, cls.published = out["summary"], out["publish"]
 
     # what the run concluded about one file ----------------------------------------------------
     def observed(self, rel: str) -> dict:
-        src = str(self.paths.docs / rel)
+        src = str(self.sdir / rel)
         for key, status in (("errors", "error"), ("no_text", "no_text")):
             for e in self.summary.get(key) or []:
                 if e["src"] == src:
@@ -75,7 +78,7 @@ class CorpusRunTests(RealCase):
                     self.assertEqual(bad, [])
 
     def test_the_run_reports_unsupported_files_and_publishes_the_rest(self):
-        reported = {Path(u["src"]).relative_to(self.paths.docs).as_posix()
+        reported = {Path(u["src"]).relative_to(self.sdir).as_posix()
                     for u in self.summary["unsupported_extension"]}
         self.assertEqual(reported, {e["path"] for e in corpus.entries(has="skip") if e["skip"] == "unsupported"})
         indexed = [e for e in corpus.entries(has="real") if e.get("today_status", e["real"]["status"]) == "indexed"]
@@ -118,7 +121,7 @@ class CorpusRunTests(RealCase):
         self.assertEqual(again["indexed"], 0)
         self.assertEqual(again["skipped_fresh"], self.summary["indexed"])
         self.assertGreaterEqual(again["not_retried"], 1)                  # the password-protected PDF
-        failing = {Path(e["src"]).relative_to(self.paths.docs).as_posix() for e in again["errors"]}
+        failing = {Path(e["src"]).relative_to(self.sdir).as_posix() for e in again["errors"]}
         self.assertTrue({"pdf/password.pdf", "pdf/damaged.pdf"} <= failing)    # still reported every run
 
     def test_the_cli_views_of_a_real_run(self):

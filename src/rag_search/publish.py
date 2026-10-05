@@ -166,8 +166,8 @@ def _collect(paths: Paths) -> list[dict[str, Any]]:
     return out
 
 
-def _has_sources(folder: Path) -> bool:
-    if not folder.is_dir():
+def _has_sources(folder: Path | None) -> bool:
+    if folder is None or not folder.is_dir():          # None: no location of that name is registered
         return False
     for _dp, dirnames, filenames in os.walk(folder):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]

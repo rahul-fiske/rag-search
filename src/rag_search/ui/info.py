@@ -17,8 +17,7 @@ from typing import Any
 
 from .. import __version__, api, effective, locations, models, register, spec
 from ..core.chunker import CHUNKER_VERSION
-from ..paths import (DEFAULT_TOP_K, INDEX_FORMAT, Paths,
-                     env_flag)
+from ..paths import DEFAULT_TOP_K, INDEX_FORMAT, Paths, env_flag
 from ..publish import KEEP_GENERATIONS
 
 APPLIES_LABEL = {
@@ -87,7 +86,7 @@ NODE_FIELDS = {
     "metadata.heading": "nearest Markdown heading in effect where the chunk begins",
     "metadata.file_name": "document name without extension",
     "metadata.source_name": "original file name, with extension",
-    "metadata.collection": "first folder under the docs folder, or the registered location's name",
+    "metadata.collection": "the registered location's name",
     "metadata.doc_path": "path of the document inside its collection, without extension",
     "metadata.src_path": "absolute path of the source file (just the file name in an imported "
                          "collection)",
@@ -205,10 +204,8 @@ def architecture(paths: Paths) -> dict[str, Any]:
         "index": {"format": INDEX_FORMAT, "generations_kept": KEEP_GENERATIONS,
                   "node_fields": NODE_FIELDS, "meta_fields": META_FIELDS,
                   "catalog_fields": CATALOG_FIELDS},
-        "paths": {"home": str(paths.home), "docs": str(paths.docs)},
-        "sources": {"locations": [{"collection": n, "folder": f}
-                                  for n, f in sorted(locations.load(paths)[0].items())],
-                    "imported": locations.imported_names(paths)},
+        "paths": {"home": str(paths.home)},
+        "sources": locations.sources(paths),
         "config_storage": config_storage(paths),
     }
 

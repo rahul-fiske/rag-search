@@ -138,7 +138,7 @@
     const live = RS.state.live || {}, cat = RS.state.catalog || {}, list = cat.list || {}, t = list.totals || {};
     const idx = live.index || {}, d = live.daemons || {}, job = idx.job, src = idx.sources || {};
     const ist = indexerStatus(), sst = searchStatus();
-    const nColl = (src.docs_collections || []).length + (src.locations || []).length + (src.imported || []).length;
+    const nColl = (src.locations || []).length + (src.imported || []).length;
     const running = activeJob(), p = (running && running.progress) || {};
     const pct = p.total ? Math.min(100, Math.round(100 * (p.done || 0) / p.total)) : 0;
     const arrow = text => h('div', { class: 'ov-arrow', title: text }, h('span', null, text), h('i', null, '→'));

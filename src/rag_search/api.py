@@ -10,7 +10,8 @@ All functions are synchronous and return the daemon-style reply dict:
 from __future__ import annotations
 
 import time
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 from . import client as client_mod
 from . import descriptions, jobs, policy, protocol, publish
@@ -88,12 +89,12 @@ def describe_collection(paths: Paths, name: str, description: str,
     all call it.  Refuses a name *client* is not authorised to see, using the same "unknown
     collection" wording as search/grep so a restricted collection is never confirmed to exist.
     Clients may describe published collections; the administrator's terminal (`cli`) also ones
-    not published yet (a docs folder, a registered location, an import in progress).
+    not published yet (a registered location, an import in progress).
     """
     c = _client(client)
     if not is_plain_name((name or "").strip()):
-        return protocol.error(protocol.BAD_REQUEST, f"{name!r} is not a collection name (use "
-                              "the folder name under the docs folder, e.g. 'manuals')")
+        return protocol.error(protocol.BAD_REQUEST, f"{name!r} is not a collection name (the name a "
+                              "folder was registered with, e.g. 'manuals')")
     rules = policy.current_rules(paths)
     existing = collection_names(live_catalog(paths))
     if c == policy.ADMIN_CLIENT:
@@ -192,7 +193,7 @@ def _index_status(paths: Paths, job_id: str, history: int, client: str | None) -
         if job_id and rec is None:
             return protocol.error(protocol.BAD_REQUEST, f"no such job: {job_id}")
         out = {"ok": True, "running": False, "daemon": "not running",
-               "job": jobs.view(rec) if rec else None, "docs_folder": str(paths.docs),
+               "job": jobs.view(rec) if rec else None,
                "sources": locations.sources(paths),
                "supported_extensions": sorted(SUPPORTED_EXTENSIONS)}
         if history:
@@ -357,7 +358,7 @@ def _doc_source(paths: Paths, coll: str, doc: str, idx: Any, tfile: Any) -> Any:
     document is embedded; before that (a run still converting, or one that stopped before
     embedding) only the trace exists, which records the file's name: the file is then looked for
     next to the document's place in its collection's own folder.  Either way the result must lie
-    inside the docs folder or a registered location (a stored path is never trusted blindly)."""
+    inside a registered location (a stored path is never trusted blindly)."""
     from pathlib import Path, PurePosixPath
 
     from . import locations
@@ -373,9 +374,9 @@ def _doc_source(paths: Paths, coll: str, doc: str, idx: Any, tfile: Any) -> Any:
         name = Path(str((trace.read_trace(tfile) or {}).get("source") or "")).name
         if name:
             sub = PurePosixPath(doc.strip("/")).parts[:-1]
-            homes = [Path(locs[coll])] if coll in locs else [paths.docs / coll]
+            homes = [Path(locs[coll])] if coll in locs else []
             candidates += [h.joinpath(*sub, name) for h in homes]
-    roots = [paths.docs, *[Path(f) for f in locs.values()]]
+    roots = [Path(f) for f in locs.values()]
     for src in candidates:
         try:
             real = src.resolve()
@@ -388,8 +389,8 @@ def _doc_source(paths: Paths, coll: str, doc: str, idx: Any, tfile: Any) -> Any:
 
 def conversion_page_image(paths: Paths, collection: str, doc: str, page: int,
                           width_px: int = 900) -> dict[str, Any]:
-    """PNG bytes of a source page, ``{"ok": True, "png": bytes}``.  The source must be in the docs
-    folder or a registered location (see ``_doc_source``)."""
+    """PNG bytes of a source page, ``{"ok": True, "png": bytes}``.  The source must be in a
+    registered location (see ``_doc_source``)."""
     from . import inventory
     from .core.conversion import pageimage
 
@@ -401,7 +402,7 @@ def conversion_page_image(paths: Paths, collection: str, doc: str, page: int,
     if real is None:
         return protocol.error(protocol.BAD_REQUEST, "the source file is not available here (an "
                               "imported collection, a moved or deleted file, or outside the "
-                              "docs folder and registered locations)")
+                              "registered locations)")
     try:
         return {"ok": True, "png": pageimage.render(real, int(page), width_px)}
     except ImportError as exc:
@@ -565,8 +566,7 @@ def location_list(paths: Paths) -> dict[str, Any]:
     from . import locations
 
     _, error = locations.load(paths)
-    return {"ok": True, "result": {"docs_folder": str(paths.docs),
-                                   "locations": locations.status(paths),
+    return {"ok": True, "result": {"locations": locations.status(paths),
                                    "file": str(paths.locations_file), "error": error}}
 
 

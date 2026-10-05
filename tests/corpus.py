@@ -47,7 +47,7 @@ def copy(rel: str, dest: Path) -> Path:
 
 
 def copy_tree(dest: Path, rels: Iterable[str] | None = None) -> Path:
-    """Copy the whole corpus (or the files *rels*, keeping their folders) under *dest*: a docs folder
+    """Copy the whole corpus (or the files *rels*, keeping their folders) under *dest*: a folder
     whose first-level folders (pdf, office, text, images, unsupported, collision) are collections."""
     if rels is None:
         shutil.copytree(CORPUS, dest, dirs_exist_ok=True)

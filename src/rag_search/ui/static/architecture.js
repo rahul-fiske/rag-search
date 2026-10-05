@@ -111,7 +111,7 @@
     return dsvg('idx', 1180, 660,
       'The indexing pipeline as one numbered list. 1 Discover lists the files of every collection; 2 Fingerprint skips unchanged documents; 3 Convert turns a file into page-marked Markdown through five steps: 3.1 Profile looks at every page, 3.2 Read sends each page to the reader it needs (a: docling for text pages, b: the document reader for scans and photos, c: the same reader for large pictures), 3.3 Gate checks the result, 3.4 Repair re-reads a suspect table cell of a scanned page, 3.5 Reconcile joins tables that run across pages. Then 4 Chunk, 5 Embed with the model loaded once per run, 6 Write, 7 Merge per collection and 8 Publish.',
       dhead(20, 24, 'PER RUN, THEN PER DOCUMENT'),
-      dbox(20, 40, 170, 90, '1 · Discover', ['every collection:', 'docs folder, registered', 'folders, imports'], 'store'),
+      dbox(20, 40, 170, 90, '1 · Discover', ['every collection:', 'registered folders', 'and imports'], 'store'),
       dbox(240, 40, 180, 90, '2 · Fingerprint', ['SHA-256 of the file +', 'chunk, model and', 'conversion settings'], 'hl'),
       sv('g', { class: 'box hl' }, sv('polygon', { points: '515,40 575,85 515,130 455,85' }),
         sv('text', { x: 515, y: 82, class: 't', 'text-anchor': 'middle' }, 'same as'), sv('text', { x: 515, y: 99, class: 't', 'text-anchor': 'middle' }, 'last time?')),
@@ -182,11 +182,10 @@
       table(['Section', 'Read by'], Object.entries(cs.who_reads_it).map(([k, v]) => [code(k), v])));
   }
 
-  /* Where a collection's documents come from: the docs folder, registered locations, imports. */
+  /* Where a collection's documents come from: registered locations and imports. */
   function sourcesCard() {
     const S = A.sources || { locations: [], imported: [] };
     const rows = [
-      [h('b', null, 'docs folder'), code(A.paths.docs + '/<collection>/'), 'each first-level folder is a collection'],
       ...S.locations.map(l => [code(l.collection), code(l.folder), 'registered location']),
       ...S.imported.map(n => [code(n), '–', 'imported bundle: ready-made index, no source documents here'])];
     return card('Where documents come from', 'the worker reads these, never writes them',

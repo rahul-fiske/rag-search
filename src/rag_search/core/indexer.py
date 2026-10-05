@@ -22,24 +22,12 @@ import os
 import shutil
 import subprocess
 import time
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any
 
 import numpy as np
 
-from . import chunker
-from .bm25 import TOKENIZER_VERSION
-from .conversion import applevision, costs, pagecache, pagemd, profiler, records, repair, routed, trace, vlm
-from .docling_convert import (
-    EXIT_NO_TEXT,
-    ConversionTimeout,
-    NoTextError,
-    ProtectedPdfError,
-    convert_profile,
-    convert_settings,
-    describe_error,
-    has_real_text,
-)
 from .. import stages
 from ..locations import ScanPlan, index_is_imported, scan_tree, workspace_excludes
 from ..paths import (
@@ -55,6 +43,7 @@ from ..paths import (
     IndexBusyError,  # noqa: F401 - re-exported: callers catch indexer.IndexBusyError
     Paths,
     SourceRoots,
+    allow_cloud_files,
     ensure_dirs,
     env_int,
     index_dir_for,
@@ -65,7 +54,30 @@ from ..paths import (
     read_json,
     sha256_file,
     write_json_atomic,
-    allow_cloud_files,
+)
+from . import chunker
+from .bm25 import TOKENIZER_VERSION
+from .conversion import (
+    applevision,
+    costs,
+    pagecache,
+    pagemd,
+    profiler,
+    records,
+    repair,
+    routed,
+    trace,
+    vlm,
+)
+from .docling_convert import (
+    EXIT_NO_TEXT,
+    ConversionTimeout,
+    NoTextError,
+    ProtectedPdfError,
+    convert_profile,
+    convert_settings,
+    describe_error,
+    has_real_text,
 )
 
 log = logging.getLogger("rag_search.indexer")
@@ -418,13 +430,13 @@ def _conv_kw(summary: dict[str, Any] | None) -> dict[str, Any]:
     return {"conversion": summary} if summary else {}
 
 
-def _roots(value: Any) -> "Path | SourceRoots":
-    """A task's docs root: a plain folder, or docs folder + registered locations (a dict)."""
-    return SourceRoots.of(value) if isinstance(value, dict) else Path(value)
+def _roots(value: Any) -> SourceRoots:
+    """A task's source roots (the registered locations, as the plain dict that travels to a worker)."""
+    return SourceRoots.of(value)
 
 
 def _repoint(idx_dir: Path, src: Path) -> None:
-    """An unchanged document found at a new place (the docs folder moved, a location was
+    """An unchanged document found at a new place (a location was re-registered with another folder, or
     re-mounted elsewhere): record where it is now, so it is not taken for a deleted one."""
     meta_file = idx_dir / META_FILE
     meta = read_json(meta_file)
@@ -485,13 +497,13 @@ def prepare_document(task: dict[str, Any]) -> dict[str, Any]:
             remember_outcome(idx_dir, sha, status, reason, message, task.get("ocr"))
 
     try:
-        docs_root = _roots(task["docs_root"])
+        roots = _roots(task["roots"])
         markup_root, index_root = Path(task["markup_root"]), Path(task["index_root"])
         cs, co, model = task["chunk_size"], task["chunk_overlap"], task["model"]
         t_fp = time.perf_counter()
         sha = sha256_file(src)
-        idx_dir = index_dir_for(src, docs_root, index_root)
-        rel_name = mirror_rel(src, docs_root).as_posix()
+        idx_dir = index_dir_for(src, roots, index_root)
+        rel_name = mirror_rel(src, roots).as_posix()
         slog = task.get("stage_log")
         if (not task["rebuild"] and not task["force_md"]
                 and is_fresh(idx_dir, sha, cs, co, model)):
@@ -510,7 +522,7 @@ def prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         stage_event(slog, rel_name, "fingerprint", "done", seconds=round(time.perf_counter() - t_fp, 3),
                     unchanged=False)
 
-        md_path = markup_path_for(src, docs_root, markup_root)
+        md_path = markup_path_for(src, roots, markup_root)
         trace_file = trace.trace_path_for(md_path)
         stage_event(slog, rel_name, "convert", "start")
 
@@ -580,7 +592,7 @@ def prepare_document(task: dict[str, Any]) -> dict[str, Any]:
                                                      meter.cpu_now()),
                     "elapsed_s": round(time.perf_counter() - t0, 2)}
 
-        rel = mirror_rel(src, docs_root)
+        rel = mirror_rel(src, roots)
         coll = rel.parts[0]
         doc_path = str(Path(*rel.parts[1:]).with_suffix("")) if len(rel.parts) > 1 else rel.stem
         nodes = [{
@@ -865,7 +877,7 @@ def _remove_empty_dirs(root: Path, keep_root: bool = True) -> None:
             d.rmdir()                          # only succeeds when empty
 
 
-def prune_orphans(paths: Paths, docs_root: "Path | SourceRoots", sources: list[Path],
+def prune_orphans(paths: Paths, roots: SourceRoots, sources: list[Path],
                   collections: Iterable[str]) -> list[str]:
     """Delete the converted Markdown and per-document index of every document in *collections*
     whose source no longer exists.
@@ -882,8 +894,8 @@ def prune_orphans(paths: Paths, docs_root: "Path | SourceRoots", sources: list[P
     expect_md: set[Path] = set()
     for src in sources:
         try:
-            expect_idx.add(index_dir_for(src, docs_root, paths.index))
-            expect_md.add(markup_path_for(src, docs_root, paths.markup))
+            expect_idx.add(index_dir_for(src, roots, paths.index))
+            expect_md.add(markup_path_for(src, roots, paths.markup))
         except ValueError:
             continue
     # Compared by identity as well as by path: on a case-insensitive disk (macOS) a folder
@@ -946,16 +958,16 @@ def _drop_empty_collections(paths: Paths) -> None:
 
 # ── orchestration ────────────────────────────────────────────────────────────
 
-def _wipe(paths: Paths, docs_root: "Path | SourceRoots", sources: list[Path]) -> int:
+def _wipe(paths: Paths, roots: SourceRoots, sources: list[Path]) -> int:
     n = 0
     colls: set[str] = set()
     for src in sources:
-        idx = index_dir_for(src, docs_root, paths.index)
-        colls.add(mirror_rel(src, docs_root).parts[0])
+        idx = index_dir_for(src, roots, paths.index)
+        colls.add(mirror_rel(src, roots).parts[0])
         if idx.exists():
             _remove_doc_index(idx)
             n += 1
-        md = markup_path_for(src, docs_root, paths.markup)
+        md = markup_path_for(src, roots, paths.markup)
         for f in (md, md.with_name(md.name + ".sha256"), trace.trace_path_for(md)):
             with contextlib.suppress(OSError):
                 f.unlink()
@@ -964,7 +976,7 @@ def _wipe(paths: Paths, docs_root: "Path | SourceRoots", sources: list[Path]) ->
     return n
 
 
-def _assign_names(paths: Paths, sources: list[Path], docs_root: "Path | SourceRoots",
+def _assign_names(paths: Paths, sources: list[Path], roots: SourceRoots,
                   errors: list[dict[str, str]]) -> list[Path]:
     """The sources this run may index.  Index folders are named after the file name without its
     extension, so ``report.pdf`` and ``report.docx`` side by side would share one: only one of
@@ -974,10 +986,9 @@ def _assign_names(paths: Paths, sources: list[Path], docs_root: "Path | SourceRo
     groups: dict[Path, list[Path]] = {}
     for src in sources:
         try:
-            idx = index_dir_for(src, docs_root, paths.index)
+            idx = index_dir_for(src, roots, paths.index)
         except ValueError:
-            errors.append({"src": str(src), "message": "outside docs_root (not in the docs "
-                           "folder or a registered location)"})
+            errors.append({"src": str(src), "message": "not inside a registered location"})
             continue
         groups.setdefault(idx, []).append(src)
     todo: list[Path] = []
@@ -986,7 +997,7 @@ def _assign_names(paths: Paths, sources: list[Path], docs_root: "Path | SourceRo
         owner_path = Path(owner) if owner else None
         winner = next((s for s in group if owner_path is not None and _same(s, owner_path)), group[0])
         if (owner_path is not None and not _same(winner, owner_path) and owner_path.exists()
-                and _index_rel(owner_path, docs_root) == _index_rel(winner, docs_root)):
+                and _index_rel(owner_path, roots) == _index_rel(winner, roots)):
             for s in group:
                 errors.append({"src": str(s), "message": f"same document name as {owner} "
                                "(already indexed; rename one of them)"})
@@ -1006,9 +1017,9 @@ def _same(a: Path, b: Path) -> bool:
         return str(a) == str(b)
 
 
-def _index_rel(src: Path, docs_root: "Path | SourceRoots") -> str:
+def _index_rel(src: Path, roots: SourceRoots) -> str:
     try:
-        rel = mirror_rel(src, docs_root)
+        rel = mirror_rel(src, roots)
         return (rel.parent / rel.stem).as_posix()
     except ValueError:
         return ""
@@ -1063,7 +1074,7 @@ def _shutdown_pool(pool: cf.ProcessPoolExecutor, grace: float = POOL_EXIT_GRACE_
 def run_index(
     paths: Paths,
     sources: list[Path],
-    docs_root: Path,
+    roots: SourceRoots,
     *,
     jobs: int = 2,
     rebuild: bool = False,
@@ -1080,7 +1091,7 @@ def run_index(
     frozen: Iterable[str] = (),
     plan_info: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Index *sources* (all under *docs_root*, a folder or a ``SourceRoots``), then merge every
+    """Index *sources* (all inside the registered locations of *roots*), then merge every
     collection.
 
     *prune* names collections whose complete document list *sources* is (see
@@ -1118,7 +1129,7 @@ def run_index(
     def doc_event(src: Path, status: str, **fields: Any) -> None:
         """One event per finished document (also written to the job's event log)."""
         try:
-            coll = mirror_rel(src, docs_root).parts[0]
+            coll = mirror_rel(src, roots).parts[0]
         except ValueError:
             coll = ""
         _sink({"doc": {"collection": coll, "source": src.name, "status": status, **fields}})
@@ -1134,11 +1145,11 @@ def run_index(
     no_text: list[dict[str, str]] = []      # converted fine but hold no text: skipped, not failed
     skipped = 0
     not_retried = 0                         # failed or empty before, file unchanged: reported, not tried again
-    todo = _assign_names(paths, sources, docs_root, errors)
+    todo = _assign_names(paths, sources, roots, errors)
 
     with index_lock(paths):
-        wiped = _wipe(paths, docs_root, todo) if wipe else 0
-        removed = prune_orphans(paths, docs_root, sources, prune or ())
+        wiped = _wipe(paths, roots, todo) if wipe else 0
+        removed = prune_orphans(paths, roots, sources, prune or ())
         for r in removed:
             parts = r.split("/", 1)
             _sink({"doc": {"collection": parts[0], "source": parts[-1], "status": "removed"}})
@@ -1150,7 +1161,7 @@ def run_index(
             conv.files[ext] = conv.files.get(ext, 0) + 1
         tasks = [{
             "src": str(s),
-            "docs_root": docs_root.to_dict() if isinstance(docs_root, SourceRoots) else str(docs_root),
+            "roots": roots.to_dict(),
             "markup_root": str(paths.markup),
             "index_root": str(paths.index), "chunk_size": chunk_size,
             "chunk_overlap": chunk_overlap, "rebuild": rebuild, "force_md": force_md,
@@ -1246,7 +1257,7 @@ def run_index(
                       "current": src.name, "current_since": since,
                       "message": f"{res['nodes']} chunks"})
                 t_doc = time.perf_counter()
-                rel_name = mirror_rel(src, docs_root).as_posix()
+                rel_name = mirror_rel(src, roots).as_posix()
                 _sink({"stage": {"file": rel_name, "stage": "embed", "id": stages.id_of("embed"),
                                  "status": "start", "chunks": res["nodes"]}})
                 try:

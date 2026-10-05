@@ -8,12 +8,12 @@ from rag_search.core import indexer
 
 class ExtraIndexerTests(TempHome):
     def sources(self):
-        return indexer.scan_sources(self.paths.docs, indexer.exclude_dirs(self.paths))
+        return indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
 
     def test_parallel_pool_path(self):
         for i in range(3):
             self.write_doc(f"c/d{i}.md", f"# T\n\n<!-- page 1 -->\n\ndocument number {i} text")
-        s = indexer.run_index(self.paths, self.sources(), self.paths.docs, jobs=2,
+        s = indexer.run_index(self.paths, self.sources(), self.roots(), jobs=2,
                               embedder=FakeEmbedder())
         self.assertEqual((s["indexed"], s["errors"]), (3, []))
 
@@ -27,7 +27,7 @@ class ExtraIndexerTests(TempHome):
                 self.write_doc(f"c/d{jobs}{i}.md", f"# T\n\n<!-- page 1 -->\n\ndocument {jobs} {i} text")
             log = self.tmp / f"events{jobs}.jsonl"
             got = []
-            s = indexer.run_index(self.paths, self.sources(), self.paths.docs, jobs=jobs,
+            s = indexer.run_index(self.paths, self.sources(), self.roots(), jobs=jobs,
                                   embedder=FakeEmbedder(), stage_log=log,
                                   progress=lambda ev: got.append(ev) if "stage" in ev else None)
             self.assertEqual(s["errors"], [])
@@ -58,7 +58,7 @@ class ExtraIndexerTests(TempHome):
     def test_missing_docling_is_a_per_file_error_not_a_crash(self):
         self.write_doc("c/x.pdf", "%PDF-1.4 not really")
         self.write_doc("c/ok.md", "# T\n\n<!-- page 1 -->\n\nfine")
-        s = indexer.run_index(self.paths, self.sources(), self.paths.docs, jobs=1,
+        s = indexer.run_index(self.paths, self.sources(), self.roots(), jobs=1,
                               embedder=FakeEmbedder())
         self.assertEqual(s["indexed"], 1)
         self.assertEqual(len(s["errors"]), 1)
@@ -67,7 +67,7 @@ class ExtraIndexerTests(TempHome):
     def test_docling_python_subprocess_failure_is_reported(self):
         os.environ["RAG_SEARCH_DOCLING_PYTHON"] = sys.executable
         self.write_doc("c/x.pdf", "%PDF-1.4 not really")
-        s = indexer.run_index(self.paths, self.sources(), self.paths.docs, jobs=1,
+        s = indexer.run_index(self.paths, self.sources(), self.roots(), jobs=1,
                               embedder=FakeEmbedder())
         self.assertEqual(s["indexed"], 0)
         self.assertIn("docling subprocess failed", s["errors"][0]["message"])
@@ -75,31 +75,31 @@ class ExtraIndexerTests(TempHome):
     def test_bad_docling_python_path(self):
         os.environ["RAG_SEARCH_DOCLING_PYTHON"] = "/nonexistent/python"
         self.write_doc("c/x.pdf", "x")
-        s = indexer.run_index(self.paths, self.sources(), self.paths.docs, jobs=1,
+        s = indexer.run_index(self.paths, self.sources(), self.roots(), jobs=1,
                               embedder=FakeEmbedder())
         self.assertIn("not found", s["errors"][0]["message"])
 
-    def test_source_outside_docs_root(self):
+    def test_source_outside_every_location(self):
         other = self.tmp / "other.md"
         other.write_text("hello")
-        s = indexer.run_index(self.paths, [other], self.paths.docs, jobs=1,
+        s = indexer.run_index(self.paths, [other], self.roots(), jobs=1,
                               embedder=FakeEmbedder())
-        self.assertIn("outside docs_root", s["errors"][0]["message"])
+        self.assertIn("not inside a registered location", s["errors"][0]["message"])
 
     def test_only_one_indexer_at_a_time(self):
         with indexer.index_lock(self.paths):
             with self.assertRaises(indexer.IndexBusyError):
-                indexer.run_index(self.paths, [], self.paths.docs, jobs=1,
+                indexer.run_index(self.paths, [], self.roots(), jobs=1,
                                   embedder=FakeEmbedder())
         # lock is released afterwards
-        indexer.run_index(self.paths, [], self.paths.docs, jobs=1, embedder=FakeEmbedder())
+        indexer.run_index(self.paths, [], self.roots(), jobs=1, embedder=FakeEmbedder())
 
     def test_model_change_makes_index_stale(self):
         self.write_doc("c/a.md", "# T\n\n<!-- page 1 -->\n\nhello there")
-        s1 = indexer.run_index(self.paths, self.sources(), self.paths.docs, jobs=1,
+        s1 = indexer.run_index(self.paths, self.sources(), self.roots(), jobs=1,
                                embedder=FakeEmbedder())
         os.environ["RAG_SEARCH_MODEL"] = "some/other-model"
-        s2 = indexer.run_index(self.paths, self.sources(), self.paths.docs, jobs=1,
+        s2 = indexer.run_index(self.paths, self.sources(), self.roots(), jobs=1,
                                embedder=FakeEmbedder())
         self.assertEqual((s1["indexed"], s2["indexed"]), (1, 1))
 
@@ -167,8 +167,8 @@ class RememberedOutcomeTests(TempHome):
 
     def run_index(self, **kw):
         self.calls.clear()
-        srcs = indexer.scan_sources(self.paths.docs, indexer.exclude_dirs(self.paths))
-        return indexer.run_index(self.paths, srcs, self.paths.docs, jobs=1, embedder=FakeEmbedder(), **kw)
+        srcs = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
+        return indexer.run_index(self.paths, srcs, self.roots(), jobs=1, embedder=FakeEmbedder(), **kw)
 
     def outcome(self, name):
         return self.paths.index / "c" / name / indexer.OUTCOME_FILE
@@ -212,8 +212,8 @@ class RememberedOutcomeTests(TempHome):
 
     def test_the_record_goes_when_the_source_is_deleted(self):
         self.run_index()
-        (self.paths.docs / "c" / "locked.html").unlink()
-        srcs = indexer.scan_sources(self.paths.docs, indexer.exclude_dirs(self.paths))
-        indexer.run_index(self.paths, srcs, self.paths.docs, jobs=1, embedder=FakeEmbedder(), prune=["c"])
+        (self.sdir / "c" / "locked.html").unlink()
+        srcs = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
+        indexer.run_index(self.paths, srcs, self.roots(), jobs=1, embedder=FakeEmbedder(), prune=["c"])
         self.assertFalse((self.paths.index / "c" / "locked").exists())
         self.assertTrue(self.outcome("empty").is_file())

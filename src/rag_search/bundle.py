@@ -42,13 +42,13 @@ import shutil
 import tarfile
 import tempfile
 import time
+from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterator
+from typing import Any
 
 from . import __version__, descriptions, locations, policy
 from .paths import (
     ALL_DIR,
-    DEFAULT_COLLECTION,
     EMB_FILE,
     MERGE_MANIFEST,
     META_FILE,
@@ -59,9 +59,9 @@ from .paths import (
     index_lock,
     is_plain_name,
     model_name,
+    pasted_path,
     read_json,
     write_json_atomic,
-    pasted_path,
 )
 
 BUNDLE_FORMAT = "rag-search-collection"
@@ -328,12 +328,11 @@ def _safe_member(m: tarfile.TarInfo) -> PurePosixPath:
 
 def _taken(paths: Paths, name: str) -> tuple[str, str]:
     """(existing spelling, what it is) when *name* is already a collection here, else ("", "")."""
-    from .catalog import collection_names, docs_folder_names, live_catalog
+    from .catalog import collection_names, live_catalog
 
     checks = (
         (locations.imported_names(paths), "imported"),
         (locations.names(paths), "a registered location"),
-        (docs_folder_names(paths), "a folder in the docs folder"),
         (locations.workspace_collections(paths), "an indexed collection"),
         (collection_names(live_catalog(paths)), "a published collection"),
     )
@@ -351,7 +350,7 @@ def import_collection(paths: Paths, archive: str | Path, *, as_name: str | None 
     manifest = read_manifest(src)
     model = check_model(manifest, paths)
     name = (as_name or manifest["collection"]).strip()
-    if not is_plain_name(name) or name.casefold() == DEFAULT_COLLECTION:
+    if not is_plain_name(name):
         raise BundleError(f"{name!r} cannot be a collection name here; choose one with --as NAME")
     ensure_dirs(paths)
     with _index_lock(paths):

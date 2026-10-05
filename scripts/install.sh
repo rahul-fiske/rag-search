@@ -188,8 +188,7 @@ cat <<MSG
 MSG
 fi
 cat <<MSG
-  * Put documents in the docs folder (subfolders become collections), or register a folder
-    elsewhere with  $EXE location add NAME FOLDER  , then run
+  * Register each source folder with  $EXE location add NAME FOLDER  , then run
         $EXE index new --follow
     or ask Claude to "index my new documents".
   * Search from the shell:  $EXE search "your question"

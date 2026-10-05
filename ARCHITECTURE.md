@@ -160,10 +160,9 @@ command reference from the argparse tree.
   access.json                 collections restricted to specific clients (written by `rag-search access` only)
   descriptions.json           short per-collection descriptions ({name: text}; written only through
                                api.describe_collection)
-  locations.json              registered source locations ({name: folder}; `rag-search location`)
+  locations.json              registered source locations ({name: folder}; `rag-search location`): the
+                               only place documents come from -- there is no built-in documents folder
   .<file>.lock                read-modify-write locks of the three files above
-  docs/                       your documents; first sub-folder = collection ($RAG_SEARCH_DOCS to relocate;
-                               a relocated docs folder is never re-created when it is missing)
   indexer_workspace/          written by the worker (and by collection import/delete, under index.lock)
     markup/<coll>/<doc>.md    page-annotated Markdown  (+ .md.sha256 of the source)
     markup/<coll>/<doc>.trace.json   conversion trace: one record per page (branch, outcome, profile,
@@ -192,7 +191,7 @@ search daemon keeps reading the old generation's files until it swaps. `rollback
 **Freshness** – a document is re-indexed when its source SHA-256, the chunk parameters,
 `CHUNKER_VERSION`, `TOKENIZER_VERSION`, the index format or the model differ from
 `index.meta.json`; the Markdown is reused only when the `.md.sha256` sidecar matches. An unchanged
-document found at a new path (moved docs folder) keeps its index and gets its `src_path` updated.
+document found at a new path (a location registered again where the folder now is) keeps its index and gets its `src_path` updated.
 Merging concatenates stored embeddings; nothing is re-embedded.
 A document that **cannot** be indexed for a reason of its own gets the same treatment: `outcome.json` in its
 index folder records the source SHA-256, the conversion settings (`convert_profile`) and the reason, and the
@@ -267,7 +266,7 @@ pages):
 
 | Stage | Name | Runs on | Once per | What it does | Settings it owns (`section.key`) |
 |---|---|---|---|---|---|
-| 1 | Discover | CPU | run | list the files of every collection (the docs folder, registered folders, imports); formats the pipeline cannot read are skipped and counted | – |
+| 1 | Discover | CPU | run | list the files of every collection (registered folders, imports); formats the pipeline cannot read are skipped and counted | – |
 | 2 | Fingerprint | CPU | document | SHA-256 of the file plus the chunk, model and conversion settings; unchanged documents are skipped in seconds | – |
 | 3 | Convert | CPU+GPU | document | turn the file into page-marked Markdown, page by page, through the steps below; several documents are converted side by side when the machine has the memory for it | `indexer.jobs` |
 | 3.1 | Profile | CPU | document | look at every page once: text layer, scan or photo, pictures, ink, resolution, script | – |
@@ -305,16 +304,15 @@ Settings, Architecture and Playground tabs and `rag-search playground settings` 
 ### 5.1 Indexing flow (worker process, `core/indexer.py`)
 
 ```
- docs/<collection>/<file>      pdf docx pptx xlsx html csv adoc md txt png jpg tif bmp webp
- <location folder>/<file>     (a registered location: its whole tree is one collection)
+ <location folder>/<file>     pdf docx pptx xlsx html csv adoc md txt png jpg tif bmp webp
+                              (a registered location: its whole tree is one collection)
         │  plan (locations.plan_scan): refuses to run while locations.json is unreadable; every
         │  source folder is probed for reachability first (in a thread, 10 s bound; a listing
         │  that fails is retried within it, for cloud-storage folders that answer late); one that is
         │  missing, cannot be listed, is completely empty while its collections have an index
         │  (an unmounted mount point), or has a sub-folder the walk could not open, is *frozen*
         │  -- not pruned, not re-merged.  A run over everything, or a whole collection, *covers* it.
-        │  scan: hidden files and ~$ lock files skipped; docs-folder folders that carry a
-        │  location's or an import's name are ignored (reported as `shadowed`); two files that map
+        │  scan: hidden files and ~$ lock files skipped; two files that map
         │  to the same document name (a.pdf + a.docx) -> only one is indexed (the one already
         │  indexed under that name, else the first), the other is reported -- also when the one
         │  already indexed is not part of this run (a single-file run cannot replace it)
@@ -614,7 +612,7 @@ Before any reader is changed, how well a page is read is *measured* on pages wit
   sequence edit distance -- not the published TEDS), **balance checks** (the P4 validators on the
   predicted tables), **search phrases found**, s/page and the process's CPU time and peak memory.
   `bench compare SET A B` shows the change of every measure per class and the pages that got worse.
-* Sources are resolved through the docs folder / registered locations only and opened read-only; runs
+* Sources are resolved through registered locations only and opened read-only; runs
   write nothing outside `conversion_bench/`, never the index, markup or serving folders. The dashboard's
   Playground tab lists sets and runs and compares two (`GET /api/conversion/bench`, `bench-run`,
   `bench-compare`); creating and running are CLI-only because they load readers and take minutes.
@@ -742,7 +740,8 @@ any of it touching production.
 
 ```
  <home>/playground/<name>/
-   docs/<collection>/...        sample documents (copied in via --from, or dropped in directly)
+   locations.json               its own source folders (registered like production's with `playground source`
+                                 or `create --from`; read in place, never copied)
    workspace/index/<coll>/_all/ nodes.json, embeddings.npy, merge.manifest.json (own indexer_workspace)
    config.json                  embedding_model, rerank_model, reader_model, repair_model,
                                  chunk_size, chunk_overlap, rerank, stages, retrieval_pool,
@@ -874,12 +873,16 @@ build on it, and neither ever touches an index:
 
 ### 5.5 Source locations, collection export/import and deletion
 
-**Locations** (`locations.py`, stdlib). `locations.json` maps a collection name to a folder outside
-the docs folder; `paths.SourceRoots` (docs folder + locations, plain data so it travels to the
-conversion processes) is accepted everywhere a docs root used to be (`mirror_rel`, `index_dir_for`,
-`markup_path_for`), so a location's documents get workspace paths `<name>/<path inside it>` exactly
-like a docs-folder collection's. `add` refuses reserved or taken names (`default`, a docs-folder
-folder, an import) and folders that overlap the docs folder, the data folder or another location.
+**Locations** (`locations.py`, stdlib). `locations.json` maps a collection name to a folder;
+it is the only source of documents (no registered location = nothing to index, `locations.NO_LOCATIONS`).
+`paths.SourceRoots` (the locations, plain data so it travels to the conversion processes) is what
+`mirror_rel`, `index_dir_for` and `markup_path_for` take, so a document gets the workspace path
+`<name>/<path inside the folder>`; a file in no location raises `ValueError`. `add` refuses taken names
+(a location, an import) and folders that overlap the data folder or another location. An indexed
+collection with no registered folder is *unregistered*: searchable, never updated or pruned, picked up again
+when a folder is registered under its name. A playground experiment has its own `locations.json` (its
+`Paths` is rooted in the experiment), so the same module, planner (`plan_scan`/`run_plan`) and
+document/page/Markdown APIs serve it (`?exp=NAME` on the dashboard's `/api/conversion/*`).
 `resolve_target` turns an `index new PATH` argument into a folder (a path starting with a location's
 name means a folder inside it; an imported collection's name is refused with an explanation).
 
@@ -894,7 +897,7 @@ manifest format/version/type check → **model gate** (the configured embedding 
 the manifest's and, when something is published, the model it was built with -- a switch in
 progress blocks imports; when both sides know the weights commit it must match too; no partial
 import) → name
-check (a docs folder, a location, an indexed or published collection is never overwritten; an
+check (a location, an indexed or published collection is never overwritten; an
 earlier import only with `replace`) → unpack into a hidden staging folder in the workspace, refusing
 anything but plain files at safe relative paths that are listed in the manifest, and verifying every
 checksum and the `.npy` shape against `nodes.json` (read from the header, no numpy) → assemble the

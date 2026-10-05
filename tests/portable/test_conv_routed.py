@@ -365,7 +365,7 @@ class RoutedBase(ConversionBase):
         p.start()
         self.addCleanup(p.stop)
         self.log = self.tmp / "events.jsonl"
-        self.pdf = self.paths.docs / "reports" / "r.pdf"
+        self.pdf = self.sdir / "reports" / "r.pdf"
         self.pdf.parent.mkdir(parents=True)
         write_routing_pdf(self.pdf)
 
@@ -408,7 +408,7 @@ class RoutedIndexTests(RoutedBase):
         self.assertEqual(summary["conversion"]["cached_pages"], 3)
 
     def test_unchanged_pages_are_not_read_again_when_the_file_changes(self):
-        txt = self.paths.docs / "reports" / "t.pdf"
+        txt = self.sdir / "reports" / "t.pdf"
         write_text_pdf(txt, [TEXT + " one", TEXT + " two"])
         self.go()
         self.reader.calls.clear()

@@ -15,13 +15,40 @@ from rag_search.ui import info
 class PlaygroundApiTests(UiBase):
     def setUp(self):
         super().setUp()
-        self.src = self.tmp / "pg.txt"
-        self.src.write_text("<!-- page 1 -->\nhow is a session token refreshed\n",
+        self.src = self.tmp / "pgdocs"
+        self.src.mkdir()
+        (self.src / "pg.txt").write_text("<!-- page 1 -->\nhow is a session token refreshed\n",
                             encoding="utf-8")
 
     def _post(self, action, body):
         st, js, _, _ = self.dash.req("POST", f"/api/playground/{action}", body)
         return st, js
+
+    def test_sources_are_the_users_folders_and_documents_open_like_production(self):
+        from tests.portable.test_cli_api import run
+        st, js = self._post("create", {"name": "demo", "folders": [str(self.src)]})
+        self.assertEqual(st, 200, js)
+        self.assertEqual([x["collection"] for x in js["result"]["sources"]], ["pgdocs"])
+        st, js = self._post("sources", {"name": "demo", "op": "list"})
+        self.assertEqual([(x["collection"], x["folder"]) for x in js["result"]["status"]], [("pgdocs", str(self.src.resolve()))])
+        other = self.tmp / "more"
+        other.mkdir()
+        st, js = self._post("sources", {"name": "demo", "op": "add", "folder": str(other), "collection": "extra"})
+        self.assertEqual((st, js["result"].get("collection")), (200, "extra"), js)
+        st, js = self._post("sources", {"name": "demo", "op": "remove", "collection": "extra"})
+        self.assertEqual(js["result"].get("removed"), "extra", js)
+        # the same functions that serve production's document list serve the experiment's
+        rc, out, err = run("playground", "index", "demo", "--json")
+        self.assertEqual(rc, 0, err)
+        st, js, _, _ = self.dash.req("GET", "/api/conversion/markdown?exp=demo&collection=pgdocs&doc=pg")
+        self.assertEqual(st, 200, js)
+        self.assertIn("session token", js["result"]["markdown"])
+        st, js, _, _ = self.dash.req("GET", "/api/conversion/trace?exp=demo&collection=pgdocs&doc=pg")
+        self.assertEqual((st, js["result"]["collection"]), (200, "pgdocs"))
+        st, _, _, _ = self.dash.req("GET", "/api/conversion/markdown?collection=pgdocs&doc=pg")   # not production's
+        self.assertEqual(st, 400)
+        st, _, _, _ = self.dash.req("GET", "/api/conversion/markdown?exp=nope&collection=pgdocs&doc=pg")
+        self.assertEqual(st, 400)
 
     def test_full_flow(self):
         st, js = self._post("create", {"name": "demo"})
@@ -33,7 +60,7 @@ class PlaygroundApiTests(UiBase):
         self.assertEqual(js["result"]["embedding_model"], "custom/id")
 
         # no docs were added through the API (no upload endpoint yet): the run starts in the background
-        # and fails there with the CLI's clean "no documents" message -- the dashboard does not crash
+        # and fails there with the CLI's clean "no source folders" message -- the dashboard does not crash
         st, js = self._post("index", {"name": "demo"})
         self.assertEqual(st, 200)
         self.assertTrue(js["ok"], js)
@@ -43,7 +70,7 @@ class PlaygroundApiTests(UiBase):
                 break
             time.sleep(0.3)
         self.assertEqual(js["result"]["job"]["status"], "failed")
-        self.assertIn("no documents", js["result"]["job"]["error"])
+        self.assertIn("no source folders", js["result"]["job"]["error"])
 
     def test_isolated_from_production_dashboard_session(self):
         """The playground subprocess must never disturb the production daemons/sockets the

@@ -179,52 +179,57 @@ class ConvertTreeTests(TempHome):
 
 
 class ConvertLegacyCliTests(TempHome):
-    def test_dry_run_defaults_to_docs_folder(self):
+    def test_dry_run_lists_without_converting(self):
         self.write_doc("legacy/report.doc", "legacy")
         with mock.patch("rag_search.core.legacy_convert.find_soffice",
                         return_value=FAKE_SOFFICE):
-            rc, out, err = run("convert-legacy", "--dry-run")
+            rc, out, err = run("convert-legacy", str(self.sdir / "legacy"), "--dry-run")
         self.assertEqual(rc, 0, err)
         self.assertIn("report.doc", out)
-        self.assertTrue((self.paths.docs / "legacy" / "report.doc").exists())
+        self.assertTrue((self.sdir / "legacy" / "report.doc").exists())
 
     def test_missing_libreoffice_reports_unavailable(self):
         with mock.patch("rag_search.core.legacy_convert.find_soffice", return_value=None):
-            rc, out, err = run("convert-legacy")
+            rc, out, err = run("convert-legacy", str(self.sdir))
         self.assertEqual(rc, 3)
         self.assertIn("brew install", err)
 
     def test_json_output_and_real_conversion_keeps_the_original_by_default(self):
         # sources are read-only to rag-search: the original stays unless deletion is asked for
-        self.write_doc("a.doc", "legacy")
+        self.write_doc("legacy/a.doc", "legacy")
         with mock.patch("rag_search.core.legacy_convert.find_soffice",
                         return_value=FAKE_SOFFICE), \
              mock.patch("subprocess.run", side_effect=_fake_run()):
-            rc, out, err = run("convert-legacy", "--json")
+            rc, out, err = run("convert-legacy", "--json", str(self.sdir / "legacy"))
         self.assertEqual(rc, 0, err)
         payload = json.loads(out)
         self.assertEqual(len(payload["converted"]), 1)
         self.assertFalse(payload["converted"][0]["deleted"])
-        self.assertTrue((self.paths.docs / "a.doc").exists())
-        self.assertTrue((self.paths.docs / "a.docx").exists())
+        self.assertTrue((self.sdir / "legacy" / "a.doc").exists())
+        self.assertTrue((self.sdir / "legacy" / "a.docx").exists())
 
     def test_delete_originals_is_explicit(self):
-        self.write_doc("a.doc", "legacy")
+        self.write_doc("legacy/a.doc", "legacy")
         with mock.patch("rag_search.core.legacy_convert.find_soffice",
                         return_value=FAKE_SOFFICE), \
              mock.patch("subprocess.run", side_effect=_fake_run()):
-            rc, out, err = run("convert-legacy", "--json", "--delete-originals")
+            rc, out, err = run("convert-legacy", "--json", "--delete-originals", str(self.sdir / "legacy"))
         self.assertEqual(rc, 0, err)
         self.assertTrue(json.loads(out)["converted"][0]["deleted"])
-        self.assertFalse((self.paths.docs / "a.doc").exists())
-        self.assertTrue((self.paths.docs / "a.docx").exists())
+        self.assertFalse((self.sdir / "legacy" / "a.doc").exists())
+        self.assertTrue((self.sdir / "legacy" / "a.docx").exists())
 
     def test_unsupported_extension_is_a_usage_error(self):
-        rc, out, err = run("convert-legacy", "--ext", "pdf")
+        rc, out, err = run("convert-legacy", "--ext", "pdf", str(self.sdir))
         self.assertEqual(rc, 2)
         self.assertIn("unsupported extension", err)
 
+    def test_the_path_is_required(self):
+        rc, out, err = run("convert-legacy")
+        self.assertEqual(rc, 2)
+        self.assertIn("path", err)
+
     def test_not_a_directory_is_a_usage_error(self):
-        rc, out, err = run("convert-legacy", str(self.paths.docs / "nope"))
+        rc, out, err = run("convert-legacy", str(self.sdir / "nope"))
         self.assertEqual(rc, 2)
         self.assertIn("not a directory", err)

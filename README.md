@@ -68,11 +68,9 @@ Uninstall: `./uninstall.sh` (keeps your data; add `--purge-data` to delete index
 
 ## Use
 
-1. Put documents in the docs folder (`rag-search paths docs` prints it; default
-   `~/Library/Application Support/rag-search/docs`). **Each first-level sub-folder becomes a
-   collection**, e.g. `docs/manuals/…`, `docs/policies/…`. Files placed directly in `docs/` go to
-   the `default` collection. Documents that live elsewhere (a notes vault, a synced drive) can be
-   indexed where they are: `rag-search location add NAME FOLDER` (see "Source locations").
+1. Tell rag-search where your documents are: `rag-search location add NAME FOLDER` (a notes vault,
+   a synced drive, any folder). **Each registered folder is one collection**, indexed where it is and
+   never changed (see "Source locations"). There is no built-in documents folder.
 2. Index: `rag-search index new --follow` (or ask Claude: *"index my new documents"*). The run
    happens in the indexer daemon; when it finishes the new documents are searchable automatically.
 3. Search: `rag-search search "how do I create a role?"`, or ask Claude: *"According to my
@@ -98,12 +96,12 @@ rag-search daemon status|start|stop|restart [search|indexer]   state, warm-up ti
 rag-search service install|uninstall|status                    launchd: daemons start at login
 rag-search config show|init|path                               settings file (see below)
 rag-search doctor [--roundtrip] | setup | paths [name] | convert FILE
-rag-search location list|add NAME FOLDER|remove NAME [-y]     index folders outside the docs folder
+rag-search location list|add NAME FOLDER|remove NAME [-y]     register the folders documents are read from
 rag-search collection info NAME                                documents, folders, sizes, dates and state of one collection
 rag-search collection export NAME [-o FILE]                    one .rag.tgz file to share (see "Sharing")
 rag-search collection import FILE [--as NAME] [--replace]      add someone's exported collection
 rag-search collection delete NAME [-y]                         delete a collection's Markdown + index (never documents)
-rag-search convert-legacy [PATH] [--ext doc,xls,ppt,rtf] [--dry-run] [--delete-originals] [--force]
+rag-search convert-legacy PATH [--ext doc,xls,ppt,rtf] [--dry-run] [--delete-originals] [--force]
                                                                  .doc/.xls/.ppt/.rtf -> modern formats
 rag-search register [--desktop] [--code] | unregister | mcp-config [--profile NAME]
 ```
@@ -114,9 +112,9 @@ Change the file, change a conversion setting, or tick *re-convert to Markdown* (
 
 
 Every command accepts `--json`, `--home PATH` and `--client NAME`. `PATH` arguments are files or
-folders inside the docs folder or a registered location (`vault/projects` = the `projects` folder
-of location `vault`), except `convert-legacy`'s, which is an ordinary filesystem path
-(default: the docs folder) since it's a standalone utility, not an indexing scope. Exit codes: 0
+folders inside a registered location (`vault/projects` = the `projects` folder of location
+`vault`), except `convert-legacy`'s, which is an ordinary filesystem path (required) since it's a
+standalone utility, not an indexing scope. Exit codes: 0
 ok, 1 error, 2 usage, 3 daemon not ready/unavailable.
 `list` and `grep` keep working when the search daemon is down (they read the published files
 directly); `search` starts the daemon on demand.
@@ -175,14 +173,14 @@ is a human-troubleshooting surface, not something to hand an LLM caller extra kn
 `rag-search playground` is a sandbox for trying a different embedding model, reranker, chunk size
 or pool/RRF tunable against a small sample of documents, and for benchmarking the result —
 structurally separate from your real collections. Everything lives under
-`<home>/playground/<experiment>/`: its own `docs/`, its own index, its own `config.json`. It is
+`<home>/playground/<experiment>/`: its own source folders (registered the way a production collection's are), its own index, its own `config.json`. It is
 never read by production search, indexing or publish, and there is no daemon — every command loads
 the small index and the experiment's chosen models in its own process and exits (from the dashboard, an
 index or benchmark run is started in the background and watched live, see below).
 
 ```bash
-rag-search playground create demo --from ~/Downloads/sample.pdf   # or drop files into
-                                                                    #  <home>/playground/demo/docs/sample/
+rag-search playground create demo --from ~/Downloads/samples      # a folder, read where it is (never copied)
+rag-search playground source demo add ~/Notes/more --as notes      # more folders: list | add | remove
 rag-search playground config demo --embedding-model Qwen/Qwen3-Embedding-0.6B --rerank-model BAAI/bge-reranker-base
 rag-search playground index demo
 rag-search playground search demo "how is a session token refreshed" --explain
@@ -307,7 +305,7 @@ Macs, Linux) and needs nothing extra: no Node, no build step, no internet. Every
 | Tab | What it shows and does |
 |---|---|
 | Overview | answers "is it working, and what next?": a status banner with the next action (Search / Index new and changed documents / Watch the run), the path of a document drawn once -- documents → index (stages 1–6) → publish (7–8) → search daemon (S1–S6) → clients -- with the live numbers of each step, a *Needs attention* list where every item links to where it is fixed (failed or empty documents, an unpublished run, a model chosen but not downloaded, the document reader that cannot run), a card per collection, how the last run read its pages, and the two daemons with Start / Restart / Stop |
-| Indexing | the **Sources** of every collection (docs folder, registered folders, imports), start a run (new & changed, or a full rebuild after confirmation), cancel, publish; the pipeline's numbered stages with progress and ETA, **Settings in effect, by pipeline stage** (read-only: the value every stage will really use and where it comes from), long lists of failed or unsupported files folded away (the filtered document list has them all), per-document convert / chunk / embed times, run history; a *Conversion* card (pages per branch -- digital, scanned, image, Office, text --, workers, CPU time and memory), a branch strip, cost and page-by-page drawer for every document (click a row; a page shows its record, the source page image and the converted Markdown, and the whole document's Markdown opens in a new tab), branch / outcome filters, and an **Estimate** button (dry run) |
+| Indexing | the **Sources** of every collection (registered folders, imports), start a run (new & changed, or a full rebuild after confirmation), cancel, publish; the pipeline's numbered stages with progress and ETA, **Settings in effect, by pipeline stage** (read-only: the value every stage will really use and where it comes from), long lists of failed or unsupported files folded away (the filtered document list has them all), per-document convert / chunk / embed times, run history; a *Conversion* card (pages per branch -- digital, scanned, image, Office, text --, workers, CPU time and memory), a branch strip, cost and page-by-page drawer for every document (click a row; a page shows its record, the source page image and the converted Markdown, and the whole document's Markdown opens in a new tab), branch / outcome filters, and an **Estimate** button (dry run) |
 | Collections & access | **Add collection…** (register a folder as a location) and **Import…** (a `.rag.tgz` export); every collection with documents, sizes and build times; who may use it, edited with a click (same as `rag-search access`); its description (**Describe…**). Click a row for its details (same as `rag-search collection info NAME`): a state (*up to date*, *needs indexing*, *not published yet*, *source unreachable*, *imported*), tiles for documents indexed vs. found in the source folder, chunks, space on disk, source size, last indexed and build time, then collapsible sections -- **Where it lives** (source, Markdown, index and published folders, each with a Copy button and its size), **Indexing & publishing** (model and weights commit, vectors, chunking, first/last indexed, merged and published state, access, the last run's counts and errors), **Needs attention** (documents not indexed yet with the reason, changed since indexed, interrupted), **Conversion** (pages per branch and outcome, time, cost, documents docling itself graded poor), **Origin** for an imported collection, and the **Documents** list with a filter -- plus **Export…** (save a `.rag.tgz`, then download it), **Delete…** (its Markdown and index only, never the documents; type the name to confirm) and, for a location, **Remove location…** |
 | Models | the embedding models and rerankers you can use, which one is in use, what is downloaded and what fits this computer (a model is *in use* only when it is chosen **and** downloaded **and** able to run: otherwise it says what is missing); download and switch with a click (the same as `rag-search models`); the **Document reader** card has a readiness checklist (platform, the optional Apple-only runtime `mlx-vlm`, the weights) with one-click fixes, including **Install the runtime** (the same as `rag-search models runtime install`). The batch sizes, sequence length, precision and device are on the Settings tab (stages 5 and S5) |
 | Search | try semantic search and regex grep, optionally *as* another client to see exactly what that host would get, with a breakdown of where the time went; toggle the BM25/dense/rerank stages, override pool sizes and the RRF constant, and see each hit's per-stage scores, for troubleshooting and tuning the pipeline (see "Troubleshooting and tuning the search pipeline" above) |
@@ -372,8 +370,8 @@ restricted until you say so. `rag-search doctor` warns if such collections exist
 
 ## Source locations, deleted documents and unreachable folders
 
-A collection is a first-level folder of the docs folder **or a registered location**: any folder
-elsewhere whose whole tree becomes one collection, indexed where it is (nothing is copied):
+A collection is a **registered location**: a folder whose whole tree becomes one collection, indexed
+where it is (nothing is copied). Without a registered location there is nothing to index:
 
 ```bash
 rag-search location add vault ~/Documents/Notes     # collection "vault" = that folder
@@ -384,13 +382,13 @@ rag-search index new vault/projects                 # just one folder of it
 rag-search location remove vault --yes              # unregister + delete its Markdown and index (not the folder)
 ```
 
-A location's name must be free (not a docs-folder folder, not `default`, not an imported
-collection) and its folder may not overlap the docs folder, rag-search's data folder or another
-location.  If a folder with the same name appears in the docs folder later, it is ignored (and
-reported) — one name, one source.
+A location's name must be free (not an imported collection or another location) and its folder
+may not overlap rag-search's data folder or another location. An indexed collection whose location
+is no longer registered stays searchable as *unregistered*: nothing updates or removes it until a
+folder is registered under the same name again, or you delete it.
 
 **Source documents are read-only to rag-search.** Indexing never writes, moves or deletes
-anything in the docs folder or a registered location; what it deletes is its own derived data.
+anything in a registered location; what it deletes is its own derived data.
 (The one command that writes into a source folder is `convert-legacy`, and only because you ask
 it to: it adds converted copies and keeps the originals unless you pass `--delete-originals`.)
 
@@ -399,17 +397,15 @@ What indexing concludes from a source folder:
 | the document... | what happens |
 |---|---|
 | changed | re-converted and re-embedded (its SHA-256 changed) |
-| unchanged, but the folder moved (new `RAG_SEARCH_DOCS`, re-mounted elsewhere) | kept as is; its recorded location is updated |
+| unchanged, but the folder moved (registered again at its new place, or re-mounted elsewhere) | kept as is; its recorded location is updated |
 | deleted | its converted Markdown and index are deleted, and it leaves search with the next publish |
 | in a folder that cannot be read right now (unmounted drive, share down, a sub-folder that cannot be listed) | **nothing**: the collection keeps its last index and stays searchable; the run reports it as *not reachable* |
-| in a location (or a relocated docs folder) that is suddenly **completely empty** | **nothing** either -- an unmounted mount point looks exactly like that. To drop such a collection on purpose: `rag-search location remove NAME` (or move the folder out of the docs folder and run `rag-search collection delete NAME`) |
+| in a location that is suddenly **completely empty** | **nothing** either -- an unmounted mount point looks exactly like that. To drop such a collection on purpose: `rag-search location remove NAME` |
 
 A document only counts as deleted when the run read its whole collection: `index new` (everything)
 or `index new COLLECTION`. A run over one sub-folder or one file never removes anything outside
-what it read. A docs folder set with `RAG_SEARCH_DOCS` on a drive that is not mounted is not
-re-created as an empty stand-in, for the same reason, and indexing refuses to run at all while
-`locations.json` cannot be read (without it a location's collection would look like an emptied
-docs folder). On a case-insensitive disk (the macOS default), renaming a folder only in case
+what it read. Indexing refuses to run at all while `locations.json` cannot be read (without it every
+collection would look like an unregistered one). On a case-insensitive disk (the macOS default), renaming a folder only in case
 (`security` → `Security`) keeps its index.
 
 ## Sharing a collection: export and import
@@ -433,7 +429,7 @@ installation's (vectors of different models cannot be searched together, so ther
 or keyword-only import; when both sides record the weights commit, that must match too; and
 while a model switch is still re-embedding your own documents, imports wait until it is done), a
 damaged file (checksums), anything but plain files at safe paths, and a name that is already
-taken (a docs folder, a location or an indexed collection is never overwritten; `--as NAME`
+taken (a location or an indexed collection is never overwritten; `--as NAME`
 imports under another name, `--replace` replaces only an earlier import of the same name).
 
 An imported collection has no source documents: indexing never scans, prunes, re-merges or
@@ -442,15 +438,14 @@ other, and `collection delete` removes it. If you later switch this installation
 an imported collection embedded with the old one blocks publishing until you delete it (and
 import an export made with the new model).
 
-`collection delete NAME` works on **every** collection -- a docs-folder folder, a location or an
+`collection delete NAME` works on **every** collection -- a location, an unregistered one or an
 import -- and removes only what rag-search built for it in its workspace: the converted Markdown
 (`indexer_workspace/markup/NAME/`) and the index (`indexer_workspace/index/NAME/`), then publishes,
 so it leaves search at once. It **never touches source documents**, and it keeps the collection's
 access rule (a rebuilt collection keeps its restrictions), its description and a location's
 registration. A collection whose documents are still in place is therefore built again by the next
 indexing run: deleting is how to throw away a broken or unwanted index and start over. To stop
-indexing a folder for good, move it out of the docs folder or `rag-search location remove` it
-(unregister + delete). An imported collection has no documents, so deleting it is final.
+indexing a folder for good, `rag-search location remove` it (unregister + delete). An imported collection has no documents, so deleting it is final.
 
 Add a location, import, export and delete are also on the dashboard's Collections tab (**Add
 collection…**, **Import…**, and **Export…** / **Delete…** / **Remove location…** in each collection's
@@ -595,8 +590,7 @@ Environment variables (override `config.json` where both exist):
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `RAG_SEARCH_HOME` | `~/Library/Application Support/rag-search` | data folder (docs, workspace, serving, run, jobs) |
-| `RAG_SEARCH_DOCS` | `<home>/docs` | use an existing documents folder instead |
+| `RAG_SEARCH_HOME` | `~/Library/Application Support/rag-search` | data folder (workspace, serving, run, jobs) |
 | `RAG_SEARCH_CLIENT` | `cli` | client identity used by the CLI (`cli` = administrator; set e.g. `agent` to test what that client sees) |
 | `RAG_SEARCH_JOBS` | auto | parallel conversion workers (each ~1–2 GB RAM) |
 | `RAG_SEARCH_IDLE_SECONDS` / `RAG_SEARCH_PREWARM` | `0` / `1` | search daemon overrides |
@@ -728,8 +722,7 @@ removes it from search after the next `index new`.
   set `RAG_SEARCH_JOBS=1`. The daemon does not stop by itself (`idle_exit_seconds` is 0), and starting any
   `rag-search index ...` command brings it back.
 * **"Operation not permitted" on documents** – daemons started by launchd (`service install`) do
-  not inherit Terminal's access to `~/Documents`, `~/Desktop` or `~/Downloads`. Keep the docs folder
-  in the data folder, or grant Full Disk Access to the tool's Python.
+  not inherit Terminal's access to `~/Documents`, `~/Desktop` or `~/Downloads`. Grant Full Disk Access to the tool's Python.
 * **Out of memory while indexing** – set `indexer.jobs` to 1 and lower `RAG_SEARCH_EMBED_BATCH`.
 * **"A module that was compiled using NumPy 1.x cannot be run in NumPy 2.x" / "Failed to initialize
   NumPy: _ARRAY_API not found"** – Intel Mac with NumPy 2 installed next to the old PyTorch. Re-run

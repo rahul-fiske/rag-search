@@ -122,8 +122,8 @@ class DaemonAndServiceCommandTests(TempHome):
 class CollectionAndTraceCommandTests(TempHome):
     def setUp(self):
         super().setUp()
-        corpus.copy("text/notes.md", self.paths.docs / "team" / "notes.md")
-        corpus.copy("text/readme.txt", self.paths.docs / "team" / "readme.txt")
+        corpus.copy("text/notes.md", self.sdir / "team" / "notes.md")
+        corpus.copy("text/readme.txt", self.sdir / "team" / "readme.txt")
         self.index()
         self.publish()
 
@@ -198,13 +198,13 @@ class PlaygroundTextOutputTests(TempHome):
     def setUp(self):
         super().setUp()
         self.use_fake_backends()
-        self.src = corpus.copy("text/notes.md", self.tmp / "notes.md")
+        self.src = corpus.copy("text/notes.md", self.tmp / "notes" / "notes.md").parent
 
     def test_an_experiment_from_creation_to_comparison_reads_well(self):
         self.assertIn("no playground experiments yet", run("playground", "list")[1])
         run("playground", "create", "demo", "--from", str(self.src))
         rc, out, _ = run("playground", "list")
-        self.assertIn("demo: 1 doc(s)", out)
+        self.assertIn("demo: 1 source folder(s)", out)
         self.assertIn("model: BAAI/bge-m3", out)
         self.assertIn("no runs yet for 'demo'", run("playground", "status", "demo")[1])
         run("playground", "index", "demo")
@@ -214,7 +214,7 @@ class PlaygroundTextOutputTests(TempHome):
         rc, out, _ = run("playground", "search", "demo", "rotate the keys", "--explain")
         self.assertEqual(rc, 0)
         self.assertIn("1. [", out)
-        self.assertIn("notes (sample)", out)
+        self.assertIn("notes (notes)", out)
         self.assertIn("models: embedding=", out)
         rc, out, _ = run("playground", "settings", "demo")
         self.assertIn("settings in effect, by pipeline stage", out)
@@ -260,10 +260,11 @@ class IndexAndLocationTextTests(TempHome):
         self.use_fake_backends()
 
     def test_index_foreground_reports_what_it_could_not_index(self):
-        corpus.copy("text/notes.md", self.paths.docs / "mix" / "notes.md")
-        corpus.copy("pdf/damaged.pdf", self.paths.docs / "mix" / "damaged.pdf")
-        corpus.copy("unsupported/notes.rtf", self.paths.docs / "mix" / "notes.rtf")
-        corpus.copy("text/empty.txt", self.paths.docs / "mix" / "empty.txt")
+        corpus.copy("text/notes.md", self.sdir / "mix" / "notes.md")
+        corpus.copy("pdf/damaged.pdf", self.sdir / "mix" / "damaged.pdf")
+        corpus.copy("unsupported/notes.rtf", self.sdir / "mix" / "notes.rtf")
+        corpus.copy("text/empty.txt", self.sdir / "mix" / "empty.txt")
+        self.register_tree()
         rc, out, _ = run("index", "foreground")
         self.assertIn("! ", out)                                       # the damaged PDF: an error line
         self.assertIn("damaged.pdf", out)
@@ -279,7 +280,7 @@ class IndexAndLocationTextTests(TempHome):
         self.assertIn("error:", err)
 
     def test_index_publish_prints_the_generation_or_says_nothing_changed(self):
-        corpus.copy("text/notes.md", self.paths.docs / "mix" / "notes.md")
+        corpus.copy("text/notes.md", self.sdir / "mix" / "notes.md")
         self.index()
         with mock.patch.object(api, "index_publish", return_value={
                 "ok": True, "publish": {"changed": True, "generation": 4}, "search_reload": {"ok": True}}):

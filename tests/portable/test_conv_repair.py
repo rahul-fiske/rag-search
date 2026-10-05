@@ -498,7 +498,7 @@ class StatementIndexBase(ConversionBase):
         p.start()
         self.addCleanup(p.stop)
         self.addCleanup(vlm.close_shared)
-        self.pdf = self.paths.docs / "bank" / "stmt.pdf"
+        self.pdf = self.sdir / "bank" / "stmt.pdf"
         self.pdf.parent.mkdir(parents=True)
         write_statement_pdf(self.pdf)
 

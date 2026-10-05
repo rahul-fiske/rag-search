@@ -6,7 +6,7 @@ from tests.helpers import FakeEmbedder, TempHome
 from rag_search.core import indexer
 from rag_search.core.search import ModelMismatch, SearchEngine
 from rag_search.grep import grep_markup
-from rag_search.paths import ALL_DIR, EMB_FILE, NODES_FILE
+from rag_search.paths import ALL_DIR, EMB_FILE
 
 AUTH = ("# Authentication\n\n<!-- page 1 -->\n\nSSH access uses public key authentication. "
         "Administrators create accounts with the security login create command.\n\n"
@@ -23,7 +23,7 @@ class PipelineTests(TempHome):
         self.write_doc("a/~$lock.docx", "hi")
         (self.paths.markup / "z").mkdir(parents=True)
         (self.paths.markup / "z" / "old.md").write_text("x")
-        found = indexer.scan_sources(self.tmp / "home", indexer.exclude_dirs(self.paths))
+        found = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
         self.assertEqual([p.name for p in found], ["x.md"])
 
     def test_end_to_end_index_publish_search_page_citation(self):
@@ -126,12 +126,10 @@ class PipelineTests(TempHome):
         self.assertTrue(res)
         self.assertTrue(all(r["file"] == "b" for r in res))
 
-    def test_top_level_files_and_name_collisions(self):
-        self.write_doc("top.md", COOK)
+    def test_name_collisions(self):
         self.write_doc("c/same.md", AUTH)
         self.write_doc("c/same.txt", "other text")
         s = self.index()
-        self.assertTrue((self.paths.index / "default" / ALL_DIR / NODES_FILE).exists())
         self.assertEqual(len(s["errors"]), 1)
         self.assertIn("same document name", s["errors"][0]["message"])
 

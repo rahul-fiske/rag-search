@@ -52,7 +52,7 @@
   function renderExperimentList() {
     fill(refs.list, experiments.length ? experiments.map(e => h('div', { class: 'row', style: { justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border, #333)' } },
       h('div', null, h('a', { href: '#', on: { click: ev => { ev.preventDefault(); selectExperiment(e.name); } } }, h('b', null, e.name)),
-        h('div', { class: 'muted small' }, `${e.documents} doc(s) · collections ${e.indexed_collections.join(', ') || '(not indexed)'} · ${e.bench_runs} bench run(s) · ${e.config.embedding_model} + ${e.config.rerank_model || 'no reranker'}`
+        h('div', { class: 'muted small' }, `${(e.sources || []).length} source folder(s) · collections ${e.indexed_collections.join(', ') || '(not indexed)'} · ${e.bench_runs} bench run(s) · ${e.config.embedding_model} + ${e.config.rerank_model || 'no reranker'}`
           + (e.config.reader_model ? ` · reader ${e.config.reader_model}` : ''))),
       h('div', { class: 'row', style: { gap: '8px' } },
         h('button', { class: 'btn small', on: { click: () => selectExperiment(e.name) } }, 'Open'),
@@ -64,8 +64,10 @@
     const name = refs.newName.value.trim(); if (!name) return;
     const body = { name };
     if (refs.fromProd.checked) body.from_production = true;
+    const folder = refs.newFolder.value.trim();
+    if (folder) body.folders = [folder];
     const r = await act('playground/create', body, `Created ${name}`);
-    if (r.ok) { refs.newName.value = ''; refs.fromProd.checked = false; await refreshExperiments(); selectExperiment(name); }
+    if (r.ok) { refs.newName.value = ''; refs.newFolder.value = ''; refs.fromProd.checked = false; await refreshExperiments(); selectExperiment(name); }
   }
 
   const fmtVal = v => (v === null || v === undefined || v === '' ? '(default)' : String(v));
@@ -284,7 +286,8 @@
       h('thead', null, h('tr', null, ['Document', 'Status', 'Stages (hover for detail)', 'Pages'].map(t => h('th', null, t)))),
       h('tbody', null, docs.flatMap(x => {
         const pages = (x.tl && x.tl.pages) || [], open = expanded.has(x.file);
-        const main = h('tr', null,
+        const conv = x.item && x.item.conversion, openable = !!(conv && conv.trace);
+        const main = h('tr', { class: openable ? 'clickable' : '', title: openable ? 'Click for the page-by-page record, the source page and the converted Markdown' : '', on: openable ? { click: ev => { if (!ev.target.closest('a')) CV.openSummary(conv, current); } } : {} },
           h('td', { class: 'mono small' }, x.file),
           h('td', null, pill(docText[x.status] || x.status, docClass[x.status] || '', x.status === 'working'),
             x.message ? h('div', { class: 'small ' + (x.status === 'error' ? 'bad' : 'muted') }, x.message) : null),
@@ -363,6 +366,26 @@
     else if (job.status === 'failed' || job.status === 'cancelled') body.push(h('div', { class: 'notice warn', style: { marginTop: '12px' } }, job.status === 'cancelled' ? 'The run was cancelled.' : 'The run failed.'));
     body.push(historyTable());
     return h('div', null, body);
+  }
+
+  /* ---------- the experiment's source folders: registered where they are, like a production collection's ---------- */
+  async function loadSources() {
+    if (!current || !refs.srcBox) return;
+    const r = await api('playground/sources', { name: current, op: 'list' });
+    const st = (r.ok && r.result && r.result.status) || [];
+    fill(refs.srcBox, st.length ? h('div', { class: 'table-wrap' }, h('table', null,
+      h('thead', null, h('tr', null, ['Collection', 'Folder', ''].map(t => h('th', null, t)))),
+      h('tbody', null, st.map(x => h('tr', null, h('td', { class: 'mono' }, x.collection),
+        h('td', null, h('code', null, x.folder), x.reachable ? null : h('span', { class: 'bad small' }, '  unreachable')),
+        h('td', null, h('button', { class: 'btn small danger', disabled: readOnly(), on: { click: async () => { const q = await act('playground/sources', { name: current, op: 'remove', collection: x.collection }, `Removed ${x.collection}`); if (q.ok) loadSources(); } } }, 'Remove'))))))) :
+      empty('No source folders yet: add the folder that holds the sample documents. It is read where it is and never changed.'));
+  }
+  async function addSource() {
+    const folder = refs.srcFolder.value.trim(); if (!folder || !current) return;
+    const body = { name: current, op: 'add', folder };
+    if (refs.srcName.value.trim()) body.collection = refs.srcName.value.trim();
+    const r = await act('playground/sources', body, 'Source added');
+    if (r.ok) { refs.srcFolder.value = ''; refs.srcName.value = ''; loadSources(); refreshExperiments(); }
   }
 
   function renderRun() {
@@ -492,6 +515,9 @@
     refs.compare = h('div', { style: { marginTop: '10px' } });
     refs.runBox = h('div', { style: { marginTop: '10px' } });
     refs.effBox = h('div');
+    refs.srcBox = h('div');
+    refs.srcFolder = h('input', { type: 'text', placeholder: '/path/to/sample/documents', style: { width: '340px' } });
+    refs.srcName = h('input', { type: 'text', placeholder: 'collection name (optional)', style: { width: '200px' } });
 
     const home = RS.state.catalog && RS.state.catalog.home;
     refs.runCard = h('div', { class: 'card' },
@@ -505,7 +531,12 @@
 
     fill(refs.detail,
       h('h3', null, current),
-      home ? h('p', { class: 'small muted' }, `documents: ${home}/playground/${current}/docs/<collection>/ · bench queries: ${home}/playground/${current}/bench/queries.jsonl`) : null,
+      h('p', { class: 'small muted' }, `bench queries: ${home || '<home>'}/playground/${current}/bench/queries.jsonl.example`),
+      h('div', { class: 'card' },
+        h('div', { class: 'card-head' }, h('h4', null, 'Source folders'), h('span', { class: 'muted small' }, 'chosen by you, read in place, never copied or changed; each is one collection, as in production')),
+        refs.srcBox,
+        h('div', { class: 'row', style: { gap: '8px', marginTop: '10px', flexWrap: 'wrap' } }, refs.srcFolder, refs.srcName,
+          h('button', { class: 'btn small', disabled: readOnly(), on: { click: addSource } }, 'Add folder'))),
       refs.runCard,
       h('div', { class: 'card' },
         h('div', { class: 'card-head' }, h('h4', null, 'Settings of this experiment, by pipeline stage'), h('span', { class: 'muted small' }, 'pinned to this experiment only; a blank field means the built-in default'),
@@ -551,6 +582,7 @@
         h('h4', { style: { marginTop: '16px' } }, 'Every recorded run'),
         refs.compare));
     renderRun();
+    loadSources();
   }
 
   // ── conversion benchmarks: gold sets and stored runs (listing and comparing only; runs are made
@@ -612,6 +644,7 @@
     init(root) {
       refs.newName = h('input', { type: 'text', placeholder: 'experiment name', style: { width: '200px' } });
       refs.fromProd = h('input', { type: 'checkbox' });
+      refs.newFolder = h('input', { type: 'text', placeholder: 'source folder (optional)', style: { width: '260px' } });
       refs.list = h('div', { style: { marginTop: '10px' } });
       refs.detail = h('div', { style: { marginTop: '16px' } }, empty('Select or create an experiment above.'));
       refs.benchBox = h('div', { style: { marginTop: '10px' } });
@@ -624,12 +657,12 @@
         h('div', { class: 'card' },
           h('div', { class: 'card-head' }, h('h3', null, 'Experiments')),
           refs.list,
-          h('div', { class: 'row', style: { marginTop: '12px', gap: '8px' } }, refs.newName,
+          h('div', { class: 'row', style: { marginTop: '12px', gap: '8px', flexWrap: 'wrap' } }, refs.newName, refs.newFolder,
             h('label', { class: 'check' }, refs.fromProd, ' copy from production'),
             h('button', { class: 'btn primary small', on: { click: createExperiment } }, 'New experiment')),
           h('p', { class: 'small muted', style: { marginTop: '8px', marginBottom: 0 } },
-            'A new experiment starts with no documents. Add sample files to its docs/sample/ folder '
-            + '(shown after you open it), or from a terminal: rag-search playground create NAME --from PATH. '
+            'A new experiment reads its documents from folders you choose, exactly like a production collection: '
+            + 'give one here or add folders after opening it, or from a terminal: rag-search playground create NAME --from FOLDER. '
             + '"Copy from production" seeds the embedding/reranker model, chunk size/overlap and search '
             + 'tunables from today’s production settings instead of this tool’s own defaults.')),
         refs.detail,

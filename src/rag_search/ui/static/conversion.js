@@ -143,20 +143,21 @@ const CV = (function () {
     const i = m.indexOf('/');
     return i < 0 ? null : [m.slice(0, i), m.slice(i + 1)];
   }
-  const qs = (coll, doc, extra) => new URLSearchParams({ collection: coll, doc, ...(extra || {}) }).toString();
+  const qs = (coll, doc, extra) => new URLSearchParams({ collection: coll, doc, ...(st && st.exp ? { exp: st.exp } : {}), ...(extra || {}) }).toString();
 
-  async function open(coll, doc) {
+  /* *exp*: a playground experiment's name; its documents are read from the experiment's own workspace. */
+  async function open(coll, doc, exp) {
     ensureDrawer();
-    st = { coll, doc, data: null, error: '', page: 0, detail: null, image: false, md: null };
+    st = { exp: exp || '', coll, doc, data: null, error: '', page: 0, detail: null, image: false, md: null };
     render(); drawer.classList.remove('hidden');
     const r = await api('conversion/trace?' + qs(coll, doc));
     if (!st || st.coll !== coll || st.doc !== doc) return;
     if (r.ok === false) st.error = r.error || 'no trace'; else st.data = r.result;
     render();
   }
-  function openSummary(conv) {
+  function openSummary(conv, exp) {
     const parts = split(conv && conv.trace);
-    if (parts) open(parts[0], parts[1]);
+    if (parts) open(parts[0], parts[1], exp);
     else toast('No page record for this document (indexed before conversion tracking). Re-convert it to get one.', '');
   }
   async function pick(n) {

@@ -12,7 +12,7 @@ against the PNG and sets ``"verified": true``.
 A **run** reads the gold pages with an *engine* (``engines.py``) and stores the measures
 (``metrics.py``) per page, per class and overall in ``<home>/conversion_bench/<set>/<run>.json``.
 Runs never write to the index, the serving folder or the markup of any collection; the source
-files are opened read-only and must lie in the docs folder or a registered location.
+files are opened read-only and must lie in a registered location.
 """
 
 from __future__ import annotations
@@ -20,8 +20,9 @@ from __future__ import annotations
 import hashlib
 import re
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from ...paths import Paths, read_json, sha256_file, write_json_atomic
 from . import costs, engines, metrics, pagemd, trace
@@ -112,11 +113,11 @@ def _source_roots(paths: Paths) -> list[Path]:
     from ... import locations
 
     locs, _err = locations.load(paths)
-    return [paths.docs, *[Path(f) for f in (locs or {}).values()]]
+    return [Path(f) for f in (locs or {}).values()]
 
 
 def resolve_source(paths: Paths, entry: dict[str, Any]) -> Path | None:
-    """The source file of a gold entry, if it is still there and lies inside the docs folder or a
+    """The source file of a gold entry, if it is still there and lies inside a
     registered location (the path in the file is never trusted on its own)."""
     roots = _source_roots(paths)
     cands = []
@@ -124,7 +125,6 @@ def resolve_source(paths: Paths, entry: dict[str, Any]) -> Path | None:
         cands.append(Path(str(entry["path"])))
     rel = str(entry.get("rel") or "").strip("/")
     if rel:
-        cands.append(paths.docs / rel)
         parts = rel.split("/", 1)
         if len(parts) == 2:
             from ... import locations
@@ -278,7 +278,7 @@ def run_bench(paths: Paths, set_name: str, *, engine: str = "current", name: str
     for e in entries:
         src = resolve_source(paths, e)
         if src is None:
-            skipped.append({"id": e["id"], "why": "source file not found in the docs folder or a registered location"})
+            skipped.append({"id": e["id"], "why": "source file not found in a registered location"})
             continue
         sources[e["id"]] = src
         by_file.setdefault(str(src), []).append(e)

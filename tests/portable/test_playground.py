@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from unittest import mock
 
+from rag_search import locations
 from rag_search.paths import META_FILE, index_dir_for, read_json
 from tests.helpers import TempHome
 
@@ -17,9 +18,42 @@ class PlaygroundBase(TempHome):
         self.use_fake_backends()
 
     def make_source(self, name: str, text: str) -> Path:
-        p = self.tmp / name
-        p.write_text(text, encoding="utf-8")
-        return p
+        """A folder holding one document: an experiment's source is a folder, as in production."""
+        folder = self.tmp / ("src-" + name.rsplit(".", 1)[0])
+        folder.mkdir()
+        (folder / name).write_text(text, encoding="utf-8")
+        return folder
+
+
+class SourceTests(PlaygroundBase):
+    def test_sources_are_registered_where_they_are_and_follow_the_location_rules(self):
+        from rag_search.core import playground as pg
+
+        folder = self.make_source("a.txt", "<!-- page 1 -->\nalpha\n")
+        pg.create_experiment(self.paths, "e")
+        added = pg.add_source(self.paths, "e", str(folder), "mine")
+        self.assertEqual((added["collection"], added["folder"]), ("mine", str(folder.resolve())))
+        self.assertEqual(sorted(p.name for p in folder.iterdir()), ["a.txt"])           # never written to
+        with self.assertRaises(pg.PlaygroundError):                                    # same rules as production
+            pg.add_source(self.paths, "e", str(self.tmp / "missing"))
+        with self.assertRaises(pg.PlaygroundError):
+            pg.add_source(self.paths, "e", str(folder), "again")                     # the folder is registered
+        self.assertEqual(locations.load(self.paths)[0], {})                           # production's registry is untouched
+        self.assertEqual(pg.list_sources(self.paths, "e")["status"][0]["reachable"], True)
+        self.assertEqual(pg.remove_source(self.paths, "e", "MINE"), "mine")
+        with self.assertRaises(pg.PlaygroundError):
+            pg.remove_source(self.paths, "e", "mine")
+        with self.assertRaises(pg.PlaygroundError):
+            pg.build_index(self.paths, "e")                                           # nothing registered
+
+    def test_a_collection_name_needs_exactly_one_folder_and_a_failed_create_leaves_nothing(self):
+        from rag_search.core import playground as pg
+
+        with self.assertRaises(pg.PlaygroundError):
+            pg.create_experiment(self.paths, "x", collection="c")
+        with self.assertRaises(pg.PlaygroundError):
+            pg.create_experiment(self.paths, "y", sources=[str(self.tmp / "nope")])
+        self.assertEqual(pg.list_experiments(self.paths), [])
 
 
 class LifecycleTests(PlaygroundBase):
@@ -29,7 +63,7 @@ class LifecycleTests(PlaygroundBase):
         src = self.make_source("doc1.txt", "<!-- page 1 -->\nhow is a session token refreshed\n"
                                             "<!-- page 2 -->\nsomething unrelated about pandas\n")
         info = pg.create_experiment(self.paths, "exp1", sources=[str(src)])
-        self.assertEqual(info["documents_added"], 1)
+        self.assertEqual([x["collection"] for x in info["sources"]], ["src-doc1"])
 
         summary = pg.build_index(self.paths, "exp1")
         self.assertEqual(summary["indexed"], 1)
@@ -71,8 +105,8 @@ class LifecycleTests(PlaygroundBase):
         listed = pg.list_experiments(self.paths)
         self.assertEqual(len(listed), 1)
         self.assertEqual(listed[0]["name"], "exp2")
-        self.assertEqual(listed[0]["documents"], 1)
-        self.assertIn("sample", listed[0]["indexed_collections"])
+        self.assertEqual([x["collection"] for x in listed[0]["sources"]], ["src-doc2"])
+        self.assertIn("src-doc2", listed[0]["indexed_collections"])
 
         pg.remove_experiment(self.paths, "exp2")
         self.assertEqual(pg.list_experiments(self.paths), [])
@@ -97,7 +131,7 @@ class RebuildVsForceMdTests(PlaygroundBase):
         pg.create_experiment(self.paths, "reb", sources=[str(src)])
         pg.build_index(self.paths, "reb")
         exp = get_playground_paths(self.paths, "reb")
-        md = exp.markup / "sample" / "a.md"
+        md = exp.markup / "src-a" / "a.md"
         md.write_text("<!-- page 1 -->\nstale text (simulating an out-of-date conversion)\n",
                       encoding="utf-8")
 
@@ -114,12 +148,12 @@ class RebuildVsForceMdTests(PlaygroundBase):
         pg.create_experiment(self.paths, "fmd", sources=[str(src)])
         pg.build_index(self.paths, "fmd")
         exp = get_playground_paths(self.paths, "fmd")
-        md = exp.markup / "sample" / "b.md"
+        md = exp.markup / "src-b" / "b.md"
         md.write_text("<!-- page 1 -->\nstale text\n", encoding="utf-8")
 
         s = pg.build_index(self.paths, "fmd", rebuild=True, force_md=True)
         self.assertEqual((s["indexed"], s["skipped_fresh"]), (1, 0))
-        self.assertEqual(md.read_text(encoding="utf-8"), src.read_text(encoding="utf-8"))
+        self.assertEqual(md.read_text(encoding="utf-8"), (src / "b.txt").read_text(encoding="utf-8"))
 
 
 class IsolationTests(PlaygroundBase):
@@ -178,11 +212,11 @@ class ConfigTests(PlaygroundBase):
 
         from rag_search.paths import get_playground_paths
         pa = get_playground_paths(self.paths, "modelA")
-        meta_a = read_json(index_dir_for(pa.docs / "sample" / "a.txt", pa.docs, pa.index)
+        meta_a = read_json(index_dir_for(self.tmp / "src-a" / "a.txt", locations.source_roots(pa), pa.index)
                             / META_FILE)
         self.assertEqual(meta_a["model"], "model-a")
         pb = get_playground_paths(self.paths, "modelB")
-        meta_b = read_json(index_dir_for(pb.docs / "sample" / "b.txt", pb.docs, pb.index)
+        meta_b = read_json(index_dir_for(self.tmp / "src-b" / "b.txt", locations.source_roots(pb), pb.index)
                             / META_FILE)
         self.assertEqual(meta_b["model"], "model-b")
 
@@ -465,7 +499,7 @@ class DoclingEnvTests(PlaygroundBase):
             seen["DOC_TIMEOUT"] = os.environ.get("RAG_SEARCH_DOC_TIMEOUT")
             return {"indexed": 0, "errors": []}
 
-        with mock.patch.object(pg, "run_index", side_effect=fake_run_index):
+        with mock.patch.object(pg, "run_plan", side_effect=fake_run_index):
             pg.build_index(self.paths, "envtest")
 
         self.assertEqual(seen["OCR"], "smart")
@@ -486,7 +520,7 @@ class DoclingEnvTests(PlaygroundBase):
             seen["OCR"] = os.environ.get("RAG_SEARCH_OCR")
             return {"indexed": 0, "errors": []}
 
-        with mock.patch.object(pg, "run_index", side_effect=fake_run_index):
+        with mock.patch.object(pg, "run_plan", side_effect=fake_run_index):
             pg.build_index(self.paths, "notunables")
 
         self.assertIsNone(seen["OCR"])
@@ -506,7 +540,7 @@ class DoclingEnvTests(PlaygroundBase):
 
         os.environ["RAG_SEARCH_OCR"] = "off"
         try:
-            with mock.patch.object(pg, "run_index", side_effect=fake_run_index):
+            with mock.patch.object(pg, "run_plan", side_effect=fake_run_index):
                 pg.build_index(self.paths, "ambient")
         finally:
             os.environ.pop("RAG_SEARCH_OCR", None)

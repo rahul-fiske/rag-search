@@ -7,10 +7,11 @@ The rules themselves and how they are applied live in ``policy.py``.
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from . import locations, policy, register
-from .catalog import canonical_name, docs_folder_names, live_catalog
+from .catalog import canonical_name, live_catalog
 from .paths import Paths, file_lock
 
 
@@ -21,9 +22,9 @@ class AccessError(ValueError):
 # ── what exists ─────────────────────────────────────────────────────────────
 
 def known_collections(paths: Paths) -> dict[str, dict[str, Any]]:
-    """Every collection we know of: published ones, folders in the docs folder, registered
-    source locations and imported collections -- with where each one's documents come from
-    (``kind``: docs | location | imported, and ``folder`` for a location)."""
+    """Every collection we know of: published ones, registered source locations and imported
+    collections -- with where each one's documents come from (``kind``: location | imported |
+    unregistered, and ``folder`` for a location)."""
     out: dict[str, dict[str, Any]] = {}
     locs = locations.load(paths)[0]
     imported = set(locations.imported_names(paths))
@@ -33,12 +34,12 @@ def known_collections(paths: Paths) -> dict[str, dict[str, Any]]:
             return {"kind": "location", "folder": locs[name]}
         if name in imported:
             return {"kind": "imported", "folder": None}
-        return {"kind": "docs", "folder": None}
+        return {"kind": "unregistered", "folder": None}
 
     for c in live_catalog(paths).get("collections", []):
         out[c["collection"]] = {"indexed": True, "documents": len(c.get("documents", [])),
                                 "chunks": c.get("chunks", 0), **kind(c["collection"])}
-    for name in (*docs_folder_names(paths), *locs, *imported):
+    for name in (*locs, *imported):
         out.setdefault(name, {"indexed": False, "documents": 0, "chunks": 0, **kind(name)})
     return out
 

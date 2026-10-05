@@ -2,22 +2,24 @@
 
 A collection is one of:
 
-* **a docs-folder collection** -- a first-level folder of the docs folder (the original model;
-  nothing to register).  Files directly in the docs folder form the ``default`` collection.
-* **a registered location** -- any folder elsewhere (a notes vault, a synced drive, a network
-  share); its whole tree is one collection, under the name it was registered with::
+* **a registered location** -- any folder (a notes vault, a synced drive, a network share, a project
+  folder); its whole tree is one collection, under the name it was registered with::
 
       <home>/locations.json   {"version": 1, "locations": {"vault": "/Users/me/Notes"}}
 
-  written only by ``rag-search location add/remove``.
+  written only by ``rag-search location add/remove``.  The documents stay where they are.
 * **an imported collection** -- unpacked from a collection export (see bundle.py).  It has no
   source anywhere; a ``collection.origin.json`` file in its workspace index folder marks it, so
   indexing never scans, prunes, merges or rebuilds it.
 
-Source folders are only ever *read*: rag-search never writes, moves or deletes anything in the
-docs folder or in a registered location (``read_source``; a test checks no other module opens
-files under them for writing).  What indexing deletes when a document disappears is its own
-derived data (converted Markdown, per-document index).
+A collection that is in the index but is neither (its folder was never registered, or was
+unregistered without deleting its index) keeps being served as it was; registering a folder
+under the same name picks it up again.
+
+Source folders are only ever *read*: rag-search never writes, moves or deletes anything in a
+registered location (``read_source``; a test checks no other module opens files under them for
+writing).  What indexing deletes when a document disappears is its own derived data (converted
+Markdown, per-document index).
 
 A registered location can be temporarily unreachable (an unmounted drive, a share that is down):
 ``reachable`` tells that apart from "empty" before anything is concluded about its documents,
@@ -30,12 +32,12 @@ import json
 import os
 import threading
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from .paths import (
-    DEFAULT_COLLECTION,
     SUPPORTED_EXTENSIONS,
     CachedFile,
     Paths,
@@ -43,10 +45,10 @@ from .paths import (
     file_lock,
     is_plain_name,
     is_within,
+    name_from_folder,
+    pasted_path,
     read_json,
     write_json_atomic,
-    pasted_path,
-    name_from_folder,
 )
 
 LOCATIONS_VERSION = 1
@@ -56,6 +58,10 @@ REACH_TIMEOUT_S = 10.0
 
 class LocationError(ValueError):
     """A request the user can fix (bad name, folder missing, overlap, ...)."""
+
+
+NO_LOCATIONS = ("no source folders are registered, so there is nothing to index: add one with "
+                "`rag-search location add NAME FOLDER`")
 
 
 # ── reading ─────────────────────────────────────────────────────────────────
@@ -99,15 +105,23 @@ def names(paths: Paths) -> list[str]:
 
 
 def source_roots(paths: Paths) -> SourceRoots:
-    """The docs folder plus every registered location, for indexing and path mirroring."""
+    """Every registered location, for indexing and path mirroring."""
     locs = load(paths)[0]
-    return SourceRoots(str(paths.docs), tuple(sorted((n, str(Path(f).expanduser()))
-                                                     for n, f in locs.items())))
+    return SourceRoots(tuple(sorted((n, str(Path(f).expanduser())) for n, f in locs.items())))
 
 
-def source_root(paths: Paths, collection: str) -> Path:
-    """Where *collection*'s sources live (whether or not that folder exists right now)."""
+def source_root(paths: Paths, collection: str) -> Path | None:
+    """Where *collection*'s sources live (whether or not that folder exists right now), or None when
+    no location of that name is registered."""
     return source_roots(paths).root_of(collection)
+
+
+def unregistered_names(paths: Paths) -> list[str]:
+    """Collections that are in the index but have no registered folder and are not imported: indexed
+    earlier, their folder never registered (or unregistered with the index kept).  They stay searchable
+    but nothing updates them."""
+    locs, imported = set(load(paths)[0]), set(imported_names(paths))
+    return [c for c in workspace_collections(paths) if c not in locs and c not in imported]
 
 
 # ── imported collections ────────────────────────────────────────────────────
@@ -192,19 +206,16 @@ def status(paths: Paths) -> list[dict[str, Any]]:
 
 
 def sources(paths: Paths) -> dict[str, Any]:
-    """Where the documents of every collection come from, for the dashboard (nothing is probed beyond
-    listing the docs folder): the docs folder and the collections made of its sub-folders, the registered
-    locations, and the imported collections (which have no source)."""
-    from .catalog import docs_folder_names
-
+    """Where the documents of every collection come from, for the dashboard (nothing is probed): the
+    registered locations, the imported collections (which have no source) and the indexed collections
+    that have no registered folder."""
     try:
-        locs, _err = load(paths)
-        return {"docs_folder": str(paths.docs), "docs_collections": docs_folder_names(paths),
-                "locations": [{"collection": n, "folder": f} for n, f in sorted(locs.items())],
-                "imported": imported_names(paths)}
+        locs, err = load(paths)
+        return {"locations": [{"collection": n, "folder": f} for n, f in sorted(locs.items())],
+                "imported": imported_names(paths), "unregistered": unregistered_names(paths),
+                **({"error": err} if err else {})}
     except Exception as exc:  # noqa: BLE001 - a status call must always answer
-        return {"docs_folder": str(paths.docs), "docs_collections": [], "locations": [], "imported": [],
-                "error": str(exc)}
+        return {"locations": [], "imported": [], "unregistered": [], "error": str(exc)}
 
 
 # ── reading sources ─────────────────────────────────────────────────────────
@@ -269,7 +280,7 @@ def _is_empty_dir(folder: Path) -> bool:
 
 
 def workspace_excludes(paths: Paths) -> list[Path]:
-    """rag-search's own folders, never scanned even when they sit inside the docs folder."""
+    """rag-search's own folders, never scanned even when a registered folder contains them."""
     return [paths.markup, paths.index, paths.run, paths.jobs]
 
 
@@ -282,7 +293,8 @@ class ScanPlan:
     ``covered`` lists collections whose *whole* source folder was walked and readable: only for
     those may a document that was not found be treated as deleted (its Markdown and index are
     removed).  ``unreachable`` are registered locations that could not be read: their
-    collections are left exactly as they are (no pruning, no re-merge, still searchable)."""
+    collections are left exactly as they are (no pruning, no re-merge, still searchable).
+    """
 
     roots: SourceRoots
     sources: list[Path] = field(default_factory=list)
@@ -290,12 +302,10 @@ class ScanPlan:
     covered: list[str] = field(default_factory=list)
     unreachable: list[str] = field(default_factory=list)
     frozen: list[str] = field(default_factory=list)    # collections to leave as they are
-    shadowed: list[str] = field(default_factory=list)
     target: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {"covered": self.covered, "unreachable": self.unreachable,
-                "frozen": self.frozen, "shadowed": self.shadowed}
+        return {"covered": self.covered, "unreachable": self.unreachable, "frozen": self.frozen}
 
 
 def _match(name: str, candidates: Iterable[str]) -> str:
@@ -308,16 +318,17 @@ def _match(name: str, candidates: Iterable[str]) -> str:
     return ""
 
 
-def resolve_target(paths: Paths, raw: str) -> tuple[Path, str]:
-    """(folder or file to index, the collection it belongs to or "") for a user-given path:
-    absolute, relative to the docs folder, or starting with a registered location's name
-    (``vault`` or ``vault/projects``).  Raises LocationError with a message for the user."""
+def resolve_target(paths: Paths, raw: str) -> tuple[Path | None, str]:
+    """(folder or file to index, the collection it is the whole of or "") for a user-given path:
+    absolute, or starting with a registered location's name (``vault`` or ``vault/projects``).
+    An empty *raw* means everything: ``(None, "")``.  Raises LocationError with a message for the user."""
     roots = source_roots(paths)
     locs = dict(roots.locations)
     raw = pasted_path(raw)
-    docs = paths.docs.resolve()
     if not raw:
-        return docs, ""
+        return None, ""
+    if not locs:
+        raise LocationError(NO_LOCATIONS)
     p = Path(raw).expanduser()
     if not p.is_absolute():
         first = p.parts[0] if p.parts else ""
@@ -334,7 +345,8 @@ def resolve_target(paths: Paths, raw: str) -> tuple[Path, str]:
                 raise LocationError(f"{imp!r} is an imported collection: it has no source "
                                     "documents to index (delete it and import a newer export "
                                     "to update it)")
-            p = docs / p
+            raise LocationError(f"{raw!r} is neither a registered location nor a path inside one "
+                                "(see `rag-search location list`)")
     p = p.resolve()
     for name, root in locs.items():
         r = Path(root).resolve()
@@ -344,48 +356,30 @@ def resolve_target(paths: Paths, raw: str) -> tuple[Path, str]:
             if not p.exists():
                 raise LocationError(f"not found: {p}")
             return p, name if p == r else ""
-    if not is_within(p, docs):
-        raise LocationError(f"path must be inside the docs folder {docs} or a registered "
-                            "location (rag-search location list)")
-    if not p.exists():
-        raise LocationError(f"not found: {p}")
-    if p != docs:
-        first = p.relative_to(docs).parts[0]
-        reserved = _match(first, [*locs, *imported_names(paths)])
-        if reserved and (docs / first).is_dir():
-            raise LocationError(f"{docs / first} is ignored: {reserved!r} is the name of a "
-                                "registered location or an imported collection")
-        if p.parent == docs and p.is_dir() and first != DEFAULT_COLLECTION:
-            return p, first
-    return p, ""
+    raise LocationError(f"path must be inside a registered location (see `rag-search location "
+                        f"list`): {p}")
 
 
 def plan_scan(paths: Paths, raw: str = "") -> ScanPlan:
     """Decide what an indexing run over *raw* (empty = everything) reads and may prune.
 
     Nothing is concluded from a source folder that could not be read completely: a registered
-    location or docs folder that is missing or cannot be listed, a sub-folder the walk could not
-    open, or a source root that is completely empty while its collections have an index (an
-    unmounted mount point looks exactly like that) -- those collections are *frozen*: not
-    pruned, not re-merged, still served as indexed before."""
+    location that is missing or cannot be listed, a sub-folder the walk could not open, or a
+    location that is completely empty while its collection has an index (an unmounted mount point
+    looks exactly like that) -- those collections are *frozen*: not pruned, not re-merged, still
+    served as indexed before."""
     _, error = load(paths)
     if error:
-        # without the registry, a location's collection would look like an emptied docs folder
+        # without the registry, every location's collection would look like an emptied folder
         raise LocationError(f"cannot index while {error}; fix or remove that file "
                             "(rag-search location list)")
     roots = source_roots(paths)
     locs = dict(roots.locations)
-    imported = imported_names(paths)
-    reserved = {n.casefold() for n in (*locs, *imported)}
-    docs = paths.docs.resolve()
-    shadowed = [f for f in _docs_folders(paths) if f.casefold() in reserved]
-    excludes = workspace_excludes(paths) + [docs / f for f in shadowed]
-    plan = ScanPlan(roots=roots, shadowed=sorted(shadowed), target=raw)
+    excludes = workspace_excludes(paths)
+    if not locs:
+        raise LocationError(NO_LOCATIONS)
+    plan = ScanPlan(roots=roots, target=raw)
     have = set(workspace_collections(paths))
-
-    def docs_collections() -> list[str]:
-        names = have | set(_docs_folders(paths)) | {DEFAULT_COLLECTION}
-        return sorted(n for n in names if n.casefold() not in reserved)
 
     def freeze(names: Iterable[str], why: str) -> None:
         for n in names:
@@ -394,14 +388,8 @@ def plan_scan(paths: Paths, raw: str = "") -> ScanPlan:
         if why not in plan.unreachable:
             plan.unreachable.append(why)
 
-    # Every source folder is probed, whatever this run's scope: a collection whose folder cannot
-    # be read must not be re-merged either (its documents would all look deleted).
-    docs_ok = reachable(docs)
-    if not docs_ok:
-        freeze(docs_collections(), f"(docs folder {docs})")
-    elif _is_empty_dir(docs) and any(c in have for c in docs_collections()):
-        docs_ok = False
-        freeze(docs_collections(), f"(docs folder {docs} is empty: treated as not mounted)")
+    # Every location is probed, whatever this run's scope: a collection whose folder cannot be read
+    # must not be re-merged either (its documents would all look deleted).
     loc_ok = {}
     for name, root in sorted(locs.items()):
         r = Path(root)
@@ -420,25 +408,15 @@ def plan_scan(paths: Paths, raw: str = "") -> ScanPlan:
         for e in errs:                      # which collection lost part of its tree?
             if owner is not None:
                 freeze([owner], f"{owner} (could not read {e})")
-                continue
-            try:
-                parts = Path(e).resolve().relative_to(docs).parts
-            except ValueError:
-                parts = ()
-            freeze(docs_collections() if not parts else [parts[0]],
-                   f"{parts[0] if parts else 'docs folder'} (could not read {e})")
 
-    target, coll = resolve_target(paths, raw) if raw else (docs, "")
-    if raw and target.is_file():
+    target, coll = resolve_target(paths, raw)
+    if target is not None and target.is_file():
         if target.suffix.lower() in SUPPORTED_EXTENSIONS:
             plan.sources = [target]
         else:
             plan.unsupported = [{"src": str(target), "extension": target.suffix.lower()}]
         return plan
-    if not raw:
-        if docs_ok:
-            walk(docs, None)
-            plan.covered = docs_collections()
+    if target is None:
         for name, root in sorted(locs.items()):
             if loc_ok[name]:
                 walk(Path(root), name)
@@ -446,9 +424,7 @@ def plan_scan(paths: Paths, raw: str = "") -> ScanPlan:
     else:
         owner = next((n for n, r in locs.items() if is_within(target, Path(r).resolve())), None)
         walk(target, owner)
-        if target == docs:
-            plan.covered = docs_collections() if docs_ok else []
-        elif coll:
+        if coll:
             plan.covered = [coll]
     frozen = {f.casefold() for f in plan.frozen}
     plan.covered = [c for c in plan.covered if c.casefold() not in frozen]
@@ -475,9 +451,6 @@ def add(paths: Paths, name: str, folder: str) -> dict[str, Any]:
     if not is_plain_name(name):
         raise LocationError(f"{name!r} is not a usable collection name (one folder-name-like "
                             "word: letters, digits, '-', '_'); the folder goes in the other field")
-    if name.casefold() == DEFAULT_COLLECTION:
-        raise LocationError(f"{DEFAULT_COLLECTION!r} is reserved for files directly in the docs "
-                            "folder; choose another name")
     raw = (folder or "").strip()
     if not raw:
         raise LocationError("give the folder to index")
@@ -488,13 +461,10 @@ def add(paths: Paths, name: str, folder: str) -> dict[str, Any]:
     why = why_unreachable(p)
     if why:
         raise LocationError(f"{p} is not a folder that can be read right now: {why}")
-    home, docs = paths.home.resolve(), paths.docs.resolve()
-    if is_within(p, docs):
-        raise LocationError(f"{p} is inside the docs folder ({docs}); its first-level folders "
-                            "are collections already -- no need to register it")
-    if is_within(p, home) or is_within(home, p) or is_within(docs, p):
-        raise LocationError(f"{p} overlaps rag-search's own data folder ({home}) or the docs "
-                            "folder; choose a folder outside both")
+    home = paths.home.resolve()
+    if is_within(p, home) or is_within(home, p):
+        raise LocationError(f"{p} overlaps rag-search's own data folder ({home}); choose a folder "
+                            "outside it")
     with file_lock(paths.locations_file):
         locs, error = _load_file(paths.locations_file)
         if error:
@@ -510,23 +480,10 @@ def add(paths: Paths, name: str, folder: str) -> dict[str, Any]:
             if existing.casefold() == name.casefold() and is_imported(paths, existing):
                 raise LocationError(f"{existing!r} is an imported collection; delete it first "
                                     "or choose another name")
-        clash = [e for e in _docs_folders(paths) if e.casefold() == name.casefold()]
-        if clash:
-            raise LocationError(f"the docs folder already has a {clash[0]!r} folder (collection "
-                                f"{clash[0]!r}); rename one of them")
         locs[name] = str(p)
         _save(paths, locs)
     return {"collection": name, "folder": str(p), "changed": True,
             "note": "run `rag-search index new` to index it"}
-
-
-def _docs_folders(paths: Paths) -> list[str]:
-    try:
-        with os.scandir(paths.docs) as it:
-            return [e.name for e in it
-                    if e.is_dir(follow_symlinks=False) and not e.name.startswith(".")]
-    except OSError:
-        return []
 
 
 def remove_entry(paths: Paths, name: str) -> str:

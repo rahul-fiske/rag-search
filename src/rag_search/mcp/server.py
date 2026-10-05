@@ -13,8 +13,9 @@ import json
 import logging
 import os
 import sys
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from .. import __version__, api
 from ..paths import get_paths
@@ -49,10 +50,10 @@ def make_tools(client: str) -> dict[str, Callable[..., Awaitable[str]]]:
     async def rag_list_collections(documents: bool = False) -> str:
         """List the indexed collections this host is authorised to use.
 
-        A collection is the first folder under the docs folder that a document lives in
-        (files directly in it go to 'default'). Returns JSON {generation, collections:
+        A collection is a folder of documents registered under a name (rag-search location
+        add). Returns JSON {generation, collections:
         [{collection, description, chunks, document_count, index_bytes, markdown_bytes,
-        source_bytes, built_at, build_seconds}], totals, docs_folder}. `description` is a
+        source_bytes, built_at, build_seconds}], totals}. `description` is a
         short summary set with rag_describe_collection, or "" if none has been set yet --
         after exploring an undescribed collection (a search or two, or documents=true below),
         call rag_describe_collection once to save a short summary for future calls, yours or
@@ -89,7 +90,7 @@ def make_tools(client: str) -> dict[str, Callable[..., Awaitable[str]]]:
                                     description, client=client)
         return _json(r["result"]) if r.get("ok") else _error(r)
 
-    async def rag_search(query: str, collection: str = "", top_k: "int | None" = None) -> str:
+    async def rag_search(query: str, collection: str = "", top_k: int | None = None) -> str:
         """Semantic + keyword search over indexed documents, reranked by a cross-encoder.
 
         Args:
@@ -155,7 +156,8 @@ def make_tools(client: str) -> dict[str, Callable[..., Awaitable[str]]]:
         documents are not redone).
 
         Args:
-            path: A file or folder inside the docs folder (default: everything).
+            path: A registered collection's name, or a file or folder inside one (default:
+                everything).
             restart: Stop the active run and start again.
             rebuild: Re-embed even unchanged documents.
         """

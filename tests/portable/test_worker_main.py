@@ -20,7 +20,8 @@ class WorkerMainTests(TempHome):
     def setUp(self):
         super().setUp()
         self.use_fake_backends()
-        corpus.copy("text/notes.md", self.paths.docs / "team" / "notes.md")
+        corpus.copy("text/notes.md", self.sdir / "team" / "notes.md")
+        self.register_tree()
 
     def job(self, spec, jid="20260101-000000-wrkr"):
         write_json_atomic(job_file(self.paths, jid), {"id": jid, "spec": spec})
@@ -43,7 +44,7 @@ class WorkerMainTests(TempHome):
         bad = self.job({"mode": "new", "path": str(self.tmp / "outside")}, "20260101-000000-bad0")
         self.assertEqual(worker.main([bad]), worker.EXIT_FAILED)
         err = [e for e in self.events(bad) if e["event"] == "error"][0]
-        self.assertIn("must be inside the docs folder", err["error"])
+        self.assertIn("must be inside a registered location", err["error"])
         busy = self.job({"mode": "new"}, "20260101-000000-busy")
         with index_lock(self.paths):
             self.assertEqual(worker.main([busy]), worker.EXIT_BUSY)

@@ -103,6 +103,19 @@ def tail_file(path: Path, lines: int, max_bytes: int = 256 * 1024) -> list[str]:
 
 # ── live snapshots ───────────────────────────────────────────────────────────
 
+
+def _scoped_paths(base: Any, q: dict[str, list[str]]) -> Any:
+    """Production's paths, or those of the playground experiment named by ``?exp=``: the document list, page
+    records, source pages and converted Markdown are read by the same functions for both."""
+    exp = (q.get("exp") or [""])[0]
+    if not exp:
+        return base
+    from ..paths import get_playground_paths, list_playground_names
+
+    if exp not in list_playground_names(base):
+        raise ValueError(f"no such experiment: {exp}")
+    return get_playground_paths(base, exp)
+
 class Live:
     """Samples the daemons in the background; SSE clients wait on `cond` for changes."""
 
@@ -339,26 +352,30 @@ class Handler(BaseHTTPRequestHandler):
                                  doc_q=one("q"), doc_branch=one("branch"),
                                  doc_outcome=one("outcome"), client="cli")
             return self._json(r)
+        try:                                     # an experiment's own workspace when ?exp=NAME, else production
+            sp = _scoped_paths(app.paths, q)
+        except ValueError as exc:
+            return self._error(400, str(exc))
         if name == "conversion/run":
-            return self._json(api.conversion_run(app.paths, (q.get("job_id") or [""])[0], client="cli"))
+            return self._json(api.conversion_run(sp, (q.get("job_id") or [""])[0], client="cli"))
         if name == "conversion/documents":
             def one(key: str) -> str:
                 return (q.get(key) or [""])[0]
             r = api.conversion_documents(
-                app.paths, job_id=one("job_id"), status=one("status"), collection=one("collection"),
+                sp, job_id=one("job_id"), status=one("status"), collection=one("collection"),
                 q=one("q"), branch=one("branch"), outcome=one("outcome"),
                 limit=int(one("limit") or 200), client="cli")
             return self._json(r) if r.get("ok") else self._error(400, r.get("error", "failed"))
         if name == "conversion/trace":
             def one(key: str) -> str:
                 return (q.get(key) or [""])[0]
-            r = api.conversion_trace(app.paths, one("collection"), one("doc"),
+            r = api.conversion_trace(sp, one("collection"), one("doc"),
                                      page=int(one("page") or 0))
             return self._json(r) if r.get("ok") else self._error(400, r.get("error", "failed"))
         if name == "conversion/page-image":
             def one(key: str) -> str:
                 return (q.get(key) or [""])[0]
-            r = api.conversion_page_image(app.paths, one("collection"), one("doc"),
+            r = api.conversion_page_image(sp, one("collection"), one("doc"),
                                           int(one("page") or 1), int(one("width") or 900))
             if not r.get("ok"):
                 return self._error(400, r.get("error", "failed"))
@@ -366,7 +383,7 @@ class Handler(BaseHTTPRequestHandler):
         if name == "conversion/markdown":           # the converted text; raw=1 = plain text for a browser tab
             def one(key: str) -> str:
                 return (q.get(key) or [""])[0]
-            r = api.conversion_markdown(app.paths, one("collection"), one("doc"), page=int(one("page") or 0))
+            r = api.conversion_markdown(sp, one("collection"), one("doc"), page=int(one("page") or 0))
             if not r.get("ok"):
                 return self._error(400, r.get("error", "failed"))
             if one("raw"):
@@ -636,8 +653,21 @@ class Handler(BaseHTTPRequestHandler):
             coll = body.get("collection")
             if isinstance(coll, str) and coll:
                 args += ["--collection", coll]
+            folders = body.get("folders")
+            for f in folders if isinstance(folders, list) else []:
+                if isinstance(f, str) and f.strip():
+                    args += ["--from", f.strip()]
             if body.get("from_production") is True:
                 args.append("--from-production")
+            return self._json(self._playground_cli(args, timeout=30))
+        if action == "sources":                 # list / add / remove the experiment's source folders
+            op = body.get("op") if body.get("op") in ("list", "add", "remove") else "list"
+            args = ["source", exp, op, "--json"]
+            arg = body.get("folder") if op == "add" else body.get("collection") if op == "remove" else ""
+            if isinstance(arg, str) and arg:
+                args.insert(3, arg)
+            if op == "add" and isinstance(body.get("collection"), str) and body["collection"]:
+                args += ["--as", body["collection"]]
             return self._json(self._playground_cli(args, timeout=30))
         if action == "config":
             args = ["config", exp, "--json"]

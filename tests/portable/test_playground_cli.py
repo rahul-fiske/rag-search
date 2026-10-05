@@ -12,15 +12,16 @@ class PlaygroundCliTests(TempHome):
     def setUp(self):
         super().setUp()
         self.use_fake_backends()
-        self.src = self.tmp / "doc.txt"
-        self.src.write_text("<!-- page 1 -->\nhow is a session token refreshed\n"
+        self.src = self.tmp / "docs"
+        self.src.mkdir()
+        (self.src / "doc.txt").write_text("<!-- page 1 -->\nhow is a session token refreshed\n"
                             "<!-- page 2 -->\nhow to reset a forgotten password\n",
                             encoding="utf-8")
 
     def test_create_index_search_json_flow(self):
         rc, out, err = run("playground", "create", "demo", "--from", str(self.src), "--json")
         self.assertEqual(rc, 0, err)
-        self.assertEqual(json.loads(out)["documents_added"], 1)
+        self.assertEqual([x["collection"] for x in json.loads(out)["sources"]], ["docs"])
 
         rc, out, err = run("playground", "index", "demo", "--json")
         self.assertEqual(rc, 0, err)

@@ -2,7 +2,9 @@
 
 Everything rag-search writes lives under one *home* directory:
 
-    <home>/docs/                  source documents (first-level folders = collections)
+    <home>/locations.json         the registered source folders: collection name -> folder anywhere
+                                  (written only by `rag-search location add/remove`); the documents
+                                  themselves stay where they are and are only ever read
     <home>/indexer_workspace/     private, persistent state of the indexer
         markup/                   Markdown converted from sources
         index/                    per-document and per-collection (_all) indexes
@@ -30,11 +32,11 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any
 
-DEFAULT_COLLECTION = "default"
 DEFAULT_MODEL = "BAAI/bge-m3"
 DEFAULT_RERANK_MODEL = "BAAI/bge-reranker-v2-m3"
 DEFAULT_CHUNK_SIZE = 512
@@ -77,7 +79,6 @@ KINDS = ("search", "indexer")
 @dataclass(frozen=True)
 class Paths:
     home: Path
-    docs: Path
     workspace: Path
     index: Path          # workspace index (written by the indexer only)
     markup: Path         # workspace markup (written by the indexer only)
@@ -153,11 +154,9 @@ class Paths:
 
 def get_paths(home: Path | str | None = None) -> Paths:
     h = Path(home).expanduser().absolute() if home else default_home()
-    docs_env = os.environ.get("RAG_SEARCH_DOCS")
     ws = h / "indexer_workspace"
     return Paths(
         home=h,
-        docs=Path(docs_env).expanduser() if docs_env else h / "docs",
         workspace=ws,
         index=ws / "index",
         markup=ws / "markup",
@@ -170,11 +169,6 @@ def get_paths(home: Path | str | None = None) -> Paths:
 def ensure_dirs(p: Paths) -> None:
     for d in (p.home, p.index, p.markup, p.serving, p.jobs):
         d.mkdir(parents=True, exist_ok=True)
-    # The default docs folder (inside home) is created; one placed elsewhere with
-    # $RAG_SEARCH_DOCS is not: on an unmounted drive that would create an empty stand-in, and
-    # indexing would then conclude every document was deleted.
-    if is_within(p.docs, p.home) or not os.environ.get("RAG_SEARCH_DOCS"):
-        p.docs.mkdir(parents=True, exist_ok=True)
     p.run.mkdir(parents=True, exist_ok=True)
     try:
         os.chmod(p.run, 0o700)
@@ -275,11 +269,11 @@ def playground_root(base: Paths) -> Path:
 def get_playground_paths(base: Paths, name: str) -> Paths:
     """A self-contained Paths rooted at <home>/playground/<name>/, built the same way
     get_paths() builds the real one, but never touching *base*'s serving/run/config -- a
-    playground experiment has its own docs/, workspace/, config.json, all under its own home."""
+    playground experiment has its own sources/, locations.json, workspace/, config.json, all under its own home."""
     name = validate_experiment_name(name)
     h = playground_root(base) / name
     ws = h / "workspace"
-    return Paths(home=h, docs=h / "docs", workspace=ws, index=ws / "index", markup=ws / "markup",
+    return Paths(home=h, workspace=ws, index=ws / "index", markup=ws / "markup",
                  serving=h / "serving", run=h / "run", jobs=h / "jobs")
 
 
@@ -364,7 +358,7 @@ class IndexBusyError(RuntimeError):
 
 
 @contextlib.contextmanager
-def index_lock(paths: "Paths") -> Iterator[None]:
+def index_lock(paths: Paths) -> Iterator[None]:
     """Only one writer of the indexer workspace at a time, across processes: an indexing run,
     a collection import or a collection deletion.  Raises IndexBusyError instead of waiting."""
     import fcntl
@@ -414,43 +408,37 @@ class CachedFile:
 
 @dataclass(frozen=True)
 class SourceRoots:
-    """Where documents come from: the docs folder (its first-level folders are collections)
-    plus any registered source locations (a folder anywhere = one collection, see
-    locations.py).  Accepted wherever a plain *docs_root* Path is (``mirror_rel`` & co.), and
+    """Where documents come from: the registered locations (a folder anywhere = one collection, see
+    locations.py).  Accepted wherever the indexer needs to name a document (``mirror_rel`` & co.), and
     plain data (str paths) so it can travel to the conversion worker processes."""
 
-    docs: str
     locations: tuple[tuple[str, str], ...] = ()      # (collection, root folder)
 
     @classmethod
-    def of(cls, value: "SourceRoots | Path | str | dict") -> "SourceRoots":
+    def of(cls, value: SourceRoots | dict) -> SourceRoots:
         if isinstance(value, SourceRoots):
             return value
         if isinstance(value, dict):
-            return cls(str(value["docs"]), tuple((str(n), str(r))
-                                                  for n, r in value.get("locations", ())))
-        return cls(str(value))
+            return cls(tuple((str(n), str(r)) for n, r in value.get("locations", ())))
+        raise TypeError(f"source roots expected, got {type(value).__name__}")
 
     def to_dict(self) -> dict[str, Any]:
-        return {"docs": self.docs, "locations": [list(x) for x in self.locations]}
-
-    @property
-    def docs_path(self) -> Path:
-        return Path(self.docs)
+        return {"locations": [list(x) for x in self.locations]}
 
     def location_names(self) -> list[str]:
         return [n for n, _ in self.locations]
 
-    def root_of(self, collection: str) -> Path:
-        """The folder holding *collection*'s sources (a location, else docs/<collection>)."""
+    def root_of(self, collection: str) -> Path | None:
+        """The folder holding *collection*'s sources, or None when no location of that name is registered
+        (an imported collection, or one whose folder was never registered)."""
         for n, r in self.locations:
             if n == collection:
                 return Path(r)
-        if collection == DEFAULT_COLLECTION:
-            return Path(self.docs)
-        return Path(self.docs) / collection
+        return None
 
     def rel(self, src: Path) -> Path:
+        """*src* as ``<collection>/<path inside the location>``.  Raises ValueError when it is not inside
+        a registered location, or is a location's own folder."""
         s = Path(src).resolve()
         # longest root first, so a location is never mistaken for a parent folder
         for name, root in sorted(self.locations, key=lambda x: -len(x[1])):
@@ -461,40 +449,27 @@ class SourceRoots:
             if not inner.parts:
                 raise ValueError(f"{src} is a location's own folder, not a document")
             return Path(name, *inner.parts)
-        parts = s.relative_to(Path(self.docs).resolve()).parts
-        if len(parts) == 1:
-            parts = (DEFAULT_COLLECTION, parts[0])
-        return Path(*parts)
+        raise ValueError(f"{src} is not inside a registered location")
 
 
-def mirror_rel(src: Path, docs_root: "Path | SourceRoots") -> Path:
-    """Path of *src* relative to *docs_root*, with the collection as first part.
-
-    Files that sit directly in docs_root belong to the ``default`` collection.  *docs_root*
-    may also be a ``SourceRoots`` (docs folder + registered locations).
-    Raises ValueError when *src* is outside *docs_root*.
-    """
-    if isinstance(docs_root, SourceRoots):
-        return docs_root.rel(src)
-    rel = src.resolve().relative_to(Path(docs_root).resolve())
-    parts = rel.parts
-    if len(parts) == 1:
-        parts = (DEFAULT_COLLECTION, parts[0])
-    return Path(*parts)
+def mirror_rel(src: Path, roots: SourceRoots | dict) -> Path:
+    """Path of *src* as ``<collection>/<path inside the location>``: the same names under the
+    workspace's ``markup/`` and ``index/``.  Raises ValueError when *src* is in no registered location."""
+    return SourceRoots.of(roots).rel(src)
 
 
-def index_dir_for(src: Path, docs_root: "Path | SourceRoots", index_root: Path) -> Path:
-    rel = mirror_rel(src, docs_root)
+def index_dir_for(src: Path, roots: SourceRoots | dict, index_root: Path) -> Path:
+    rel = mirror_rel(src, roots)
     return index_root / rel.parent / rel.stem
 
 
-def markup_path_for(src: Path, docs_root: "Path | SourceRoots", markup_root: Path) -> Path:
-    rel = mirror_rel(src, docs_root)
+def markup_path_for(src: Path, roots: SourceRoots | dict, markup_root: Path) -> Path:
+    rel = mirror_rel(src, roots)
     return markup_root / rel.parent / (rel.stem + ".md")
 
 
-def collection_of(src: Path, docs_root: "Path | SourceRoots") -> str:
-    return mirror_rel(src, docs_root).parts[0]
+def collection_of(src: Path, roots: SourceRoots | dict) -> str:
+    return mirror_rel(src, roots).parts[0]
 
 
 def is_within(child: Path, parent: Path) -> bool:

@@ -7,28 +7,43 @@ from tests.helpers import TempHome  # noqa: F401  (sets sys.path)
 from rag_search.core import bm25, chunker
 from rag_search import config, policy, protocol
 from rag_search.paths import (
-    DEFAULT_COLLECTION, collection_of, get_paths, index_dir_for, markup_path_for,
+    SourceRoots, collection_of, get_paths, index_dir_for, markup_path_for,
     mirror_rel, parse_collections,
 )
 
 
 class PathsTests(TempHome):
-    def test_mirror_and_default_collection(self):
-        d = self.paths.docs
+    def test_mirror_follows_the_registered_locations(self):
         a = self.write_doc("manuals/net/guide.pdf", "x")
-        b = self.write_doc("top.pdf", "x")
+        d = self.roots()
         self.assertEqual(mirror_rel(a, d), Path("manuals/net/guide.pdf"))
-        self.assertEqual(mirror_rel(b, d), Path(DEFAULT_COLLECTION) / "top.pdf")
         self.assertEqual(collection_of(a, d), "manuals")
         self.assertEqual(index_dir_for(a, d, self.paths.index),
                          self.paths.index / "manuals/net/guide")
-        self.assertEqual(markup_path_for(b, d, self.paths.markup),
-                         self.paths.markup / "default/top.md")
+        self.assertEqual(markup_path_for(a, d, self.paths.markup),
+                         self.paths.markup / "manuals/net/guide.md")
         self.assertEqual(self.paths.index, self.paths.workspace / "index")
 
-    def test_outside_docs_root(self):
+    def test_a_location_outside_the_data_folder_may_have_any_name(self):
+        elsewhere = self.tmp / "vault" / "projects"
+        elsewhere.mkdir(parents=True)
+        f = elsewhere / "plan.md"
+        f.write_text("x")
+        roots = SourceRoots((("work", str(elsewhere)),))
+        self.assertEqual(mirror_rel(f, roots), Path("work/plan.md"))
+        self.assertEqual(roots.root_of("work"), elsewhere)
+        self.assertIsNone(roots.root_of("nope"))
+
+    def test_outside_every_location(self):
+        self.write_doc("a/x.md", "x")
         with self.assertRaises(ValueError):
-            mirror_rel(self.tmp / "elsewhere.pdf", self.paths.docs)
+            mirror_rel(self.tmp / "elsewhere.pdf", self.roots())
+        with self.assertRaises(ValueError):                 # a location's own folder is not a file in it
+            mirror_rel(self.sdir / "a", self.roots())
+        with self.assertRaises(ValueError):
+            mirror_rel(self.sdir / "a" / "x.md", SourceRoots(()))
+        with self.assertRaises(TypeError):
+            SourceRoots.of("a string")
 
     def test_parse_collections(self):
         self.assertEqual(parse_collections(" a, b ,,"), ["a", "b"])
@@ -54,10 +69,6 @@ class PathsTests(TempHome):
         p.current_link.symlink_to("gen-000001")
         self.assertEqual(p.current_gen(), (p.serving / "gen-000001").resolve())
         self.assertEqual(p.live_markup(), (p.serving / "gen-000001").resolve() / "markup")
-
-    def test_env_docs_override(self):
-        os.environ["RAG_SEARCH_DOCS"] = str(self.tmp / "mydocs")
-        self.assertEqual(get_paths().docs, self.tmp / "mydocs")
 
 
 class ConfigPolicyProtocolTests(TempHome):

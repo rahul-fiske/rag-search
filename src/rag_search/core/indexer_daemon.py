@@ -31,13 +31,12 @@ import threading
 import time
 from typing import Any
 
-from .. import api, locations, protocol
+from .. import api, locations, protocol, stages
 from ..config import ConfigStore, effective_jobs
+from ..effective import ambient, settings_env
+from ..jobs import ACTIVE, all_records, events_file, job_file, now, read_record, view
 from ..paths import SUPPORTED_EXTENSIONS, Paths, detached_start, get_paths, write_json_atomic
 from .daemon_base import LOG_DATE_FORMAT, DaemonBase
-from ..jobs import ACTIVE, all_records, events_file, job_file, now, read_record, view
-from ..effective import ambient, settings_env
-from .. import stages
 from .worker import EXIT_BUSY
 
 log = logging.getLogger("rag_search.indexer_daemon")
@@ -219,11 +218,13 @@ class IndexerDaemon(DaemonBase):
         if mode not in MODES:
             return None, f"mode must be one of {MODES}"
         raw = str(req.get("path") or "").strip()
-        if raw:
-            from ..locations import LocationError, resolve_target
+        from ..locations import NO_LOCATIONS, LocationError, resolve_target
 
+        if not raw and not locations.names(self.paths):
+            return None, NO_LOCATIONS
+        if raw:
             try:
-                resolve_target(self.paths, raw)    # docs folder, or a registered location
+                resolve_target(self.paths, raw)    # a registered location, or a path inside one
             except LocationError as exc:
                 msg = str(exc)
                 return None, ("path " + msg) if msg.startswith("not found") else msg
@@ -440,7 +441,6 @@ class IndexerDaemon(DaemonBase):
             return protocol.error(protocol.BAD_REQUEST, f"no such job: {job_id}")
         out: dict[str, Any] = {"ok": True, "running": self.job is not None,
                                "job": view(rec) if rec else None,
-                               "docs_folder": str(self.paths.docs),
                                "sources": locations.sources(self.paths),
                                "supported_extensions": sorted(SUPPORTED_EXTENSIONS)}
         if history:

@@ -19,8 +19,8 @@ from rag_search.paths import index_lock
 class ExportBase(TempHome):
     def setUp(self):
         super().setUp()
-        corpus.copy("text/notes.md", self.paths.docs / "team" / "notes.md")
-        corpus.copy("text/readme.txt", self.paths.docs / "team" / "readme.txt")
+        corpus.copy("text/notes.md", self.sdir / "team" / "notes.md")
+        corpus.copy("text/readme.txt", self.sdir / "team" / "readme.txt")
         self.index()
         self.good = Path(bundle.export_collection(self.paths, "team", self.tmp / "good.rag.tgz")["file"])
 
@@ -138,7 +138,6 @@ class HostileArchiveTests(ExportBase):
 
     def test_a_name_that_is_not_a_collection_name_is_refused(self):
         self.refused(self.good, "cannot be a collection name here", as_name="a/b")
-        self.refused(self.good, "cannot be a collection name here", as_name="default")
 
 
 class DamagedExportTests(ExportBase):

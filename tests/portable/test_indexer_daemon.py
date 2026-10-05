@@ -351,10 +351,16 @@ class ConfigTunablesTests(IndexerCase):
         self.assertEqual(env["RAG_SEARCH_HOME"], str(self.paths.home))
         self.assertNotIn("RAG_SEARCH_PDF_BACKEND", env)  # unset in config -- no override at all
 
+    def test_a_run_with_nothing_registered_is_refused(self):
+        from rag_search import locations
+        spec, err = IndexerDaemon(self.paths)._validate_spec({"mode": "new"})
+        self.assertEqual(err, locations.NO_LOCATIONS)
+
     def test_chunk_size_and_overlap_flow_into_the_job_spec(self):
         from rag_search import config
 
         config.update_config(self.paths, "indexer", {"chunk_size": 256, "chunk_overlap": 32})
+        self.write_doc("c/a.md", "x")
         d = IndexerDaemon(self.paths)
         spec, err = d._validate_spec({"mode": "new"})
         self.assertEqual(err, "")

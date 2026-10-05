@@ -387,7 +387,7 @@ class SearchDebugParamsTests(DaemonCase):
         search" means for every client, including ones (like the MCP tool) that never ask for a
         specific value -- and takes effect on the very next search, no restart."""
         from rag_search import config
-        self.build(security__auth=AUTH, cooking=COOK)
+        self.build(security__auth=AUTH, kitchen__bread=COOK)
         config.update_config(self.paths, "search",
                              {"stages": "bm25", "retrieval_pool": 7, "rerank_pool": 5, "rrf_k": 12,
                               "top_k": 1})

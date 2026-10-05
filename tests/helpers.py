@@ -170,7 +170,7 @@ class FakeReranker:
 class TempHome(unittest.TestCase):
     """Each test gets an isolated data folder and a clean environment."""
 
-    ENV_KEYS = ("RAG_SEARCH_HOME", "RAG_SEARCH_DOCS",
+    ENV_KEYS = ("RAG_SEARCH_HOME",
                 "RAG_SEARCH_DOCLING_PYTHON", "RAG_SEARCH_OCR", "RAG_SEARCH_MODEL",
                 "RAG_SEARCH_OCR_ENGINE", "RAG_SEARCH_OCR_LANG", "RAG_SEARCH_TABLE_MODE", "RAG_SEARCH_PIPELINE", "RAG_SEARCH_ROUTING", "RAG_SEARCH_PDF_BACKEND", "RAG_SEARCH_THREADS", "RAG_SEARCH_DOC_TIMEOUT",
                 "RAG_SEARCH_EMBEDDER", "RAG_SEARCH_RERANKER", "RAG_SEARCH_CLIENT",
@@ -186,6 +186,8 @@ class TempHome(unittest.TestCase):
         os.environ["RAG_SEARCH_HOME"] = str(self.tmp / "home")
         self.paths: Paths = get_paths()
         ensure_dirs(self.paths)
+        self.sdir = self.tmp / "sources"      # where the tests' source folders live; each is registered
+        self.sdir.mkdir()
 
     def tearDown(self):
         for k, v in self._saved.items():
@@ -195,8 +197,34 @@ class TempHome(unittest.TestCase):
         stop_leftover_processes(self.tmp)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
+    def source(self, collection: str) -> Path:
+        """The folder of *collection* under ``self.sdir``, created and registered as its location
+        (written directly: the reachability and overlap checks of ``locations.add`` are not under test)."""
+        from rag_search import locations
+        folder = self.sdir / collection
+        folder.mkdir(parents=True, exist_ok=True)
+        locs = locations.load(self.paths)[0]
+        if locs.get(collection) != str(folder):
+            locs[collection] = str(folder)
+            locations._save(self.paths, locs)
+        return folder
+
+    def register_tree(self, root: Path | None = None) -> None:
+        """Register every first-level folder of *root* (default ``self.sdir``) as a location."""
+        from rag_search import locations
+        root = root or self.sdir
+        locs = locations.load(self.paths)[0]
+        locs.update({d.name: str(d) for d in sorted(root.iterdir()) if d.is_dir() and not d.name.startswith(".")})
+        locations._save(self.paths, locs)
+
+    def roots(self):
+        """The registered locations as run_index takes them (every folder under ``self.sdir`` first)."""
+        from rag_search import locations
+        self.register_tree()
+        return locations.source_roots(self.paths)
+
     def write_doc(self, rel: str, text: str) -> Path:
-        p = self.paths.docs / rel
+        p = self.source(Path(rel).parts[0]).parent / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(text, encoding="utf-8")
         return p
@@ -204,8 +232,10 @@ class TempHome(unittest.TestCase):
     # -- convenience for pipeline tests ---------------------------------------
     def index(self, embedder=None, **kw):
         from rag_search.core import indexer
-        srcs = indexer.scan_sources(self.paths.docs, indexer.exclude_dirs(self.paths))
-        return indexer.run_index(self.paths, srcs, self.paths.docs, jobs=1,
+        roots = self.roots()
+        srcs = [f for _n, r in roots.locations
+                for f in indexer.scan_sources(Path(r), indexer.exclude_dirs(self.paths))]
+        return indexer.run_index(self.paths, srcs, roots, jobs=1,
                                  embedder=embedder or FakeEmbedder(), **kw)
 
     def publish(self, **kw):

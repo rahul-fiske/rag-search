@@ -28,9 +28,9 @@ class InventoryTests(TempHome):
         self.plan_index()
         self.publish()
         i = inventory.collection_info(self.paths, "MANUALS")
-        self.assertEqual((i["collection"], i["kind"], i["state"]), ("manuals", "docs", "ok"))
+        self.assertEqual((i["collection"], i["kind"], i["state"]), ("manuals", "location", "ok"))
         self.assertEqual((i["source"]["files"], i["source"]["unsupported"]), (2, 1))
-        self.assertEqual(i["source"]["folder"], str(self.paths.docs / "manuals"))
+        self.assertEqual(i["source"]["folder"], str(self.sdir / "manuals"))
         ws = i["workspace"]
         self.assertEqual(ws["documents"], 2)
         self.assertEqual(ws["markdown_files"], 2)
@@ -50,7 +50,7 @@ class InventoryTests(TempHome):
         self.plan_index()
         self.publish()
         self.write_doc("manuals/new.md", DOC)
-        p = self.paths.docs / "manuals" / "a.md"
+        p = self.sdir / "manuals" / "a.md"
         later = time.time() + 30
         os.utime(p, (later, later))
         i = inventory.collection_info(self.paths, "manuals")
@@ -145,7 +145,8 @@ class DashboardInfoTests(UiBase):
         locations.add(self.paths, "vault", str(folder))
         st, js, _, _ = self.dash.req("GET", "/api/architecture")
         self.assertEqual(st, 200, js)
-        self.assertEqual(js["sources"]["locations"], [{"collection": "vault", "folder": str(folder.resolve())}])
+        self.assertIn({"collection": "vault", "folder": str(folder.resolve())}, js["sources"]["locations"])
+        self.assertEqual(js["sources"]["unregistered"], [])
         self.assertEqual(js["sources"]["imported"], [])
         self.assertIn("max_len", js["models"]["reranker"])
         self.assertGreater(js["chunking"]["size"], js["chunking"]["overlap"])
@@ -159,7 +160,7 @@ class DashboardCollectionActionsTests(UiBase):
         st, js, _, _ = self.dash.req("POST", "/api/collection/add-location",
                                      {"name": "garden", "folder": str(folder)})
         self.assertEqual(st, 200, js)
-        self.assertEqual(locations.names(self.paths), ["garden"])
+        self.assertIn("garden", locations.names(self.paths))
         st, js, _, _ = self.dash.req("POST", "/api/collection/add-location",
                                      {"name": "x", "folder": str(self.tmp / "missing")})
         self.assertEqual(st, 400)
@@ -183,7 +184,7 @@ class DashboardCollectionActionsTests(UiBase):
         st, js, _, _ = self.dash.req("POST", "/api/collection/delete", {"name": "hr", "confirm": "HR"})
         self.assertEqual(st, 200, js)
         self.assertFalse((self.paths.index / "hr").exists())
-        self.assertTrue((self.paths.docs / "hr" / "leave.md").is_file())
+        self.assertTrue((self.sdir / "hr" / "leave.md").is_file())
         self.assertTrue(js["result"]["sources_remain"])
 
         # import the export under another name
@@ -195,7 +196,7 @@ class DashboardCollectionActionsTests(UiBase):
         st, js, _, _ = self.dash.req("POST", "/api/location/remove",
                                      {"name": "garden", "confirm": "garden"})
         self.assertEqual(st, 200, js)
-        self.assertEqual(locations.names(self.paths), [])
+        self.assertNotIn("garden", locations.names(self.paths))
         self.assertTrue((folder / "n.md").is_file())
 
 

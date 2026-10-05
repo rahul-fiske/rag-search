@@ -30,8 +30,9 @@ class _Base(TempHome):
     def setUp(self):
         super().setUp()
         self.use_fake_backends()
-        self.src = self.tmp / "doc.txt"
-        self.src.write_text("<!-- page 1 -->\nhow is a session token refreshed\n"
+        self.src = self.tmp / "docs"
+        self.src.mkdir()
+        (self.src / "doc.txt").write_text("<!-- page 1 -->\nhow is a session token refreshed\n"
                             "<!-- page 2 -->\nhow to reset a forgotten password\n", encoding="utf-8")
         pg.create_experiment(self.paths, "demo", sources=[str(self.src)])
 
@@ -71,7 +72,7 @@ class RunLifecycleTests(_Base):
         pg.create_experiment(self.paths, "empty")
         v = wait_done(self.paths, "empty", runs.start(self.paths, "empty", "index")["job"])
         self.assertEqual(v["job"]["status"], "failed")
-        self.assertIn("no documents", v["job"]["error"])
+        self.assertIn("no source folders", v["job"]["error"])
 
     def test_a_dead_process_is_not_left_running(self):
         exp = pg.get_playground_paths(self.paths, "demo")
@@ -191,8 +192,9 @@ class EffectiveSettingsTests(_Base):
 class PlaygroundRunApiTests(UiBase):
     def setUp(self):
         super().setUp()
-        src = self.tmp / "pg.txt"
-        src.write_text("<!-- page 1 -->\nhow is a session token refreshed\n", encoding="utf-8")
+        src = self.tmp / "pgdocs"
+        src.mkdir()
+        (src / "pg.txt").write_text("<!-- page 1 -->\nhow is a session token refreshed\n", encoding="utf-8")
         self.post("create", {"name": "demo"})
         # the API has no upload: the sample is copied in the way the CLI does it
         run("playground", "create", "withdoc", "--from", str(src))
@@ -230,7 +232,7 @@ class PlaygroundRunApiTests(UiBase):
                 break
             time.sleep(0.3)
         self.assertEqual(js["result"]["job"]["status"], "failed")
-        self.assertIn("no documents", js["result"]["job"]["error"])
+        self.assertIn("no source folders", js["result"]["job"]["error"])
 
     def test_a_bad_run_id_is_a_400(self):
         st, js = self.post("run", {"name": "demo", "run": "../../x"})

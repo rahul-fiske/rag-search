@@ -70,21 +70,22 @@ class DeletedAndCollidingSourcesTests(Base):
         merged = read_json(self.paths.index / "security" / ALL_DIR / "merge.manifest.json")
         self.assertEqual(merged["docs"], ["auth"])
 
-    def test_a_whole_deleted_collection_disappears(self):
+    def test_a_collection_whose_location_is_removed_stays_as_it_was(self):
         self.write_doc("security/auth.md", DOC)
         self.write_doc("hr/leave.md", "# Leave\n\nSixteen weeks.\n")
         self.plan_index()
         self.publish()
-        shutil.rmtree(self.paths.docs / "hr")
-        self.plan_index()
-        self.assertFalse((self.paths.index / "hr").exists())
-        self.assertFalse((self.paths.markup / "hr").exists())
-        self.publish()          # docs/hr is gone, so publishing may drop it
-        self.assertEqual(catalog.collection_names(catalog.live_catalog(self.paths)), ["security"])
+        locations.remove_entry(self.paths, "hr")              # nothing registers it any more
+        s = self.plan_index()
+        self.assertEqual(s["removed"], [])
+        self.assertTrue((self.paths.index / "hr" / "leave" / META_FILE).is_file())
+        self.publish()
+        self.assertEqual(catalog.collection_names(catalog.live_catalog(self.paths)), ["hr", "security"])
 
     def test_a_scoped_run_prunes_only_what_it_fully_read(self):
         self.write_doc("security/auth.md", DOC)
         other = self.write_doc("hr/leave.md", "# Leave\n\nSixteen weeks.\n")
+        self.write_doc("hr/stay.md", "# Stay\n\nThe other file keeps the folder from looking unmounted.\n")
         self.plan_index()
         other.unlink()
         s = self.plan_index("security")         # hr was not read: nothing concluded about it
@@ -122,32 +123,27 @@ class DeletedAndCollidingSourcesTests(Base):
                          str(pdf_like))
         self.assertTrue(any("report.txt" in e["src"] for e in s["errors"]))
 
-    def test_a_moved_docs_folder_is_not_mistaken_for_deleted_documents(self):
+    def test_a_moved_source_folder_is_not_mistaken_for_deleted_documents(self):
         self.write_doc("security/auth.md", DOC)
         self.plan_index()
-        new_docs = self.tmp / "moved-docs"
-        shutil.move(str(self.paths.docs), str(new_docs))
-        os.environ["RAG_SEARCH_DOCS"] = str(new_docs)
-        self.paths = get_paths()
+        new_home = self.tmp / "moved-security"
+        shutil.move(str(self.sdir / "security"), str(new_home))
+        locations._save(self.paths, {"security": str(new_home)})     # registered again where it is now
         s = self.plan_index()
         self.assertEqual((s["indexed"], s["skipped_fresh"], s["removed"]), (0, 1, []))
         meta = read_json(self.paths.index / "security" / "auth" / META_FILE)
-        self.assertEqual(meta["src_path"], str(new_docs / "security" / "auth.md"))
+        self.assertEqual(meta["src_path"], str(new_home / "auth.md"))
         self.assertEqual(read_json(self.paths.index / "security" / ALL_DIR / "merge.manifest.json")
                          ["docs"], ["auth"])
 
-    def test_an_unmounted_docs_folder_freezes_everything(self):
-        outside = self.tmp / "volume" / "docs"
-        outside.mkdir(parents=True)
-        (outside / "security").mkdir()
-        (outside / "security" / "auth.md").write_text(DOC)
-        os.environ["RAG_SEARCH_DOCS"] = str(outside)
-        self.paths = get_paths()
+    def test_an_unmounted_source_folder_freezes_its_collection(self):
+        volume = self.tmp / "volume"
+        (volume / "security").mkdir(parents=True)
+        (volume / "security" / "auth.md").write_text(DOC)
+        locations._save(self.paths, {"security": str(volume / "security")})
         self.plan_index()
         self.publish()
-        shutil.rmtree(self.tmp / "volume")              # the drive is unplugged
-        ensure_dirs(self.paths)                          # must not create a stand-in folder
-        self.assertFalse(outside.exists())
+        shutil.rmtree(volume)                            # the drive is unplugged
         s = self.plan_index()
         self.assertEqual(s["removed"], [])
         self.assertTrue(s["unreachable"])
@@ -155,6 +151,11 @@ class DeletedAndCollidingSourcesTests(Base):
         self.assertTrue((self.paths.index / "security" / ALL_DIR / "nodes.json").is_file())
         self.publish()
         self.assertEqual(catalog.collection_names(catalog.live_catalog(self.paths)), ["security"])
+
+    def test_indexing_with_nothing_registered_is_an_error(self):
+        with self.assertRaises(locations.LocationError) as cm:
+            locations.plan_scan(self.paths)
+        self.assertEqual(str(cm.exception), locations.NO_LOCATIONS)
 
 
 # ── Phase 0: names, metadata stores, search ───────────────────────────────
@@ -354,13 +355,13 @@ class LocationTests(Base):
     def test_validation(self):
         ok = self.tmp / "ok"
         ok.mkdir()
-        bad = [("default", str(ok)), ("x", str(self.tmp / "missing")),
-               ("x", str(self.paths.docs)), ("x", str(self.paths.home)), ("../x", str(ok))]
+        self.write_doc("notes/a.md", DOC)
+        bad = [("x", str(self.tmp / "missing")),
+               ("x", str(self.sdir)), ("x", str(self.paths.home)), ("../x", str(ok))]
         for name, folder in bad:
             with self.assertRaises(locations.LocationError, msg=(name, folder)):
                 locations.add(self.paths, name, folder)
-        self.write_doc("notes/a.md", DOC)
-        with self.assertRaises(locations.LocationError):      # name taken by a docs folder
+        with self.assertRaises(locations.LocationError):      # name taken by a registered location
             locations.add(self.paths, "Notes", str(ok))
         locations.add(self.paths, "vault", str(ok))
         (ok / "inner").mkdir()
@@ -374,7 +375,7 @@ class LocationTests(Base):
         self.write_doc("security/auth.md", DOC)
         s = self.plan_index()
         self.assertEqual(s["indexed"], 3)
-        self.assertEqual(sorted(s["covered"]), ["default", "security", "vault"])
+        self.assertEqual(sorted(s["covered"]), ["security", "vault"])
         self.publish()
         cat = catalog.live_catalog(self.paths)
         self.assertEqual(sorted(catalog.collection_names(cat)), ["security", "vault"])
@@ -406,14 +407,6 @@ class LocationTests(Base):
         (folder / "note.md").unlink()
         s = self.plan_index()
         self.assertEqual(s["removed"], ["vault/note"])
-
-    def test_a_docs_folder_with_a_locations_name_is_ignored(self):
-        self.make_location("vault")
-        # created after registration: the location wins, the folder is reported and left alone
-        self.write_doc("vault/sneaky.md", DOC)
-        plan = locations.plan_scan(self.paths)
-        self.assertEqual(plan.shadowed, ["vault"])
-        self.assertFalse(any("sneaky" in str(s) for s in plan.sources))
 
     def test_cli_location_commands(self):
         folder = self.tmp / "notes-elsewhere"
@@ -452,7 +445,7 @@ class SourcesAreReadOnlyTests(Base):
         self.plan_index()
         self.publish()
         gone.unlink()
-        roots = (self.paths.docs, folder)
+        roots = (self.sdir, folder)
         # read-only (for a non-root user any write attempt fails loudly), and compared byte for
         # byte, mode and mtime afterwards (which also covers running the tests as root)
         for root in roots:
@@ -557,7 +550,7 @@ class BundleTests(Base):
     def test_names_are_never_silently_taken(self):
         f = self._exported()
         self._other_home()
-        self.write_doc("security/local.md", DOC)                 # a docs folder of that name
+        self.write_doc("security/local.md", DOC)                 # a name another location already has
         r = api.collection_import(self.paths, str(f))
         self.assertFalse(r["ok"])
         self.assertIn("--as", r["error"])
@@ -782,7 +775,7 @@ class ReviewFollowUpTests(Base):
         # simulate a case-insensitive disk: index/Security is the same folder as index/security
         self.write_doc("security/auth.md", DOC)
         self.plan_index()
-        (self.paths.docs / "security").rename(self.paths.docs / "Security")
+        (self.sdir / "security").rename(self.sdir / "Security")
         for root in (self.paths.index, self.paths.markup):
             if not (root / "Security").exists():         # already the same folder on a case-insensitive disk
                 (root / "Security").symlink_to(root / "security")
@@ -858,7 +851,11 @@ class DashboardDescribeTests(UiBase):
         rows = {r["collection"]: r for r in access.overview(self.paths)["collections"]}
         self.assertEqual((rows["garden"]["kind"], rows["garden"]["folder"]),
                          ("location", str(folder.resolve())))
-        self.assertEqual(rows["hr"]["kind"], "docs")
+        self.write_doc("hr/a.md", DOC)
+        self.index()
+        locations.remove_entry(self.paths, "hr")
+        rows = {r["collection"]: r for r in access.overview(self.paths)["collections"]}
+        self.assertEqual(rows["hr"]["kind"], "unregistered")
 
 
 if __name__ == "__main__":

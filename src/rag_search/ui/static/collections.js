@@ -44,7 +44,7 @@
     const name = textInput('e.g. notes'), folder = textInput('/Users/you/Documents/Notes');
     const now = h('input', { type: 'checkbox', checked: true });
     const body = h('div', null,
-      h('p', { class: 'small muted', style: { marginTop: 0 } }, 'Index a folder where it is: its whole tree becomes one collection. rag-search only ever reads it -- nothing in it is changed, moved or deleted. (A folder you create inside the docs folder is a collection without registering it.)'),
+      h('p', { class: 'small muted', style: { marginTop: 0 } }, 'Index a folder where it is: its whole tree becomes one collection. rag-search only ever reads it -- nothing in it is changed, moved or deleted.'),
       field('Collection name', name, 'letters, digits, - and _; not used by another collection. Leave it empty to use the folder\u2019s own name'),
       field('Folder', folder, 'the full path (a browser cannot hand a page a folder you pick, so paste it -- in Finder: right-click the folder, hold ⌥ Option, “Copy … as Pathname”). Spaces and characters like @ are fine; quotes around it are ignored)'),
       h('label', { class: 'check', style: { display: 'flex', margin: '8px 0 0' } }, now, h('span', null, 'Index it now')));
@@ -101,7 +101,7 @@
       h('ul', { class: 'small' },
         h('li', null, 'Source documents are never touched', src ? h('span', null, ' (', h('code', null, src), ')') : null, '.'),
         h('li', null, 'Its access rule and description are kept.'),
-        rebuilt ? h('li', null, h('b', null, 'Its documents are still in place, so the next indexing run builds it again'), ' -- use this to start its index over. To stop indexing it, ', row.kind === 'location' ? 'use “Remove location” instead.' : 'move its folder out of the docs folder.') : null,
+        rebuilt ? h('li', null, h('b', null, 'Its documents are still in place, so the next indexing run builds it again'), ' -- use this to start its index over. To stop indexing it, ', row.kind === 'location' ? 'use “Remove location” instead.' : 'its folder is not registered, so nothing updates it.') : null,
         row.kind === 'imported' ? h('li', null, 'An imported collection has no source here: to get it back, import the export again.') : null),
       field(`Type “${row.collection}” to confirm`, typed));
     if (!await dialog(`Delete “${row.collection}”`, body, { okText: 'Delete', danger: true })) return;
@@ -317,7 +317,7 @@
         pathRow('Index (workspace)', ws.index_folder, `${bytes(ws.index_bytes)}: merged ${bytes(ws.merged_index_bytes)} + per-document ${bytes(ws.per_document_index_bytes)}`),
         pub ? pathRow('Published copy', pub.index_folder, `generation ${pub.generation}; hard links, no extra space`) : null,
       ];
-      parts.push(section(coll, 'where', 'Where it lives', `  ${i.kind === 'location' ? 'location' : i.kind === 'imported' ? 'imported' : 'docs folder'} · ${bytes(i.disk.total_bytes)} on disk`, where, false));
+      parts.push(section(coll, 'where', 'Where it lives', `  ${i.kind === 'location' ? 'location' : i.kind === 'imported' ? 'imported' : 'unregistered'} · ${bytes(i.disk.total_bytes)} on disk`, where, false));
       parts.push(section(coll, 'indexing', 'Indexing & publishing', b.last_indexed ? `  last indexed ${clock(b.last_indexed)}` : '', h('div', null,
         kv([
           ['Model', b.model ? h('span', null, h('code', null, String(b.model)), b.model_revision ? h('span', { class: 'muted small' }, ` @ ${String(b.model_revision).slice(0, 12)}`) : null) : null],
@@ -365,13 +365,13 @@
       if (isOpen) body.push(h('tr', { class: 'cd-row' }, h('td', { colspan: 10 }, details(r))));
     }
     return h('div', { class: 'card' },
-      h('div', { class: 'card-head' }, h('h2', null, 'Collections'), h('span', { class: 'muted small' }, 'a first folder under the docs folder, a registered folder elsewhere, or an imported export; click a row for its details'),
+      h('div', { class: 'card-head' }, h('h2', null, 'Collections'), h('span', { class: 'muted small' }, 'a registered folder or an imported export; click a row for its details'),
         h('span', { class: 'cd-head-actions' },
           h('button', { class: 'btn small primary', disabled: readOnly(), title: 'Index a folder elsewhere on this computer as a collection', on: { click: () => addDialog() } }, 'Add collection…'), ' ',
           h('button', { class: 'btn small', disabled: readOnly(), title: 'Add a collection someone exported', on: { click: () => importDialog() } }, 'Import…'))),
       rs.length ? h('div', { class: 'table-wrap' }, h('table', null,
         h('thead', null, h('tr', null, ['Collection', 'Docs', 'Chunks', 'Index', 'Markdown', 'Sources', 'Built', 'Took', 'Who can use it', ''].map((t, i) => h('th', { class: i > 0 && i < 6 ? 'num' : '' }, t)))),
-        h('tbody', null, body))) : empty('No collections yet. Put documents in a folder under the docs folder, then start indexing.'));
+        h('tbody', null, body))) : empty('No collections yet. Register a folder on this tab, then start indexing.'));
   }
 
   function matrixCard() {

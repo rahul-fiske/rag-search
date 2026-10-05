@@ -3,8 +3,9 @@ without ever touching a production collection.
 
 Isolation is by construction, not convention: every playground function takes the *production*
 ``Paths`` only to resolve ``<home>/playground/<name>/`` (`paths.get_playground_paths`), and from
-there works exclusively inside that sub-tree -- its own ``docs/``, its own ``workspace/index/``,
-its own ``config.json``.  Nothing here ever opens ``serving/``, a ``run/*.sock``, or the
+there works exclusively inside that sub-tree -- its own ``locations.json`` (the folders the user
+chose as its sources, registered exactly like a production collection's; never copied), its own
+``workspace/index/`` and ``config.json``.  Nothing here ever opens ``serving/``, a ``run/*.sock``, or the
 production ``config.json``; there is no generation/publish/hot-swap machinery at all (a
 playground has exactly one reader), and there is no standing daemon -- ``search``/``bench`` load
 the small index and the chosen models in-process and return, the same way `rag-search index
@@ -31,6 +32,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from ..effective import settings_env
 from ..paths import (
     ALL_DIR,
     DEFAULT_CHUNK_OVERLAP,
@@ -38,7 +40,6 @@ from ..paths import (
     DEFAULT_MODEL,
     DEFAULT_RERANK_MODEL,
     DEFAULT_TOP_K,
-    SUPPORTED_EXTENSIONS,
     Paths,
     ensure_dirs,
     get_playground_paths,
@@ -47,11 +48,15 @@ from ..paths import (
     playground_root,
     read_json,
     write_json_atomic,
-    pasted_path,
 )
-from ..effective import settings_env
-from ..spec import TUNABLES_BY_KEY, TUNABLES_BY_SECTION, parse_stages, validate_section, validate_tunable
-from .indexer import exclude_dirs, run_index, scan_sources
+from ..spec import (
+    TUNABLES_BY_KEY,
+    TUNABLES_BY_SECTION,
+    parse_stages,
+    validate_section,
+    validate_tunable,
+)
+from .indexer import run_plan
 
 # Every docling/OCR/table/PDF-backend knob a playground experiment can pin -- everything in
 # spec.TUNABLES's "indexer" section that has an environment variable of its own (chunk_size/
@@ -95,11 +100,15 @@ class PlaygroundError(ValueError):
 # ── experiment lifecycle ──────────────────────────────────────────────────────
 
 def create_experiment(base: Paths, name: str, *, sources: list[str] | None = None,
-                      collection: str = "sample", from_production: bool = False) -> dict[str, Any]:
+                      collection: str = "", from_production: bool = False) -> dict[str, Any]:
+    """Start an experiment.  *sources* are folders registered as its source locations (never copied);
+    *collection* names the collection when exactly one folder is given (default: the folder's own name)."""
     exp = get_playground_paths(base, name)
     if exp.home.exists():
         raise PlaygroundError(f"experiment {name!r} already exists "
                               f"(rag-search playground index {name} to (re)build it)")
+    if collection and len(sources or []) != 1:
+        raise PlaygroundError("--collection names the collection of exactly one --from folder")
     ensure_dirs(exp)
     (exp.home / "bench" / "runs").mkdir(parents=True, exist_ok=True)
     example = exp.home / "bench" / "queries.jsonl.example"
@@ -114,25 +123,61 @@ def create_experiment(base: Paths, name: str, *, sources: list[str] | None = Non
         if from_production:
             seed.update(production_snapshot(base))
         write_json_atomic(exp.home / "config.json", seed)
-    added = 0
-    if sources:
-        added = _copy_sources(exp.docs / collection, [Path(s) for s in sources])
-    return {"name": name, "home": str(exp.home), "collection": collection,
-            "documents_added": added, "from_production": from_production,
-            "config": get_config(base, name)}
+    try:
+        added = [add_source(base, name, folder, collection) for folder in (sources or [])]
+    except PlaygroundError:
+        shutil.rmtree(exp.home, ignore_errors=True)         # an experiment that could not get its sources is not left half made
+        raise
+    return {"name": name, "home": str(exp.home), "sources": added,
+            "from_production": from_production, "config": get_config(base, name)}
+
+
+def _exp(base: Paths, name: str) -> Paths:
+    exp = get_playground_paths(base, name)
+    if not exp.home.is_dir():
+        raise PlaygroundError(f"no such experiment: {name} (rag-search playground create {name})")
+    return exp
+
+
+def add_source(base: Paths, name: str, folder: str, collection: str = "") -> dict[str, Any]:
+    """Register *folder* as a source of the experiment: the same rules and registry as production
+    (``locations``), kept in the experiment's own ``locations.json``."""
+    from .. import locations
+
+    try:
+        return locations.add(_exp(base, name), collection, folder)
+    except locations.LocationError as exc:
+        raise PlaygroundError(str(exc)) from exc
+
+
+def remove_source(base: Paths, name: str, collection: str) -> str:
+    from .. import locations
+
+    removed = locations.remove_entry(_exp(base, name), collection)
+    if not removed:
+        raise PlaygroundError(f"experiment {name!r} has no source {collection!r}")
+    return removed
+
+
+def list_sources(base: Paths, name: str) -> dict[str, Any]:
+    from .. import locations
+
+    return locations.sources(_exp(base, name)) | {"status": locations.status(_exp(base, name))}
 
 
 def list_experiments(base: Paths) -> list[dict[str, Any]]:
+    from .. import locations
+
     out = []
     for name in list_playground_names(base):
         exp = get_playground_paths(base, name)
-        docs = sum(1 for f in exp.docs.rglob("*") if f.is_file()) if exp.docs.is_dir() else 0
+        locs = locations.load(exp)[0]
         collections = sorted(d.name for d in exp.index.iterdir()
                              if d.is_dir() and (d / ALL_DIR).is_dir()) if exp.index.is_dir() else []
         runs = len(list((exp.home / "bench" / "runs").glob("*.json"))) \
             if (exp.home / "bench" / "runs").is_dir() else 0
-        out.append({"name": name, "documents": docs, "indexed_collections": collections,
-                    "bench_runs": runs, "config": get_config(base, name)})
+        out.append({"name": name, "sources": [{"collection": n, "folder": f} for n, f in sorted(locs.items())],
+                    "indexed_collections": collections, "bench_runs": runs, "config": get_config(base, name)})
     return out
 
 
@@ -309,29 +354,6 @@ def promote_to_production(base: Paths, name: str, *, confirm: bool = False) -> d
             "reindex_estimate": preview["reindex_estimate"]}
 
 
-def _copy_sources(dest_dir: Path, sources: list[Path]) -> int:
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    n = 0
-    for src in sources:
-        src = Path(pasted_path(src)).expanduser()
-        if not src.exists():
-            raise PlaygroundError(f"not found: {src}")
-        if src.is_dir():
-            for f in sorted(src.rglob("*")):
-                if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS \
-                        and not f.name.startswith("~$") and not f.name.startswith("."):
-                    out = dest_dir / f.relative_to(src)
-                    out.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(f, out)
-                    n += 1
-        else:
-            if src.suffix.lower() not in SUPPORTED_EXTENSIONS:
-                raise PlaygroundError(f"unsupported file type: {src.name}")
-            shutil.copy2(src, dest_dir / src.name)
-            n += 1
-    return n
-
-
 # ── building the sample index (no publish, no generations) ────────────────────
 
 def _config_like(base: Paths, cfg: dict[str, Any]) -> dict[str, Any]:
@@ -356,7 +378,7 @@ def _config_like(base: Paths, cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def experiment_env(base: Paths, cfg: dict[str, Any], environ: "dict[str, str] | Any" = None) -> dict[str, str]:
+def experiment_env(base: Paths, cfg: dict[str, Any], environ: dict[str, str] | Any = None) -> dict[str, str]:
     """The environment variables this experiment adds for its run: the same ``effective.settings_env`` the
     production indexer daemon uses for its workers (an actual environment variable always wins; blank / 0 adds
     nothing), plus the reader / repair model an experiment pins."""
@@ -386,7 +408,8 @@ def effective_settings(base: Paths, name: str) -> dict[str, Any]:
     """What this experiment's next run will really use, by pipeline stage: ``effective.resolve`` over the
     experiment's settings, with where each value comes from (experiment | production config | environment |
     default).  The stages are the production ones (``stages.py``); 7 Merge and 8 Publish do not exist here."""
-    from .. import effective, stages as stg
+    from .. import effective
+    from .. import stages as stg
 
     if not get_playground_paths(base, name).home.is_dir():       # defaults for a name that is nothing are misleading
         raise PlaygroundError(f"no such experiment: {name} (rag-search playground create {name})")
@@ -417,29 +440,29 @@ def effective_settings(base: Paths, name: str) -> dict[str, Any]:
 def build_index(base: Paths, name: str, *, jobs: int = 1, rebuild: bool = False,
                 wipe: bool = False, force_md: bool = False,
                 progress: Any = None, stage_log: Any = None) -> dict[str, Any]:
+    from .. import locations
     from .embedding import make_embedder, prepare_environment
 
-    exp = get_playground_paths(base, name)
-    if not exp.home.is_dir():
-        raise PlaygroundError(f"no such experiment: {name} (rag-search playground create {name})")
+    exp = _exp(base, name)
     cfg = get_config(base, name)
     ensure_dirs(exp)
-    sources = scan_sources(exp.docs, exclude_dirs(exp))
-    if not sources:
-        raise PlaygroundError(f"no documents in {exp.docs} -- add some first "
-                              f"(rag-search playground create {name} --from PATH, or copy files "
-                              "into that folder directly)")
+    try:
+        plan = locations.plan_scan(exp)
+    except locations.LocationError as exc:
+        if str(exc) == locations.NO_LOCATIONS:
+            raise PlaygroundError(f"no source folders are registered for experiment {name!r}: "
+                                  f"rag-search playground source {name} add FOLDER") from exc
+        raise PlaygroundError(str(exc)) from exc
+    if not plan.sources:
+        raise PlaygroundError("no supported documents in the experiment's source folders: "
+                              + ", ".join(f for _n, f in plan.roots.locations))
     with _experiment_env(base, cfg):
         prepare_environment()
         embedder = make_embedder(cfg["embedding_model"])
-        # the whole sample folder was read: a document removed from it is forgotten here too
-        covered = sorted({p.name for p in exp.index.iterdir() if p.is_dir()}
-                         | {p.name for p in exp.docs.iterdir() if p.is_dir()} | {"default"})
-        return run_index(exp, sources, exp.docs, jobs=jobs, rebuild=rebuild, wipe=wipe,
-                         force_md=force_md, chunk_size=int(cfg["chunk_size"]),
-                         chunk_overlap=int(cfg["chunk_overlap"]), embedder=embedder,
-                         model=cfg["embedding_model"], progress=progress, stage_log=stage_log,
-                         prune=covered)
+        return run_plan(exp, plan, jobs=jobs, rebuild=rebuild, wipe=wipe,
+                                force_md=force_md, chunk_size=int(cfg["chunk_size"]),
+                                chunk_overlap=int(cfg["chunk_overlap"]), embedder=embedder,
+                                model=cfg["embedding_model"], progress=progress, stage_log=stage_log)
 
 
 # ── loading the engine directly from workspace/index (no serving/current) ─────
@@ -498,7 +521,7 @@ def _load_engine_and_index(base: Paths, name: str, *, rerank: bool | None = None
 
 def search(base: Paths, name: str, query: str, *, top_k: int | None = None,
           collections: list[str] | None = None,
-          stages: "str | list[str] | None" = None, retrieval_pool_n: int | None = None,
+          stages: str | list[str] | None = None, retrieval_pool_n: int | None = None,
           rerank_pool_n: int | None = None, rrf_k: int | None = None,
           rerank: bool | None = None) -> dict[str, Any]:
     exp, cfg, engine, emb_model, rr_model = _load_engine_and_index(base, name, rerank=rerank)
@@ -566,7 +589,7 @@ def _percentile(values: list[float], p: float) -> float:
 
 
 def bench(base: Paths, name: str, *, queries_path: str | None = None, k: int = 5,
-         stages: "str | list[str] | None" = None, retrieval_pool_n: int | None = None,
+         stages: str | list[str] | None = None, retrieval_pool_n: int | None = None,
          rerank_pool_n: int | None = None, rrf_k: int | None = None,
          rerank: bool | None = None, label: str | None = None, progress: Any = None) -> dict[str, Any]:
     exp, cfg, engine, emb_model, rr_model = _load_engine_and_index(base, name, rerank=rerank, progress=progress)

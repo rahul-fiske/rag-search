@@ -7,14 +7,13 @@ Deleting removes what rag-search built for the collection in its workspace, and 
 
 after which the caller publishes, so it disappears from search at once (published generations
 that still hold it age out with the normal rotation).  It works the same for every collection --
-a docs-folder folder, a registered location or an import.
+a registered location, an import or an index whose folder is no longer registered.
 
-Source documents are never touched -- not in the docs folder, not in a registered location.
-Everything else is kept too: the collection's access rule (so a rebuilt collection keeps its
-restrictions), its description and a location's registration.  A collection whose documents are
-still in place is therefore built again by the next indexing run -- deleting is how to drop a
-broken or unwanted index and start over.  To stop indexing a folder for good, move it out of the
-docs folder, or unregister the location (``rag-search location remove`` = unregister + delete).
+Source documents are never touched.  Everything else is kept too: the collection's access rule
+(so a rebuilt collection keeps its restrictions), its description and a location's registration.
+A collection whose location is still registered is therefore built again by the next indexing
+run -- deleting is how to drop a broken or unwanted index and start over.  To stop indexing a
+folder for good, unregister the location (``rag-search location remove`` = unregister + delete).
 """
 
 from __future__ import annotations
@@ -23,10 +22,8 @@ import shutil
 from typing import Any
 
 from . import locations
-from .catalog import collection_names, docs_folder_names, live_catalog
+from .catalog import collection_names, live_catalog
 from .paths import (
-    DEFAULT_COLLECTION,
-    SUPPORTED_EXTENSIONS,
     IndexBusyError,
     Paths,
     index_lock,
@@ -56,7 +53,7 @@ def describe_kind(paths: Paths, name: str) -> str:
         return "location"
     if locations.is_imported(paths, name):
         return "imported"
-    return "docs"
+    return "unregistered"
 
 
 def delete_collection(paths: Paths, name: str, *, unregister: bool = False) -> dict[str, Any]:
@@ -89,17 +86,5 @@ def delete_collection(paths: Paths, name: str, *, unregister: bool = False) -> d
 
 
 def _sources_remain(paths: Paths, coll: str, kind: str) -> bool:
-    from .publish import _has_sources
-
-    if kind == "location":
-        return True                      # still registered: indexed again when readable
-    folders = [paths.docs / f for f in docs_folder_names(paths) if f.casefold() == coll.casefold()]
-    if any(_has_sources(f) for f in folders):
-        return True
-    if coll == DEFAULT_COLLECTION:            # loose files directly in the docs folder
-        try:
-            return any(f.is_file() and not f.name.startswith((".", "~$"))
-                       and f.suffix.lower() in SUPPORTED_EXTENSIONS for f in paths.docs.iterdir())
-        except OSError:
-            return False
-    return False
+    """Will the next indexing run build this collection again?  Only a registered location is read."""
+    return kind == "location"            # still registered: indexed again when readable

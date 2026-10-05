@@ -283,7 +283,11 @@ class CliFlowTests(TempHome):
     def test_errors_have_exit_codes(self):
         rc, _, err = run("index", "new", "does/not/exist")
         self.assertEqual(rc, 1)
-        self.assertIn("path not found", err)
+        self.assertIn("no source folders are registered", err)
+        self.write_doc("c/a.md", "x")
+        rc, _, err = run("index", "new", "does/not/exist")
+        self.assertEqual(rc, 1)
+        self.assertIn("neither a registered location", err)
         rc, _, _ = run("paths", "nonsense")
         self.assertEqual(rc, 2)
         rc, _, _ = run()

@@ -493,12 +493,12 @@ class VlmIndexTests(ConversionBase):
         p.start()
         self.addCleanup(p.stop)
         self.addCleanup(vlm.close_shared)
-        self.pdf = self.paths.docs / "reports" / "r.pdf"
+        self.pdf = self.sdir / "reports" / "r.pdf"
         self.pdf.parent.mkdir(parents=True)
         write_routing_pdf(self.pdf)
 
     def test_scanned_pages_and_images_are_read_by_the_reader_in_a_real_run(self):
-        img = self.paths.docs / "reports" / "scan.png"
+        img = self.sdir / "reports" / "scan.png"
         im = Image.new("RGB", (1500, 2000), (255, 255, 255))
         ImageDraw.Draw(im).rectangle((100, 100, 900, 140), fill=(0, 0, 0))
         im.save(img, dpi=(300, 300))
@@ -520,7 +520,7 @@ class VlmIndexTests(ConversionBase):
 
     def test_an_image_the_reader_cannot_read_is_converted_by_docling(self):
         (self.tmp / "plan.json").write_text(json.dumps({"load_error": "no weights"}))
-        img = self.paths.docs / "reports" / "scan.png"
+        img = self.sdir / "reports" / "scan.png"
         im = Image.new("RGB", (1500, 2000), (255, 255, 255))
         ImageDraw.Draw(im).rectangle((100, 100, 900, 300), fill=(0, 0, 0))
         im.save(img)
@@ -593,9 +593,10 @@ class BenchEngineTests(VlmBase):
     def test_a_benchmark_run_with_the_vlm_engine_records_model_and_closes_the_reader(self):
         from rag_search.core.conversion import bench
 
-        shutil_dest = self.paths.docs / "c" / "r.pdf"
+        shutil_dest = self.sdir / "c" / "r.pdf"
         shutil_dest.parent.mkdir(parents=True)
         shutil_dest.write_bytes(self.pdf.read_bytes())
+        self.register_tree()
         gold = bench.gold_dir(self.paths, "g")
         gold.mkdir(parents=True)
         (gold / "gold.json").write_text(json.dumps({
@@ -672,7 +673,7 @@ class VlmInterfaceTests(VlmBase):
     def test_estimate_says_whether_the_reader_can_run(self):
         from rag_search.core.conversion import estimate
 
-        src = self.paths.docs / "c" / "s.pdf"
+        src = self.sdir / "c" / "s.pdf"
         src.parent.mkdir(parents=True)
         write_routing_pdf(src)
         e = estimate.estimate(self.paths, [src])

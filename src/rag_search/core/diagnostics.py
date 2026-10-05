@@ -14,9 +14,8 @@ import tempfile
 import time
 from pathlib import Path
 
-from .. import api, client
+from .. import api, client, models
 from ..config import ConfigStore
-from .. import models
 from ..paths import Paths, default_home, ensure_dirs, get_paths, read_json
 
 OK, WARN, FAIL = "ok", "warn", "FAIL"
@@ -176,9 +175,6 @@ def run_checks(paths: Paths) -> list[tuple[str, str, str]]:
         out.append(_line(FAIL, "data folder", f"{paths.home}: {exc}"))
     from .. import locations
 
-    docs_ok = locations.reachable(paths.docs)
-    out.append(_line(OK if docs_ok else WARN, "docs folder", str(paths.docs) + (
-        "" if docs_ok else "  (cannot be read now: indexing leaves its collections as they are)")))
     _, loc_err = locations.load(paths)
     if loc_err:
         out.append(_line(WARN, "source locations", loc_err))
@@ -289,7 +285,7 @@ def roundtrip() -> int:
     search daemon reload -> search.  Uses the real models, so the first run downloads them.
     """
     chosen = read_json(default_home() / "config.json").get("models") or {}   # the models in use
-    saved = {k: os.environ.pop(k, None) for k in ("RAG_SEARCH_DOCS", "RAG_SEARCH_HOME")}
+    saved = {k: os.environ.pop(k, None) for k in ("RAG_SEARCH_HOME",)}
     tmp = Path(tempfile.mkdtemp(prefix="rag-doctor-"))
     p = get_paths(tmp)
     os.environ["RAG_SEARCH_HOME"] = str(tmp)
@@ -300,9 +296,13 @@ def roundtrip() -> int:
             from ..config import update_config
 
             update_config(p, "models", picked)
-        (p.docs / "samples").mkdir(parents=True, exist_ok=True)
+        samples = tmp / "sources" / "samples"
+        samples.mkdir(parents=True, exist_ok=True)
         for name, text in SAMPLE_DOCS.items():
-            (p.docs / "samples" / name).write_text(text)
+            (samples / name).write_text(text)
+        from .. import locations as _loc
+
+        _loc._save(p, {"samples": str(samples)})
         t0 = time.time()
         print("indexing 3 sample documents (starts the daemons, loads the models) ...", flush=True)
         r = api.index_start(p, client="cli")

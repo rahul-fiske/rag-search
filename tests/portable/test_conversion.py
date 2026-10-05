@@ -83,14 +83,14 @@ class ConversionBase(TempHome):
         self.events: list[dict] = []
 
     def add_pdf(self, rel: str = "reports/mixed.pdf") -> Path:
-        p = self.paths.docs / rel
+        p = self.sdir / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         write_mixed_pdf(p)
         return p
 
     def run_index(self, **kw):
-        srcs = indexer.scan_sources(self.paths.docs, indexer.exclude_dirs(self.paths))
-        return indexer.run_index(self.paths, srcs, self.paths.docs, jobs=1,
+        srcs = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
+        return indexer.run_index(self.paths, srcs, self.roots(), jobs=1,
                                  embedder=FakeEmbedder(), progress=self.events.append, **kw)
 
     def trace_file(self, rel="reports/mixed") -> Path:
@@ -179,7 +179,7 @@ class TraceUnitTests(unittest.TestCase):
 @unittest.skipUnless(HAVE_PDF, "needs pypdfium2 and Pillow")
 class ProfilerTests(TempHome):
     def test_records_merge_profile_and_docling_facts(self):
-        p = self.paths.docs / "m.pdf"
+        p = self.sdir / "m.pdf"
         write_mixed_pdf(p)
         prof = profiler.profile_file(p)
         stats = fake_convert(p, self.tmp / "o.md")["page_stats"]
@@ -250,9 +250,9 @@ class PrepareAndRunTests(ConversionBase):
         self.add_pdf()
         self.run_index()
         self.assertTrue(self.trace_file().exists())
-        (self.paths.docs / "reports/mixed.pdf").unlink()
-        srcs = indexer.scan_sources(self.paths.docs, indexer.exclude_dirs(self.paths))
-        indexer.run_index(self.paths, srcs, self.paths.docs, jobs=1, embedder=FakeEmbedder(),
+        (self.sdir / "reports/mixed.pdf").unlink()
+        srcs = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
+        indexer.run_index(self.paths, srcs, self.roots(), jobs=1, embedder=FakeEmbedder(),
                           prune=["reports"])
         self.assertFalse(self.trace_file().exists())
 
@@ -296,8 +296,8 @@ class PrepareAndRunTests(ConversionBase):
         self.add_pdf()
         log = self.paths.jobs / "j2.events.jsonl"
         log.parent.mkdir(parents=True, exist_ok=True)
-        srcs = indexer.scan_sources(self.paths.docs, indexer.exclude_dirs(self.paths))
-        indexer.run_index(self.paths, srcs, self.paths.docs, jobs=1, embedder=FakeEmbedder(),
+        srcs = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
+        indexer.run_index(self.paths, srcs, self.roots(), jobs=1, embedder=FakeEmbedder(),
                           stage_log=log)
         evs = [json.loads(line) for line in log.read_text().splitlines()]
         self.assertTrue(all("pid" in e for e in evs if e["event"] == "stage"))
@@ -438,7 +438,7 @@ class ApiTests(ConversionBase):
         self.assertFalse(api.conversion_estimate(self.paths, "nope/none")["ok"])
 
     def test_estimate_profile_budget_marks_the_rest(self):
-        e = estimate.estimate(self.paths, [self.paths.docs / "reports/mixed.pdf"] * 3, budget_s=1e-9)
+        e = estimate.estimate(self.paths, [self.sdir / "reports/mixed.pdf"] * 3, budget_s=1e-9)
         self.assertTrue(e["partial"])
         self.assertLess(e["profiled"], 3)
 

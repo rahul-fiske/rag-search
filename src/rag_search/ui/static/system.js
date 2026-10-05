@@ -29,7 +29,7 @@
 
   function renderPaths() {
     const p = (arch && arch.paths) || {}; const cat = RS.state.catalog || {};
-    const rows = [['Home (indexes, logs, sockets)', h('code', null, p.home || cat.home || '–')], ['Documents folder', h('code', null, p.docs || '–')]];
+    const rows = [['Home (indexes, logs, sockets)', h('code', null, p.home || cat.home || '–')]];
     if (arch) {
       rows.push(['Version', `rag-search ${arch.version} on Python ${arch.python} (${arch.platform})`]);
       rows.push(['Embedding model', h('code', null, arch.models.embedding.name)]);
@@ -37,7 +37,7 @@
     }
     if (pageCache) rows.push(['Page cache', `${num(pageCache.entries)} page(s), ${bytes(pageCache.bytes)} — pages already read, kept so an interrupted run resumes and no page is read twice (rag-search index cache --clear empties it)`]);
     fill(refs.paths, h('div', { class: 'card-head' }, h('h2', null, 'Installation')), kv(rows),
-      h('p', { class: 'small muted', style: { marginBottom: 0 } }, 'Change the home folder with ', h('code', null, 'RAG_SEARCH_HOME'), ' or ', h('code', null, '--home'), '; the documents folder with ', h('code', null, 'RAG_SEARCH_DOCS'), '.'));
+      h('p', { class: 'small muted', style: { marginBottom: 0 } }, 'Change the home folder with ', h('code', null, 'RAG_SEARCH_HOME'), ' or ', h('code', null, '--home'), '. Source folders are registered per collection on the Collections tab.'));
   }
 
   async function loadLogs() {

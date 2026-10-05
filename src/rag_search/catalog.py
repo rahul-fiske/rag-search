@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import os
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from . import descriptions, policy
 from .paths import Paths, is_plain_name
@@ -18,23 +18,13 @@ def collection_names(catalog: dict[str, Any]) -> list[str]:
     return [c["collection"] for c in catalog.get("collections", [])]
 
 
-def docs_folder_names(paths: Paths) -> list[str]:
-    """First-level folders of the docs folder (each one is a collection)."""
-    try:
-        with os.scandir(paths.docs) as it:
-            return sorted(e.name for e in it
-                          if e.is_dir(follow_symlinks=False) and not e.name.startswith("."))
-    except OSError:
-        return []
-
-
 def known_names(paths: Paths) -> list[str]:
-    """Every collection name rag-search knows of: published, docs-folder folders, registered
-    source locations and collections in the indexer workspace (imported ones included)."""
+    """Every collection name rag-search knows of: published, registered source locations and
+    collections in the indexer workspace (imported ones included)."""
     from . import locations
 
     names: list[str] = []
-    for n in (*collection_names(live_catalog(paths)), *docs_folder_names(paths),
+    for n in (*collection_names(live_catalog(paths)),
               *locations.names(paths), *locations.workspace_collections(paths)):
         if n not in names:
             names.append(n)
@@ -48,8 +38,8 @@ def canonical_name(paths: Paths, name: str, extra: Iterable[str] = ()) -> str:
     management.  Raises ValueError for something that cannot be a collection name."""
     name = (name or "").strip()
     if not is_plain_name(name):
-        raise ValueError(f"{name!r} is not a collection name (use the folder name under the "
-                         "docs folder, e.g. 'manuals')")
+        raise ValueError(f"{name!r} is not a collection name (the name a folder was registered "
+                         "with, e.g. 'manuals')")
     known = [*known_names(paths), *extra]
     if name in known:
         return name
@@ -109,11 +99,11 @@ def list_view(paths: Paths, rules: policy.Rules, client: str, *, full: bool = Fa
             "source_bytes": sum(c["source_bytes"] or 0 for c in colls),
             "build_seconds": round(sum(known), 1) if known else None,
         },
-        "docs_folder": str(paths.docs),
     }
     if not colls:
-        out["hint"] = ("Nothing is published yet. Put documents in the docs folder, then "
-                       "start indexing (rag_index_update / rag-search index new).")
+        out["hint"] = ("Nothing is published yet. Register a folder of documents (rag-search "
+                       "location add NAME FOLDER), then start indexing (rag_index_update / "
+                       "rag-search index new).")
     elif not full:
         out["hint"] = ("Document listings are omitted by default -- pass documents=true to "
                         "rag_list_collections (or --full to `rag-search list`) to see them.")

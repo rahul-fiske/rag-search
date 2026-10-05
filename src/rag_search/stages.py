@@ -64,7 +64,7 @@ class Stage:
 # the router, per page), listed separately so the diagram and the trace can name them.
 INDEXING: tuple[Stage, ...] = (
     Stage("1", "discover", "Discover", RUN, CPU,
-          "list the files of every collection (the docs folder, registered folders, imports); formats the "
+          "list the files of every collection (registered folders, imports); formats the "
           "pipeline cannot read are skipped and counted"),
     Stage("2", "fingerprint", "Fingerprint", DOCUMENT, CPU,
           "SHA-256 of the file plus the chunk, model and conversion settings; unchanged documents are skipped "

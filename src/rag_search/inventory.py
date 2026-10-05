@@ -23,11 +23,10 @@ from . import descriptions, jobs, locations, policy
 from .catalog import live_catalog
 from .paths import (
     ALL_DIR,
-    DEFAULT_COLLECTION,
+    EMB_FILE,
     MERGE_MANIFEST,
     META_FILE,
     NODES_FILE,
-    EMB_FILE,
     Paths,
     index_dir_for,
     is_plain_name,
@@ -80,37 +79,22 @@ def _kind(paths: Paths, coll: str, locs: dict[str, str]) -> str:
         return "location"
     if locations.is_imported(paths, coll):
         return "imported"
-    return "docs"
+    return "unregistered"
 
 
 def _source(paths: Paths, coll: str, kind: str, locs: dict[str, str]) -> dict[str, Any]:
     """Where the documents are, whether that can be read now, and what is in it."""
-    if kind == "imported":
+    if kind != "location":                 # imported, or indexed earlier with no registered folder
         return {"folder": None, "reachable": None, "files": None, "bytes": None,
                 "unsupported": None, "list": []}
     roots = locations.source_roots(paths)
-    folder = Path(locs[coll]) if kind == "location" else (
-        paths.docs if coll == DEFAULT_COLLECTION else paths.docs / coll)
+    folder = Path(locs[coll])
     out: dict[str, Any] = {"folder": str(folder), "reachable": locations.reachable(folder)}
     files: list[Path] = []
     unsupported = 0
     if out["reachable"]:
-        excludes = locations.workspace_excludes(paths)
-        if coll == DEFAULT_COLLECTION:          # loose files in the docs folder + docs/default/
-            for p in sorted(paths.docs.iterdir()):
-                if p.is_file() and not p.name.startswith((".", "~$")):
-                    if p.suffix.lower() in _supported():
-                        files.append(p)
-                    else:
-                        unsupported += 1
-            sub = paths.docs / DEFAULT_COLLECTION
-            if sub.is_dir():
-                found, unsup = locations.scan_tree(sub, excludes)
-                files += found
-                unsupported += len(unsup)
-        else:
-            found, unsup = locations.scan_tree(folder, excludes)
-            files, unsupported = found, len(unsup)
+        found, unsup = locations.scan_tree(folder, locations.workspace_excludes(paths))
+        files, unsupported = found, len(unsup)
     size = 0
     stats: list[tuple[Path, float]] = []
     for f in files:
@@ -316,11 +300,16 @@ def _rel(f: Path, folder: str) -> str:
 
 def _state(kind: str, src: dict[str, Any], ws: dict[str, Any], pub: dict[str, Any] | None,
            not_indexed: list[str], modified: list[str]) -> tuple[str, str]:
-    """(state, explanation): ok | pending | unpublished | unreachable | not_indexed | imported."""
+    """(state, explanation): ok | pending | unpublished | unreachable | not_indexed | imported |
+    unregistered."""
     merged = ws.get("merged")
     if kind == "imported":
         return ("imported", "imported from a collection export; it has no source documents and "
                 "is never re-indexed" + ("" if pub else " (not published yet)"))
+    if kind == "unregistered":
+        return ("unregistered", "indexed earlier, but no folder is registered under this name: it "
+                "stays searchable and nothing updates it; register its folder with `rag-search "
+                "location add NAME FOLDER` to keep it current")
     if src.get("reachable") is False:
         return ("unreachable", "the source folder cannot be read right now; indexing leaves this "
                 "collection as it was" + (" and search keeps serving it" if pub else ""))

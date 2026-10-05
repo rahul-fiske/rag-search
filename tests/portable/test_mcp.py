@@ -110,7 +110,7 @@ class ToolFunctionTests(McpCase):
             refuse = json.loads(await claude["rag_index_rebuild"]())
             self.assertFalse(refuse["started"])
             bad = json.loads(await claude["rag_index_update"](path="nope"))
-            self.assertIn("not found", bad["error"])
+            self.assertIn("neither a registered location", bad["error"])
             cancel = json.loads(await claude["rag_index_cancel"]())
             self.assertFalse(cancel["cancelled"])
 
