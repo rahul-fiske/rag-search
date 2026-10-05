@@ -6,7 +6,10 @@ build/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+.coverage*
 data/
+# the test corpus (tests/data/README.md) is committed
+!/tests/data/
 .DS_Store
 _to_delete/
 /PKG-INFO

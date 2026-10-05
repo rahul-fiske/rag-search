@@ -1,0 +1,20 @@
+= Deployment guide
+
+Needle: azure quarry deployment.
+
+== Steps
+
+. Build the package.
+. Copy it to the server.
+. Restart the service.
+
+[cols="1,2"]
+|===
+|Step |Command
+
+|Build
+|make package
+
+|Restart
+|systemctl restart app
+|===

@@ -34,7 +34,8 @@ rag-search = "rag_search.cli:main"
 rag-search-mcp = "rag_search.mcp.server:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.5", "mcp>=1.12,<2"]
+# coverage: measuring the tests; reportlab and pillow-heif: only to rebuild / read the test corpus (tests/data/)
+dev = ["pytest>=8", "ruff>=0.5", "mcp>=1.12,<2", "coverage>=7.10", "reportlab>=4", "pillow-heif>=0.18"]
 
 [tool.setuptools]
 package-dir = { "" = "src" }
@@ -53,4 +54,11 @@ line-length = 100
 target-version = "py311"
 
 [tool.pytest.ini_options]
-testpaths = ["tests/portable"]
+testpaths = ["tests/portable", "tests/real"]
+
+# `coverage run -m unittest discover -s tests/portable -t .` then `coverage combine && coverage report -m`:
+# patch = subprocess so the daemons and workers the tests start are counted too (docs/design/test-strategy.md)
+[tool.coverage.run]
+source = ["src/rag_search"]
+parallel = true
+patch = ["subprocess"]
