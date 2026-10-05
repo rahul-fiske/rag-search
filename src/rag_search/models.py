@@ -160,14 +160,22 @@ VLM_CATALOG: tuple[ModelSpec, ...] = (
               "Apache-2.0", "multilingual",
               "The same model without quantisation: a little more accurate, about twice the size.",
               backend=MLX_VLM, tier="quality", style="paddleocr"),
+    ModelSpec("mlx-community/Qwen3-VL-8B-Instruct-4bit", REPAIR, "Qwen3-VL 8B (4-bit)", 8000, 5.8,
+              "Apache-2.0", "multilingual",
+              "The model that takes over when the default reader's page is flagged (columns shifted, a loop, a "
+              "balance that does not add up): it re-reads the whole page, and a suspect table cell, and its "
+              "result is used only when it passes the checks. Better with tables and Devanagari than the 4B, "
+              "about twice as slow, so it only sees the pages that need it. Apple Silicon only.",
+              backend=MLX_VLM, tier="default", style="instruct"),
     ModelSpec("mlx-community/Qwen3-VL-4B-Instruct-4bit", REPAIR, "Qwen3-VL 4B (4-bit)", 4000, 3.1,
               "Apache-2.0", "multilingual",
-              "Reads a cropped table cell or a row; a result is used only when the table's arithmetic "
-              "agrees and a second, independent read says the same.",
-              backend=MLX_VLM, tier="default", style="instruct"),
+              "Reads a cropped table cell or a row with the reader's own process (one model in memory); a result "
+              "is used only when the table's arithmetic agrees and a second, independent read says the same. "
+              "A flagged page is not read again by a different model.",
+              backend=MLX_VLM, tier="light", style="instruct"),
 )
 VLM_DEFAULTS = {READER: "mlx-community/Qwen3-VL-4B-Instruct-4bit",
-                REPAIR: "mlx-community/Qwen3-VL-4B-Instruct-4bit"}
+                REPAIR: "mlx-community/Qwen3-VL-8B-Instruct-4bit"}
 
 _ID_RE = re.compile(r"^[A-Za-z0-9][\w.\-]*/[A-Za-z0-9][\w.\-]*$")
 

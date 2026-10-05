@@ -536,6 +536,12 @@ EXIF orientation applied; HEIC with `pillow-heif`) and large pictures on text pa
   memory is free ...`). Image files have no page fallback: the reader raises and the indexer converts the file
   whole with docling (`note`: "document reader not used (...)"). A photograph without text comes back empty
   and is "no text".
+* **Last resort: Tesseract (`tesseract.py`).** When a page is still a runaway after the reader's retries and the
+  repair model, or docling's OCR and Apple Vision found no text, the page image (3000 px) is read by the
+  `tesseract` binary with `mar+hin+eng` (the installed subset; `RAG_SEARCH_TESSERACT_LANG`, `RAG_SEARCH_TESSERACT=off`),
+  psm 4: plain text in reading order, no tables, 1 to 13 s a page, and it cannot loop. Kept only when it is real
+  text and not a runaway; the page record says `tesseract` (branch `fallback`) and the note why. A missing
+  binary or language is a note, not a failure (`rag-search doctor` and `scripts/install.sh` check both).
 * **Last resort: Apple Vision.** docling's OCR cannot read a photographed page (its layout model calls the
   whole photo one picture and drops the text inside it). When a `fallback` page comes back without real text
   (only `<!-- image -->` and a class label), or a document converted whole has no text at all, and this Mac
@@ -591,7 +597,15 @@ arithmetic failure there is the document's own) and only when the gate reports s
 5. The cell is replaced in place (`tables.replace_cell`: pipe tables and HTML tables without merged cells; only
    that cell's text changes). Suspects are recomputed after every accepted fix (one fix can explain the next row),
    at most 10 cells per page.
-6. If cells remain suspect and the repair model is *not* the reader model, the whole page is read once more by the
+6. **Escalation (0.9.21).** The repair model is by default **Qwen3-VL 8B 4-bit**, the reader the 4B. Any scanned page
+   the gate flags -- not only one with a suspect cell: shifted columns, a runaway, a failed balance, an empty
+   page -- goes to the repair model as a whole (the cell step is skipped when there is no suspect cell), through
+   `read_page_guarded`, so a loop of the 8B is stopped and retried like the 4B's. The re-read replaces the page when it
+   passes the gate and keeps the tables, 90 % of the *different* numbers and 80 % of the *different* words of the
+   first reading (different, because a page with mixed-up columns repeats its figures and the correct reading is
+   shorter); a runaway is replaced by any clean reading. `ALGO_VERSION` r2: pages whose repair was tried before are tried
+   again. With the same model for both (`models.repair` set to the reader's) there is no escalation. In
+   the original design: If cells remain suspect and the repair model is *not* the reader model, the whole page is read once more by the
    repair model and kept only if it passes the gate (ignoring `low_resolution`) **and** is not smaller than the first
    reading (`repair.not_smaller`: at least as many tables, 90 % of the numbers, 80 % of the text; a page that lost its
    table would otherwise pass the gate trivially). Any error in repair, an unreadable source included, is a note on the

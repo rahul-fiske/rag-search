@@ -598,6 +598,13 @@ through the Mac's own tool environment, see CONTRIBUTING.md "Dev loop"**):
   * Candidate for a decision: escalate a scanned page that the gate flags to the 8B (the repair step already
     re-reads a page with a different repair model) instead of re-reading everything with it.
 
+- 0.9.21: the two decisions of the experiments. (1) The repair model is now Qwen3-VL 8B 4-bit by default and
+  re-reads any scanned page the gate flags (shifted columns, a runaway, a failed balance), not only a page with a suspect
+  cell; the 4B stays the reader, so only the pages that need it pay for the 8B. (2) Tesseract is the last-resort
+  reader for a page that is still a runaway, and after Apple Vision in the no-text rescue. `install.sh` checks for / installs
+  Tesseract and its Marathi and Hindi data and downloads the reader and repair models; `doctor` and
+  `scripts/sanity_check.py` report both.
+
 **First real result** (3-page scanned Marathi/Hindi/English passbook, standard pipeline, Qwen3-VL 4B 4-bit):
 Devanagari headings and the cover page are correct; page 2's table has real rows but one row is missing, one
 merges two rows, and narration pushes numbers one column left; page 3's table is scrambled (shifted and

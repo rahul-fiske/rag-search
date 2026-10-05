@@ -14,6 +14,8 @@
 #            --tool-prefix P  add a prefix to the MCP tool names (they already start with rag_)
 #            --service     start the daemons at login (macOS launchd)
 #            --no-mcp      skip the MCP adapter dependency (CLI + daemons only)
+#            --no-tesseract don't check for / install Tesseract (the last-resort page reader, with its
+#                          Marathi and Hindi language data). Installed with Homebrew on macOS.
 #            --import-only for using collections others exported (rag-search collection import):
 #                          skips the OCR engine (ocrmac, macOS) and docling's document-conversion
 #                          models, which only indexing your own documents needs (the embedding
@@ -26,7 +28,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY_VER="3.12"; DEV=0; DEV_DIR=""; HOME_OPT=""; SKIP_MODELS=0; MODELS_PRESET=""; NO_REGISTER=0; VERIFY_ONLY=0
-PREFIX=""; SERVICE=0; NO_MCP=0; IMPORT_ONLY=0
+PREFIX=""; SERVICE=0; NO_MCP=0; IMPORT_ONLY=0; NO_TESSERACT=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -39,6 +41,7 @@ while [[ $# -gt 0 ]]; do
     --tool-prefix) PREFIX="$2"; shift ;;
     --service) SERVICE=1 ;;
     --no-mcp) NO_MCP=1 ;;
+    --no-tesseract) NO_TESSERACT=1 ;;
     --import-only) IMPORT_ONLY=1 ;;
     --verify-only) VERIFY_ONLY=1 ;;
     -h|--help) awk 'NR > 1 { if (/^#/) print; else exit }' "$0" | grep -v '^# *[<>][<>][<>] '; exit 0 ;;
@@ -150,6 +153,42 @@ if [[ $SKIP_MODELS == 0 ]]; then
 else
   "$EXE" ${HOME_ARGS[@]+"${HOME_ARGS[@]}"} setup --skip-models ${SETUP_ARGS[@]+"${SETUP_ARGS[@]}"}
 fi
+# 4b. the document reader and the repair model (Apple Silicon): the reader reads scanned pages, the larger
+# repair model takes over the pages the checks flag (shifted columns, a loop, a balance that does not add up)
+if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" && $IMPORT_ONLY == 0 && $SKIP_MODELS == 0 ]]; then
+  say "Downloading the document reader and the repair model (about 3 GB and 6 GB, once)"
+  "$EXE" ${HOME_ARGS[@]+"${HOME_ARGS[@]}"} models download --reader --repair \
+    || echo "warning: the reader models were not downloaded; run: rag-search models download --reader --repair"
+fi
+
+# 4c. Tesseract: the last-resort reader for pages the vision model cannot read (Marathi, Hindi, English) ---
+if [[ $IMPORT_ONLY == 0 && $NO_TESSERACT == 0 ]]; then
+  say "Checking Tesseract (last-resort page reader)"
+  if ! command -v tesseract >/dev/null; then
+    if command -v brew >/dev/null; then
+      brew install tesseract || echo "warning: 'brew install tesseract' failed; pages the reader cannot read will stay flagged"
+    elif [[ "$(uname -s)" == "Linux" ]]; then
+      echo "note: install it with:  sudo apt-get install -y tesseract-ocr   (then run ./install.sh again)"
+    else
+      echo "note: Tesseract is not installed and Homebrew was not found; install it (https://brew.sh, then: brew install tesseract)"
+    fi
+  fi
+  if command -v tesseract >/dev/null; then
+    TESS_LANGS="$(tesseract --list-langs 2>&1 || true)"
+    TESSDATA="$(printf '%s\n' "$TESS_LANGS" | sed -n '1s/.*"\(.*\)".*/\1/p')"
+    for L in mar hin; do
+      printf '%s\n' "$TESS_LANGS" | grep -qx "$L" && continue
+      if [[ -n "$TESSDATA" && -w "$TESSDATA" ]] && command -v curl >/dev/null; then
+        echo "adding the $L language data to $TESSDATA"
+        curl -fsSL -o "$TESSDATA/$L.traineddata" "https://github.com/tesseract-ocr/tessdata_best/raw/main/$L.traineddata" \
+          || { rm -f "$TESSDATA/$L.traineddata"; echo "warning: could not download $L.traineddata"; }
+      else
+        echo "note: Tesseract has no '$L' data; put $L.traineddata (github.com/tesseract-ocr/tessdata_best) into ${TESSDATA:-its tessdata folder}"
+      fi
+    done
+  fi
+fi
+
 say "Health check"
 "$EXE" ${HOME_ARGS[@]+"${HOME_ARGS[@]}"} doctor || echo "doctor reported problems (see above)"
 

@@ -159,6 +159,28 @@ def run_checks(paths: Paths) -> list[tuple[str, str, str]]:
     except Exception as exc:  # noqa: BLE001
         out.append(_line(WARN, "OCR", f"{type(exc).__name__}: {exc}"))
 
+    try:
+        from .conversion import tesseract
+
+        why = tesseract.why_not()
+        out.append(_line(OK if not why else WARN, "Tesseract (last-resort page reader)",
+                         f"languages {tesseract.languages()}" if not why else
+                         why + "; pages the document reader cannot read then stay flagged instead of being read as plain text"))
+    except Exception as exc:  # noqa: BLE001
+        out.append(_line(WARN, "Tesseract (last-resort page reader)", f"{type(exc).__name__}: {exc}"))
+    try:
+        if platform.system() == "Darwin" and platform.machine() == "arm64" and importlib.util.find_spec("mlx_vlm"):
+            from .. import models
+
+            for kind, what in ((models.READER, "document reader"), (models.REPAIR, "repair model (re-reads flagged pages)")):
+                mid = models.vlm_selection(kind)[0]
+                st = models.cache_state(mid)
+                out.append(_line(OK if st["cached"] else WARN, what,
+                                 mid + ("" if st["cached"] else
+                                        f": not downloaded ({st.get('why') or 'rag-search models download --reader --repair'})")))
+    except Exception as exc:  # noqa: BLE001
+        out.append(_line(WARN, "document reader models", f"{type(exc).__name__}: {exc}"))
+
     dpy = os.environ.get("RAG_SEARCH_DOCLING_PYTHON")
     if dpy:
         out.append(_line(OK if Path(dpy).is_file() else FAIL, "RAG_SEARCH_DOCLING_PYTHON", dpy))

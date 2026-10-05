@@ -209,6 +209,19 @@ def check_models() -> tuple[str, str]:
         else ("PASS", "; ".join(ok))
 
 
+def check_tesseract() -> tuple[str, str]:
+    """The last-resort page reader: the binary and its Marathi / Hindi / English data (install.sh adds them)."""
+    from rag_search.core.conversion import tesseract
+
+    why = tesseract.why_not()
+    if why:
+        return "FAIL", why
+    have = tesseract.installed_languages()
+    missing = [x for x in ("mar", "hin", "eng") if x not in have]
+    return ("FAIL", f"tesseract lacks the language data {', '.join(missing)}") if missing else \
+        ("PASS", f"tesseract {', '.join(sorted(have - {'osd'}))}")
+
+
 def check_apple_vision(tmp: Path) -> tuple[str, str]:
     from rag_search.core.conversion import applevision
 
@@ -314,7 +327,7 @@ def run(a: argparse.Namespace) -> list[Result]:
     everything = a.all
     out = [timed("python and version", check_python), timed("machine", check_machine),
            timed("packages", check_packages), timed("GPU (MLX / torch)", check_gpu),
-           timed("models downloaded", check_models)]
+           timed("models downloaded", check_models), timed("Tesseract (last resort)", check_tesseract)]
     with tempfile.TemporaryDirectory(prefix="rag-sanity-") as d:
         tmp = Path(d)
         steps = [("Apple Vision reads an image", a.apple_vision, lambda: check_apple_vision(tmp)),

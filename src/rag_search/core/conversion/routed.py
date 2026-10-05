@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..docling_convert import NoTextError, convert_profile, convert_settings, has_real_text
-from . import applevision, degenerate, gate, pagecache, pagemd, profiler, reconcile, tables, trace, vlm
+from . import applevision, degenerate, gate, pagecache, pagemd, profiler, reconcile, tables, tesseract, trace, vlm
 from .records import PROFILE_KEEP
 
 READ_CHUNK = 20                      # pages per docling call at most
@@ -125,6 +125,10 @@ def _new_text(page_md: str, pic_md: str) -> str:
     return "\n".join(keep).strip()
 
 
+# gate checks that a re-read by another model cannot cure (the page's resolution, docling's own grade)
+NOT_ESCALATED = ("low_resolution", "docling_grade")
+
+
 class _Converter:
     """State of one document's conversion (shared by PDFs and image files)."""
 
@@ -183,11 +187,17 @@ class _Converter:
         g = gate.check_page(r["md"], branch_kind=kind, profile=e["profile"], confidence=conf)
         gate_s = round(time.perf_counter() - t_gate, 4)
         repair_s, rep = 0.0, None
-        if g.get("violations") and kind == "scan" and not e["blank"] and self.repairer and self.repairer.usable():
+        flagged = [c for c in gate.failed(g) if c not in NOT_ESCALATED]
+        if (kind == "scan" and not e["blank"] and self.repairer
+                and (g.get("violations") or (flagged and getattr(self.repairer, "reread", False)))
+                and self.repairer.usable()):
             prior = r.get("repair") if r["cache"] == "hit" else None
             if not (prior and prior.get("tag") == self.repairer.tag):
                 rep = self._repair(n, e, r, g, kind, conf)
                 repair_s = rep["seconds"]
+                g = gate.check_page(r["md"], branch_kind=kind, profile=e["profile"], confidence=conf)
+        if kind == "scan" and not e["blank"] and "degenerate" in gate.failed(g):
+            if self._tesseract_last_resort(n, r):                       # the readers ran away: plain text instead
                 g = gate.check_page(r["md"], branch_kind=kind, profile=e["profile"], confidence=conf)
         fixed = int((r.get("repair") or {}).get("fixed") or 0) + (1 if (r.get("repair") or {}).get("tier") == "page" else 0)
         placeholder = not e["blank"] and not has_real_text(r["md"])       # "<!-- image -->" and a class label: nothing was read
@@ -201,6 +211,8 @@ class _Converter:
             info = {"tool": "vlm", "model": r.get("model", ""), "mode": "page" if e["mode"] == "scan" else "picture"}
         elif r.get("via") == "apple-vision":
             info = {"tool": "apple-vision", "mode": "page"}
+        elif r.get("via") == "tesseract":
+            info = {"tool": "tesseract", "mode": "page"}
         else:
             info = _reader_info(self.cfg, e["mode"] or "scan", self.reader.id)
         was = r.get("was_branch") or branch
@@ -249,7 +261,7 @@ class _Converter:
             return g2["verdict"] == "ok" or (not g2.get("violations") and set(gate.failed(g2)) <= {"low_resolution"})
 
         try:
-            rep = self.repairer.run(self.src, n, self.is_image, r["md"], g["violations"], page_ok=page_ok)
+            rep = self.repairer.run(self.src, n, self.is_image, r["md"], g.get("violations") or [], page_ok=page_ok)
         except Exception as exc:  # noqa: BLE001 - repair is optional: it never fails the page or the document
             why = f"{exc.reason}: " if isinstance(exc, vlm.ReaderError) else f"{type(exc).__name__}: "
             rep = {"md": r["md"], "cells": [], "fixed": 0, "tried": 0, "tier": "", "tokens": 0, "gpu_s": 0.0,
@@ -296,10 +308,12 @@ class _Converter:
                     and degenerate.assess(hit.get("md") or "")["bad"]):
                 hit = None                    # read before the loop guard existed and it ran away: read it again
             if not hit and self.cache and e["mode"] == "scan" and not self.vlm_ok():     # a page Apple Vision read earlier
-                av_key = self.key(e, f"{applevision.ID}:scan")
-                hit = self.cache.get(av_key) if av_key else None
-                if hit:
-                    self.keys[n] = av_key
+                for rescue_id in (applevision.ID, tesseract.ID):
+                    av_key = self.key(e, f"{rescue_id}:scan")
+                    hit = self.cache.get(av_key) if av_key else None
+                    if hit:
+                        self.keys[n] = av_key
+                        break
             if hit:
                 self.results[n] = {"md": hit["md"], "stats": hit.get("stats") or {}, "time_s": 0.0, "cache": "hit",
                                    "confidence": (hit.get("stats") or {}).get("confidence"),
@@ -417,11 +431,50 @@ class _Converter:
                 if not e["blank"] and not has_real_text(r["md"]):
                     self.rescue(n, r)
                 self.results[n] = r
-                tag = f"{self.reader.id}:scan" if r["via"] == "docling" else f"{applevision.ID}:scan"
+                tag = {"docling": self.reader.id, "tesseract": tesseract.ID}.get(r["via"], applevision.ID) + ":scan"
                 key = self.key(e, tag)
                 self.keys[n] = key
                 self.store(n, key, r, tag)
                 self.finish(n)
+
+    def _tesseract_last_resort(self, n: int, r: dict[str, Any]) -> bool:
+        """The document reader (and the repair model) left a runaway on this page: read it with Tesseract.
+        Kept only when the text is not a runaway and is real text; the page then is plain text, no tables."""
+        why = tesseract.why_not()
+        if why:
+            r["note"] = "; ".join(x for x in (r.get("note"), f"Tesseract not used ({why})") if x)
+            return False
+        t0 = time.perf_counter()
+        try:
+            text = tesseract.read_page(self.src, n, is_image=self.is_image)
+        except Exception as exc:  # noqa: BLE001 - a last resort never fails the page
+            r["note"] = "; ".join(x for x in (r.get("note"), f"Tesseract failed ({type(exc).__name__}: {str(exc)[:120]})") if x)
+            return False
+        took = time.perf_counter() - t0
+        if not has_real_text(text) or degenerate.assess(text)["bad"]:
+            r["note"] = "; ".join(x for x in (r.get("note"), "Tesseract found no usable text either") if x)
+            return False
+        r.update(md=text.strip() + "\n", via="tesseract", branch="fallback", time_s=r["time_s"] + took,
+                 reader_info={"tool": "tesseract", "mode": "page"}, repair=None,
+                 stats=dict(r.get("stats") or {}, chars=len("".join(text.split()))),
+                 note="; ".join(x for x in (r.get("note"), "the document reader repeated itself; the page was read "
+                                            "by Tesseract (plain text, no tables)") if x))
+        self.store(n, self.keys.get(n, ""), r, self.tags.get(n, ""))
+        return True
+
+    def _tesseract_rescue(self, n: int, r: dict[str, Any]) -> None:
+        """docling's OCR and Apple Vision found nothing on a scanned page: Tesseract is the last reader."""
+        if tesseract.why_not():
+            return
+        try:
+            text = tesseract.read_page(self.src, n, is_image=self.is_image)
+        except Exception:  # noqa: BLE001 - optional
+            return
+        if has_real_text(text):
+            r.update(md=text.strip() + "\n", via="tesseract", branch="fallback",
+                     reader_info={"tool": "tesseract", "mode": "page"},
+                     stats=dict(r.get("stats") or {}, chars=len("".join(text.split()))),
+                     note="; ".join(x for x in (r.get("note"), "read by Tesseract (plain text, no tables)") if x))
 
     def rescue(self, n: int, r: dict[str, Any]) -> None:
         """docling's OCR returned no text for this scanned page (a photographed page is one big picture to
@@ -429,6 +482,7 @@ class _Converter:
         why = applevision.why_not()
         if why:
             r["note"] = "; ".join(x for x in (r.get("note"), f"no text from docling OCR; Apple Vision not used ({why})") if x)
+            self._tesseract_rescue(n, r)
             return
         t0 = time.perf_counter()
         try:
@@ -439,6 +493,7 @@ class _Converter:
         took = time.perf_counter() - t0
         if not has_real_text(text):
             r["note"] = "; ".join(x for x in (r.get("note"), "Apple Vision found no text either") if x)
+            self._tesseract_rescue(n, r)
             return
         r.update(md=text.strip() + "\n", via="apple-vision", branch="fallback", time_s=r["time_s"] + took,
                  reader_info={"tool": "apple-vision", "mode": "page"},

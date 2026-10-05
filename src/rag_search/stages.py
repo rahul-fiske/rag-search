@@ -83,7 +83,7 @@ INDEXING: tuple[Stage, ...] = (
                     "models.reader", "models.memory_limit_gb", "indexer.docling_batch",
                     "indexer.doc_timeout"),
           env_only=("RAG_SEARCH_THREADS", "RAG_SEARCH_VLM_PAGE_TIMEOUT", "RAG_SEARCH_VLM_FREE_GB",
-                    "RAG_SEARCH_VLM_BACKEND")),
+                    "RAG_SEARCH_VLM_BACKEND", "RAG_SEARCH_TESSERACT", "RAG_SEARCH_TESSERACT_LANG")),
     Stage("3.3", "gate", "Gate", DOCUMENT, CPU,
           "deterministic checks on every page: coverage, script, tables, resolution, running balances and totals, runaway output",
           constants=(("min characters on a scanned page with ink", 20), ("share of a text layer that must survive", 0.5),

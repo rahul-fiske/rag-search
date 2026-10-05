@@ -245,7 +245,12 @@ class SecondReaderTests(VlmBase):
         os.environ["RAG_SEARCH_VLM"] = "off"
         self.assertIsNone(repair.build())
 
-    def test_the_repair_model_is_the_reader_unless_another_is_chosen(self):
+    def test_the_repair_model_is_the_8b_unless_another_is_chosen_and_the_reader_s_own_when_it_is_the_same(self):
+        from rag_search import models
+
+        self.assertEqual(models.vlm_selection(models.REPAIR)[0], "mlx-community/Qwen3-VL-8B-Instruct-4bit")
+        self.assertNotEqual(models.vlm_selection(models.REPAIR)[0], models.vlm_selection(models.READER)[0])
+        os.environ["RAG_SEARCH_REPAIR_MODEL"] = vlm.shared().model
         a = vlm.repair_shared()
         self.assertIs(a, vlm.shared())
         os.environ["RAG_SEARCH_REPAIR_MODEL"] = "someorg/another-vlm"
@@ -408,6 +413,55 @@ class RepairInConverterTests(VlmBase):
         self.assertIn("read again by the repair model", rec["note"])
         self.assertEqual(rec["repair"]["model"], "fake/repair-model")
         self.assertEqual(trace.summarize(res["records"])["models"], ["fake/model", "fake/repair-model"])
+
+    SHIFTED = ("| Date | Description | Cheque No | Debit | Credit | Balance |\n|---|---|---|---|---|---|\n"
+               "| 01-03-2024 | Opening | 10,000.00 | 10,000.00 | 10,000.00 | 10,000.00 |\n"
+               "| 02-03-2024 | Salary | 2,819.00 | 12,819.00 | 12,819.00 | 12,819.00 |\n"
+               "| 03-03-2024 | Rent | 5,000.00 | 7,819.00 | 7,819.00 | 7,819.00 |\n"
+               "| 04-03-2024 | Grocery | 450.00 | 7,369.00 | 7,369.00 | 7,369.00 |\n")
+    LOOP = "\n".join(["The said property shall be conveyed to the purchaser free of all charges."] * 70)
+
+    def escalating(self, reader_text, repair_text):
+        os.environ["RAG_SEARCH_REPAIR_MODEL"] = "fake/repair-model"
+        self.plan(text=reader_text, cell="x", text_by_model={"fake/repair-model": repair_text})
+        reader = self.reader()
+        rep_reader = vlm.VlmReader("fake/repair-model", style="instruct", need_gb=1.0)
+        self.addCleanup(rep_reader.close)
+        return reader, repair.Repairer(rep_reader, repair.second_reader(), reader_model=reader.model)
+
+    def test_a_flagged_page_without_a_suspect_cell_goes_to_the_repair_model(self):
+        reader, rp = self.escalating(self.SHIFTED, GOOD)             # columns mixed up: no cell to repair, the page is read again
+        res, _ = self.convert(repairer=rp, reader=reader)
+        rec = self.page(res)
+        self.assertEqual((rec["outcome"], rec["repair"]["tier"]), ("repaired", "page"))
+        self.assertIn("Salary", self.out.read_text())
+        self.assertIn("read again by the repair model", rec["note"])
+
+    def test_a_runaway_is_replaced_by_a_shorter_clean_reading(self):
+        reader, rp = self.escalating(self.LOOP, GOOD)
+        res, _ = self.convert(repairer=rp, reader=reader)
+        rec = self.page(res)
+        self.assertEqual(rec["repair"]["tier"], "page")
+        self.assertNotIn("shall be conveyed", self.out.read_text())
+        self.assertIn("Salary", self.out.read_text())
+
+    def test_nothing_is_escalated_when_the_repair_model_is_the_reader(self):
+        reader = self.reader()
+        flagged_only = ("| Date | Item | Value 1 | Value 2 | Value 3 |\n|---|---|---|---|---|\n"
+                        + "\n".join(f"| 0{i}-03-2024 | Item {i} | {i}00.00 | {i}00.00 | {i}00.00 |" for i in range(1, 6)))
+        self.plan(text=flagged_only)                                  # flagged (one amount in three columns), no suspect cell
+        rp = repair.Repairer(reader, repair.second_reader(), reader_model=reader.model)    # the same model
+        self.assertFalse(rp.reread)
+        res, _ = self.convert(repairer=rp, reader=reader)
+        self.assertEqual(self.page(res)["outcome"], "low")
+        self.assertNotIn("repair", self.page(res))
+
+    def test_a_clean_page_is_not_sent_to_the_repair_model(self):
+        reader, rp = self.escalating(GOOD, BAD)
+        res, _ = self.convert(repairer=rp, reader=reader)
+        self.assertEqual(self.page(res)["outcome"], "pass")
+        self.assertNotIn("repair", self.page(res))
+        self.assertEqual(self.calls(), 1)                            # the reader's own call only
 
     def test_a_page_read_again_that_is_no_better_is_not_taken(self):
         os.environ["RAG_SEARCH_REPAIR_MODEL"] = "fake/repair-model"

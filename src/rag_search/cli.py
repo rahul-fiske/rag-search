@@ -2090,6 +2090,8 @@ def _cmd_models(a: argparse.Namespace) -> int:
             ids = list(a.models_ids)
             if getattr(a, "reader", False):
                 ids.append(models.vlm_selection(models.READER)[0])
+            if getattr(a, "repair", False) and models.vlm_selection(models.REPAIR)[0] not in ids:
+                ids.append(models.vlm_selection(models.REPAIR)[0])
             if not ids:
                 ids = [models.selection(k)[0] for k in models.KINDS]
             for mid in ids:
@@ -2673,6 +2675,9 @@ def build_parser() -> argparse.ArgumentParser:
     q = madd("download", "download models now (default: the two in use)")
     q.add_argument("models_ids", nargs="*", metavar="MODEL_ID")
     q.add_argument("--reader", action="store_true", help="also download the document reader model (about 3 GB)")
+    q.add_argument("--repair", action="store_true",
+                   help="also download the repair model, which re-reads the pages the reader gets wrong "
+                        "(the default is Qwen3-VL 8B, about 6 GB)")
     for kind, text in (("reader", "choose the document reader (a vision model for scanned pages and images)"),
                        ("repair", "choose the model that re-reads suspect table cells")):
         q = madd(kind, text)

@@ -37,10 +37,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from . import tables, validators
+from . import degenerate, tables, validators
 
 MAX_CELLS = 10                       # cells tried per page
-ALGO_VERSION = "r1"                  # bump when the repair method changes: cached pages are tried again
+ALGO_VERSION = "r2"                  # bump when the repair method changes: cached pages are tried again
 MIN_SIMILARITY = 0.5                 # candidate vs the cell's current text, to choose between words
 VPAD, HPAD = 0.3, 0.6                # crop padding, in word heights
 
@@ -311,18 +311,26 @@ def repair_cells(md: str, violations: list[dict[str, Any]], words: list[Word],
 
 
 def _numbers(md: str) -> int:
-    return sum(1 for t in tables.find_tables(md) for r in t.rows for c in r if tables.is_numeric(c))
+    """How many different numbers the tables hold.  Distinct, not cells: a page whose columns are mixed up
+    repeats one amount in several columns, and a correct re-read must not be turned down for having fewer."""
+    return len({tables.norm_number_text(c) for t in tables.find_tables(md) for r in t.rows for c in r
+                if tables.is_numeric(c)})
+
+
+def _vocabulary(md: str) -> set[str]:
+    return set(re.findall(r"\w{2,}", tables.plain_text(md).lower()))
 
 
 def not_smaller(old: str, new: str) -> bool:
     """Is a page read again at least as complete as the first reading?  A re-read replaces the page
     when it passes the gate, and a page that lost its table passes it trivially: so it must keep the
-    tables, nearly all the numbers and most of the text."""
+    tables, nearly all the different numbers and most of the different words.  Different, not how many:
+    a page whose columns were mixed up repeats its figures, and a correct reading is shorter."""
     if len(tables.find_tables(new)) < len(tables.find_tables(old)):
         return False
     if _numbers(new) < 0.9 * _numbers(old):
         return False
-    return len("".join(tables.plain_text(new).split())) >= 0.8 * len("".join(tables.plain_text(old).split()))
+    return len(_vocabulary(new)) >= 0.8 * len(_vocabulary(old))
 
 
 # ── the repairer used by the converter ────────────────────────────────────────────────────
@@ -375,7 +383,9 @@ class Repairer:
                                "second": getattr(self.second, "id", ""), "tier": "", "note": ""}
         tmp = self.reader._tmp_dir()
         try:
-            if self.second is None:
+            if not violations:
+                pass                                           # a flagged page without a suspect cell: only the page re-read below
+            elif self.second is None:
                 out["note"] = "cells not repaired: " + (second_why_not() or "no second reader")
             else:
                 img = tmp / f"page_{page}.png"
@@ -396,8 +406,11 @@ class Repairer:
                                tier="cells" if res["fixed"] else "")
                 elif not out["note"]:
                     out["note"] = "cells not repaired: the second reader found no text on the page"
+            # tier 2: a page that still fails the gate (a suspect cell nobody could fix, shifted columns, a loop)
+            # goes to the repair model as a whole
             remaining = validators.page_violations(out["md"])
-            if remaining and self.reread and page_ok is not None and self.reader.usable():
+            if (self.reread and page_ok is not None and (remaining or not page_ok(out["md"]))
+                    and self.reader.usable()):
                 try:                                           # tier 2: the repair model reads the whole page
                     img = tmp / f"reread_{page}.png"
                     try:
@@ -405,13 +418,16 @@ class Repairer:
                             vlm.render_image_frame(src, page, img)
                         else:
                             vlm.render_pdf_page(src, page, img)
-                        res2 = self.reader.read_image(img, "page")
+                        res2, loop_note = self.reader.read_page_guarded(img)
                     finally:
                         img.unlink(missing_ok=True)
                     self._tokens += int(res2.get("tokens") or 0)
                     self._gpu += float(res2.get("seconds") or 0.0)
                     md2 = str(res2.get("md") or "")
-                    if md2.strip() and page_ok(md2) and not_smaller(out["md"], md2):
+                    if loop_note:
+                        out["note"] = (out["note"] + "; " if out["note"] else "") + loop_note
+                    runaway = degenerate.assess(out["md"])["bad"]       # a loop is longer than the page: not "smaller"
+                    if md2.strip() and page_ok(md2) and (runaway or not_smaller(out["md"], md2)):
                         out.update(md=md2, tier="page")
                         out["note"] = (out["note"] + "; " if out["note"] else "") + \
                             f"page read again by the repair model {self.reader.model}: it passes"
