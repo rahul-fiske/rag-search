@@ -10,7 +10,8 @@ into ``summary.conversion``).  The log carries four kinds of line, written by wh
   with its outcome: this is what makes a *process* generic, the same worker can be converting now and
   merging later;
 * ``stage`` -- a numbered pipeline stage (2 Fingerprint, 3.1 Profile, ..., 6 Write) reached inside that work;
-* ``page``  -- one converted page.
+* ``page``  -- one converted page (``kind`` is what it is, ``cache`` says whether it was read or reused);
+* ``plan``  -- what kinds of pages a document has, known once it is profiled: the "pages in active files".
 
 A *lane* is a process: ``worker N`` for the conversion pool, ``main process`` for the one that embeds and
 merges.  The view is one snapshot (``now``, ``phases``, ``lanes``, ``live``), so every card of the dashboard
@@ -35,7 +36,8 @@ _MAX_STATES = 8
 def _fresh() -> dict[str, Any]:
     return {"offset": 0, "lanes": {}, "order": 0, "procs": {}, "phases": {}, "main_pid": 0,
             "live": {"pages": 0, "cached": 0, "branches": {}, "outcomes": {}, "open": {},
-                     "first": 0.0, "last": 0.0, "tokens": 0, "gpu_s": 0.0}}
+                     "first": 0.0, "last": 0.0, "tokens": 0, "gpu_s": 0.0,
+                     "first_read": 0.0, "last_read": 0.0}}
 
 
 def _lane(st: dict[str, Any], pid: int, role: str, ts: float) -> dict[str, Any]:
@@ -118,6 +120,11 @@ def _feed(st: dict[str, Any], line: str) -> None:
     if kind == "work":
         _feed_work(st, ev)
         return
+    if kind == "plan" and "pid" in ev:
+        proc = st["procs"].get(int(ev["pid"]))
+        if proc and proc["open"] and proc["open"]["file"] == str(ev.get("file", "")):
+            proc["open"]["plan"] = {str(k): int(v) for k, v in (ev.get("branches") or {}).items()}
+        return
     if kind == "page" and "pid" in ev:
         proc = st["procs"].get(int(ev["pid"]))
         if proc and proc["open"] and proc["open"]["file"] == str(ev.get("file", "")):
@@ -156,11 +163,14 @@ def _feed_page(st: dict[str, Any], ev: dict[str, Any]) -> None:
     live["pages"] += 1
     live["first"] = live["first"] or ts
     live["last"] = max(live["last"], ts)
-    b, o = str(ev.get("branch") or "unknown"), str(ev.get("outcome") or "pass")
+    b, o = str(ev.get("kind") or ev.get("branch") or "unknown"), str(ev.get("outcome") or "pass")
     live["branches"][b] = live["branches"].get(b, 0) + 1
     live["outcomes"][o] = live["outcomes"].get(o, 0) + 1
     if ev.get("cache") == "hit":
         live["cached"] += 1
+    else:                                       # a page that was really read: the rate is made of these only
+        live["first_read"] = live["first_read"] or ts
+        live["last_read"] = max(live["last_read"], ts)
     live["tokens"] += int(ev.get("tokens") or 0)
     live["gpu_s"] += float(ev.get("gpu_s") or 0.0)
     f = str(ev.get("file", ""))
@@ -172,14 +182,39 @@ def _feed_page(st: dict[str, Any], ev: dict[str, Any]) -> None:
     lane["progress"] = {"done": d["done"], "of": d["of"]}
 
 
+def _active(st: dict[str, Any]) -> dict[str, Any]:
+    """The files being converted right now and what kinds of pages they have: ``{"files", "pages", "done",
+    "branches", "unprofiled"}``.  Every format counts (an Office file is a page of kind ``office``); a file whose
+    pages are not profiled yet is counted in ``unprofiled`` and has no pages in the distribution."""
+    branches: dict[str, int] = {}
+    files = done = pages = unprofiled = 0
+    for proc in st["procs"].values():
+        op = proc.get("open")
+        if not op or op.get("phase") != "convert":
+            continue
+        files += 1
+        plan = op.get("plan")
+        if not plan:
+            unprofiled += 1
+            continue
+        for k, v in plan.items():
+            branches[k] = branches.get(k, 0) + v
+        pages += sum(plan.values())
+        done += min(int((op.get("progress") or {}).get("done") or 0), sum(plan.values()))
+    return {"files": files, "pages": pages, "done": done, "branches": branches, "unprofiled": unprofiled}
+
+
 def live_view(st: dict[str, Any], running: bool) -> dict[str, Any]:
-    """Pages read so far in the run, per branch / outcome, and the documents being read now."""
+    """Pages finished so far in the run (by kind and outcome; read now, or reused from the page cache), the
+    pages of the files being converted now, and the documents being read."""
     live = st["live"]
-    span = live["last"] - live["first"]
-    return {"pages": live["pages"], "cached": live["cached"], "branches": dict(live["branches"]),
+    read = live["pages"] - live["cached"]
+    span = live["last_read"] - live["first_read"]
+    return {"pages": live["pages"], "cached": live["cached"], "read": read, "branches": dict(live["branches"]),
             "outcomes": dict(live["outcomes"]),
+            "active": _active(st) if running else {"files": 0, "pages": 0, "done": 0, "branches": {}, "unprofiled": 0},
             "open": {k: dict(v) for k, v in list(live["open"].items())[-8:]} if running else {},
-            "pages_per_min": round(60.0 * live["pages"] / span, 1) if span >= 5 and live["pages"] > 1 else 0.0,
+            "pages_per_min": round(60.0 * read / span, 1) if span >= 5 and read > 1 else 0.0,
             "tokens": live["tokens"], "gpu_s": round(live["gpu_s"], 1),
             "tokens_per_s": round(live["tokens"] / live["gpu_s"], 1) if live["gpu_s"] >= 1 else 0.0}
 

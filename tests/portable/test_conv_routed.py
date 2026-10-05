@@ -402,10 +402,26 @@ class RoutedIndexTests(RoutedBase):
         summary = self.go(force_md=True)
         self.assertEqual(self.reader.calls, calls)
         s = trace.read_trace(self.trace_file("reports/r"))["summary"]
-        self.assertEqual(s["strip"], "k3f1")
+        self.assertEqual(s["strip"], "d2f2")                       # counted by what the pages are, not by how they came
         self.assertEqual(s["cached_pages"], 3)
-        self.assertEqual(summary["conversion"]["branches"]["cached"], 3)
+        self.assertEqual(summary["conversion"]["branches"], {"digital": 2, "fallback": 2})
         self.assertEqual(summary["conversion"]["cached_pages"], 3)
+        recs = trace.read_trace(self.trace_file("reports/r"))["pages"]
+        self.assertEqual([p["branch"] for p in recs], ["cached", "cached", "cached", "fallback"])   # the record keeps how
+
+    def test_events_say_what_kind_of_pages_a_document_has_and_what_each_page_is(self):
+        self.go()
+        first = [json.loads(x) for x in self.log.read_text().splitlines() if '"event": "plan"' in x]
+        self.assertEqual(len(first), 1)
+        self.assertEqual(first[0]["pages"], 4)
+        self.assertEqual(sum(first[0]["branches"].values()), 4)
+        self.assertEqual(first[0]["branches"].get("digital"), 2)
+        self.log.write_text("")
+        self.go(force_md=True)                                     # everything from the page cache
+        pages = self.page_events()
+        self.assertEqual({e["cache"] for e in pages if e["page"] <= 3}, {"hit"})
+        self.assertEqual(sorted(e["kind"] for e in pages if e["cache"] == "hit"), ["digital", "digital", "fallback"])
+        self.assertTrue(all(e["branch"] == "cached" for e in pages if e["cache"] == "hit"))
 
     def test_unchanged_pages_are_not_read_again_when_the_file_changes(self):
         txt = self.sdir / "reports" / "t.pdf"

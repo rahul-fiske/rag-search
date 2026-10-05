@@ -66,6 +66,7 @@ from .conversion import (
     profiler,
     records,
     repair,
+    router,
     routed,
     trace,
     vlm,
@@ -295,6 +296,20 @@ def work_event(path: str | os.PathLike | None, rel: str, phase: str, status: str
         pass
 
 
+def plan_event(path: str | os.PathLike | None, rel: str, branches: dict[str, int]) -> None:
+    """Append what kind of pages this document has (``{"digital": 40, "raster": 2}``), known as soon as its
+    pages are profiled: the dashboard's "pages in active files" is made of these.  Never raises."""
+    if not path or not branches:
+        return
+    try:
+        line = json.dumps({"ts": round(time.time(), 3), "event": "plan", "file": rel, "pid": os.getpid(),
+                           "pages": sum(branches.values()), "branches": branches}, ensure_ascii=False)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except (OSError, ValueError, TypeError):
+        pass
+
+
 def page_event(path: str | os.PathLike | None, rel: str, rec: dict[str, Any], total: int) -> None:
     """Append one finished page to the job's event log (a compact line: the dashboard's live pipeline
     and per-document progress are built from these).  Never raises."""
@@ -303,7 +318,7 @@ def page_event(path: str | os.PathLike | None, rel: str, rec: dict[str, Any], to
     try:
         line = json.dumps({
             "ts": round(time.time(), 3), "event": "page", "file": rel, "pid": os.getpid(),
-            "page": rec.get("page"), "of": total, "branch": rec.get("branch"),
+            "page": rec.get("page"), "of": total, "branch": rec.get("branch"), "kind": trace.page_kind(rec),
             "outcome": rec.get("outcome"), "cache": rec.get("cache", ""),
             "read_s": (rec.get("time_s") or {}).get("read"),
             "chars": (rec.get("out") or {}).get("chars"),
@@ -572,6 +587,15 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
             profile = profiler.profile_file(src)
             prof_s = round(time.perf_counter() - t_prof, 2)
             stage_event(slog, rel_name, "profile", "done", seconds=prof_s, pages=len(profile.get("pages", [])))
+            planned: dict[str, int] = {}
+            for _n, branch, _why in profiler.route_pages(profile) or [(1, router.decide(kind)[0], "")]:
+                planned[branch] = planned.get(branch, 0) + 1
+            plan_event(slog, rel_name, planned)
+        else:                                                    # the stored trace says what the pages are
+            planned = {}
+            for rec in old.get("pages", []):
+                planned[trace.page_kind(rec)] = planned.get(trace.page_kind(rec), 0) + 1
+            plan_event(slog, rel_name, planned)
 
         t_conv = time.perf_counter()
         info: dict[str, Any] = {}
@@ -1228,7 +1252,7 @@ def run_index(
             not_retried += 1 if res.get("known") else 0
             name = Path(res["src"]).name
             if res["status"] != "skipped":
-                conv.add(res.get("conversion"))
+                conv.add(res.get("conversion"), ok=res["status"] == "prepared")
             if res["status"] == "prepared":
                 prepared.append(res)
                 # converted and chunked, waiting for the embed phase: shown in the run's

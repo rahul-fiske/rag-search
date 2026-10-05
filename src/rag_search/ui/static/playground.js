@@ -346,7 +346,7 @@
           isRunning ? h('span', null, `${p.done || 0} / ${p.total || '?'} in this phase (${p.phase === 'embed' ? PL.label('embed') : p.phase === 'convert' ? PL.label('convert') : p.phase === 'merge' ? PL.label('merge') : p.phase || 'starting'})`) : null,
           isRunning && d.run && d.run.now && d.run.now.file ? h('span', null, '· now: ', h('b', { class: 'mono' }, d.run.now.file), d.run.now.since ? ` for ${since(d.run.now.since)}` : '', d.run.now.stage ? ` · stage ${d.run.now.stage}` : '') : null));
       if (isRunning && d.run) {
-        body.push(CV.live(d.run.live) ? h('div', { style: { marginTop: '12px' } }, h('h4', null, 'Pages read right now'), CV.live(d.run.live)) : null,
+        body.push(CV.live(d.run.live) ? h('div', { style: { marginTop: '12px' } }, h('h4', null, 'Pages in active files'), CV.live(d.run.live)) : null,
           CV.lanes(d.run.lanes) ? h('div', { style: { marginTop: '12px' } }, h('h4', null, 'Workers'), CV.lanes(d.run.lanes)) : null);
       }
       if (!isRunning && sum.indexed !== undefined) {
@@ -357,8 +357,8 @@
           ps.convert != null ? statCard(dur(ps.convert), `${PL.label('convert')} time`) : null, ps.embed != null ? statCard(dur(ps.embed), `${PL.label('embed')} time`) : null,
           ps.merge != null ? statCard(dur(ps.merge), `${PL.label('merge')} time`) : null,
           ...(sum.conversion && sum.conversion.pages ? CV.tiles(sum.conversion).slice(0, 2) : [])));
-        if (sum.conversion && sum.conversion.branches && CV.bands(sum.conversion.branches))
-          body.push(h('div', { style: { marginTop: '10px' } }, h('h4', null, 'How the pages were read'), CV.bands(sum.conversion.branches)));
+        if (sum.conversion && (sum.conversion.ok_branches || sum.conversion.branches) && CV.bands(sum.conversion.ok_branches || sum.conversion.branches))
+          body.push(h('div', { style: { marginTop: '10px' } }, h('h4', null, 'Pages in successfully converted files'), CV.bands(sum.conversion.ok_branches || sum.conversion.branches)));
       }
       body.push(h('h4', { style: { margin: '14px 0 6px' } }, 'Documents'), documentRows(docs));
     }

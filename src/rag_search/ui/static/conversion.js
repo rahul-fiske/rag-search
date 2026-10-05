@@ -77,7 +77,7 @@ const CV = (function () {
     const node = (title, sub, kind, state, extra) => h('div', { class: 'cv-node ' + (state || ''), title: extra || '' },
       h('div', { class: 'cv-node-h' }, title, kind ? hw(kind) : null), h('small', null, sub));
     const arrow = h('span', { class: 'cv-arrow', 'aria-hidden': 'true' }, '→');
-    const digital = (br.digital || 0) + (br.office || 0) + (br.cached || 0);
+    const digital = (br.digital || 0) + (br.office || 0) + (br.copy || 0);
     const gateFails = Object.keys(gf).length ? Object.entries(gf).map(([k, v]) => `${k.replace('_', ' ')} ${num(v)}`).join(' · ') : (t.pages ? 'no check failed' : 'is the text trustworthy?');
     return h('div', { class: 'cv-flow' },
       node('3.1 · Profile', t.pages ? `${num(t.pages)} pages looked at` : 'what is on each page', 'cpu', 'on'), arrow,
@@ -91,15 +91,26 @@ const CV = (function () {
   }
 
   /* What the run is doing right now, from the page events: pages read per branch, per open document. */
+  /* Pages in the files being converted now (what kinds of pages they hold, whatever the format), the progress of
+     each, and one line about the run so far: pages finished, how many were read now and how many were reused
+     from the page cache (a reused page keeps its kind: it is not a kind of its own). */
   function live(l) {
-    if (!l || !l.pages) return null;
+    const a = (l && l.active) || {};
+    if (!l || (!l.pages && !a.files)) return null;
     const docs = Object.entries(l.open || {}).map(([file, d]) => h('div', { class: 'cv-live-doc' },
       h('span', { class: 'mono' }, file), h('span', { class: 'bar cv-lane-bar', title: `${d.done} of ${d.of} pages` }, h('i', { style: { width: Math.round(100 * d.done / Math.max(1, d.of)) + '%' } })),
       h('span', { class: 'muted small nowrap' }, `${d.done}/${d.of} pages`)));
+    const read = l.read !== undefined ? l.read : l.pages - (l.cached || 0);
     return h('div', { class: 'cv-live' },
-      h('div', { class: 'small muted' }, `${num(l.pages)} pages read in this run` + (l.pages_per_min ? ` · ${num(l.pages_per_min)} pages per minute` : '') + (l.cached ? ` · ${num(l.cached)} from the page cache` : '')
-        + (l.tokens ? ` · document reader: ${num(l.tokens)} tokens in ${dur(l.gpu_s || 0)}` + (l.tokens_per_s ? ` (${num(l.tokens_per_s)} tokens/s)` : '') : '')),
-      bands(l.branches), docs.length ? h('div', { style: { marginTop: '6px' } }, docs) : null);
+      a.files ? h('div', { class: 'small muted' }, `${num(a.files)} file${a.files === 1 ? '' : 's'} being converted · ${num(a.pages)} pages (${num(a.done)} finished)`
+        + (a.unprofiled ? ` · ${num(a.unprofiled)} not profiled yet` : '')) : null,
+      a.pages ? bands(a.branches) : null,
+      docs.length ? h('div', { style: { marginTop: '6px' } }, docs) : null,
+      l.pages ? h('div', { class: 'small muted', style: { marginTop: '8px' } },
+        `This run so far: ${num(l.pages)} pages finished · ${num(read)} read now`
+        + (l.cached ? ` · ${num(l.cached)} reused from the page cache` : '')
+        + (l.pages_per_min ? ` · ${num(l.pages_per_min)} pages read per minute` : '')
+        + (l.tokens ? ` · document reader: ${num(l.tokens)} tokens in ${dur(l.gpu_s || 0)}` + (l.tokens_per_s ? ` (${num(l.tokens_per_s)} tokens/s)` : '') : '')) : null);
   }
 
   function lanes(list) {
@@ -121,7 +132,7 @@ const CV = (function () {
     const time = t.time_s || {}, tot = Object.values(time).reduce((a, b) => a + b, 0);
     return [
       statCard(num(t.pages), 'pages converted'),
-      t.pages_per_min ? statCard(num(t.pages_per_min), 'pages per minute') : null,
+      t.pages_per_min ? statCard(num(t.pages_per_min), 'pages read per minute (reused pages not counted)') : null,
       statCard(dur(tot), PL.label('convert').toLowerCase() + ' time' + (time.profile ? ` (${PL.label('profile')} ${dur(time.profile)})` : '')),
       t.cost && t.cost.cpu_s ? statCard(dur(t.cost.cpu_s), 'CPU time' + (t.cost.peak_mb ? ` · peak ${bytes(t.cost.peak_mb * 1048576)}` : '')) : null,
       t.cached_pages ? statCard(num(t.cached_pages), 'pages from the page cache (not read again)') : null,

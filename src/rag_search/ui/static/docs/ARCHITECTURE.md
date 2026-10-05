@@ -430,15 +430,25 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   garbage, so every Hindi/Marathi text layer looked broken to the profiler.)
 * **Per-page times and events**: `time_s.read` (the run's seconds split evenly over its pages) and
   `time_s.gate` per page; `step_s` (read, gate) in the document summary and the run totals; one compact
-  `page` event per finished page in the job's event log (`file`, `page`, `of`, `branch`, `outcome`,
+  `page` event per finished page in the job's event log (`file`, `page`, `of`, `branch`, `kind`, `outcome`,
   `cache`, `read_s`, `chars`, failed `gate` checks), written by the pool processes themselves like
-  `stage` events. `runview` aggregates them incrementally into `live` (pages per branch/outcome, cached
-  pages, pages per minute, the documents being read with `done`/`of`) and into per-lane page progress.
+  `stage` events, and one `plan` event per document once its pages are profiled (or known from its stored trace):
+  `{pages, branches}`, what kinds of pages it has, any format (an Office file is one page of kind `office`).
+  A page's **kind** (`trace.page_kind`) is what it is -- `digital`, `raster`, `image`, `office`, ... -- and its
+  `branch` is how this run got it: a page reused from the page cache has the branch `cached` and keeps its kind
+  in `was`. Everything that shows a distribution (summaries, run totals, the live view, the Collections tab)
+  counts by kind; the number of reused pages is a separate figure (`cached_pages`, `cached`). `runview`
+  aggregates the events incrementally into `live`: pages finished by kind and outcome, how many were read now
+  (`read`) and how many reused (`cached`), pages read per minute (reused pages are not a rate), the documents
+  being read with `done`/`of`, and `active`, the pages of the files being converted right now by kind (from their
+  `plan` events; a file not profiled yet is counted in `unprofiled`) -- and into per-lane page progress. The
+  Indexing tab's Convert panel shows two bars: *Pages in active files* (`live.active`) and *Pages in
+  successfully converted files* (`totals.ok_branches`: files that converted, not failed or empty ones).
 * `docling_convert.py` returns `page_stats` per page (characters, script, tables, big pictures and
   docling's own confidence scores and grade, read defensively with `getattr`); `records.build_pages`
   merges them with the profile.
 * **Storage**: the full trace in `markup/<coll>/<doc>.trace.json` (version 1; reused untouched when the
-  document is re-embedded without being re-converted); a *summary* (pages, `branches`, `outcomes`,
+  document is re-embedded without being re-converted); a *summary* (pages, `branches` (by kind), `outcomes`,
   run-length `strip` such as `d566r2d12`, scripts, tables, `low_pages`, `poor_pages`, `time_s`, `step_s`,
   `cached_pages`, `gate_failed`, `cost`,
   `trace` path) in `index.meta.json["conversion"]` -- carried into collection exports

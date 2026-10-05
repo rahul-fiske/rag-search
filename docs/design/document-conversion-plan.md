@@ -605,6 +605,14 @@ through the Mac's own tool environment, see CONTRIBUTING.md "Dev loop"**):
   Tesseract and its Marathi and Hindi data and downloads the reader and repair models; `doctor` and
   `scripts/sanity_check.py` report both.
 
+- 0.9.22: the Convert panel's two bars counted different things and hid what the pages were: a page reused from the
+  page cache was a branch of its own (`cached`), so 83 % of a re-run's pages were one grey block, tile 3.2a "docling" took
+  every cached page for a docling page, and "pages per minute" counted pages nobody read. Now: summaries, totals,
+  the live view and the page events count by *kind* (`was` for a cached page); reuse is a separate figure; the rate
+  counts read pages only; and the two bars are *Pages in active files* (every format, from a `plan` event per file) and
+  *Pages in successfully converted files* (`ok_branches`: failed and empty files left out). Documents already in an
+  index keep their old summaries (with a `cached` slice) until they are converted again.
+
 **First real result** (3-page scanned Marathi/Hindi/English passbook, standard pipeline, Qwen3-VL 4B 4-bit):
 Devanagari headings and the cover page are correct; page 2's table has real rows but one row is missing, one
 merges two rows, and narration pushes numbers one column left; page 3's table is scrambled (shifted and

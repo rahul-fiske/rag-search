@@ -84,11 +84,19 @@ def _page_script(p: dict[str, Any]) -> str:
     return out or prof
 
 
+def page_kind(p: dict[str, Any]) -> str:
+    """What kind of page a page is (``digital``, ``raster``, ``image``, ...).  A page served from the page cache
+    has the branch ``cached`` -- that says how this run got it, not what it is; its kind is the branch it was
+    first read on (``was``).  Counting by kind keeps a cached scan a scan."""
+    b = str(p.get("branch") or "unknown")
+    return str(p.get("was") or b) if b == "cached" else b
+
+
 def summarize(pages: list[dict[str, Any]], *, time_s: dict[str, float] | None = None,
               cost: dict[str, float] | None = None, readers: list[str] | None = None,
               trace: str = "", note: str = "") -> dict[str, Any]:
     """A document's summary from its page records (plan 4.3)."""
-    branches = _count(p.get("branch", "unknown") for p in pages)
+    branches = _count(page_kind(p) for p in pages)
     outcomes = _count(p.get("outcome", "pass") for p in pages)
     scripts = _count(s for s in (_page_script(p) for p in pages) if s and s != "none")
     grades = _count(str((p.get("docling") or {}).get("grade") or "").lower() for p in pages
@@ -110,7 +118,7 @@ def summarize(pages: list[dict[str, Any]], *, time_s: dict[str, float] | None = 
     rep_fixed = sum(int((p.get("repair") or {}).get("fixed") or 0) for p in pages)
     out = {
         "v": TRACE_VERSION, "pages": len(pages), "branches": branches, "outcomes": outcomes,
-        "strip": make_strip(p.get("branch", "unknown") for p in pages),
+        "strip": make_strip(page_kind(p) for p in pages),
         "low_pages": low[:MAX_LISTED_PAGES], "scripts": scripts,
         "tables": sum(int((p.get("out") or {}).get("tables", 0)) for p in pages),
         "big_pictures": sum(int((p.get("out") or {}).get("big_pictures", 0)) for p in pages),
@@ -209,6 +217,9 @@ class RunTotals:
         self.docs = 0
         self.pages = 0
         self.branches: dict[str, int] = {}
+        self.ok_docs = 0                      # documents that converted successfully (not no-text, not failed)
+        self.ok_pages = 0
+        self.ok_branches: dict[str, int] = {}
         self.outcomes: dict[str, int] = {}
         self.scripts: dict[str, int] = {}
         self.grades: dict[str, int] = {}
@@ -228,12 +239,19 @@ class RunTotals:
         self.repaired_cells = 0
         self.merged_tables = 0
 
-    def add(self, summary: dict[str, Any] | None) -> None:
+    def add(self, summary: dict[str, Any] | None, ok: bool = True) -> None:
+        """*ok*: the document converted successfully (a failed or empty one still counts in the totals, but
+        not in ``ok_*``, the figures of the successfully converted files)."""
         if not summary:
             self.no_record += 1
             return
         self.docs += 1
         self.pages += int(summary.get("pages", 0))
+        if ok:
+            self.ok_docs += 1
+            self.ok_pages += int(summary.get("pages", 0))
+            for k, v in (summary.get("branches") or {}).items():
+                self.ok_branches[k] = self.ok_branches.get(k, 0) + int(v)
         for key, dst in (("branches", self.branches), ("outcomes", self.outcomes),
                          ("scripts", self.scripts), ("docling_grades", self.grades)):
             for k, v in (summary.get(key) or {}).items():
@@ -262,7 +280,8 @@ class RunTotals:
         elapsed = max(0.001, time.time() - self.t0)
         return {
             "v": TRACE_VERSION, "files": self.files, "docs": self.docs, "pages": self.pages,
-            "branches": self.branches, "outcomes": self.outcomes, "scripts": self.scripts,
+            "branches": self.branches, "ok_docs": self.ok_docs, "ok_pages": self.ok_pages,
+            "ok_branches": self.ok_branches, "outcomes": self.outcomes, "scripts": self.scripts,
             "docling_grades": self.grades, "big_pictures": self.big_pictures,
             "tables": self.tables, "low_docs": self.low_docs, "no_record": self.no_record,
             "time_s": {k: round(v, 1) for k, v in self.time_s.items()},
@@ -272,7 +291,9 @@ class RunTotals:
             "repair_tried": self.repair_tried, "repaired_cells": self.repaired_cells,
             "merged_tables": self.merged_tables,
             "cost": {"cpu_s": round(self.cpu_s, 1), "peak_mb": round(self.peak_mb)},
-            "pages_per_min": round(60.0 * self.pages / elapsed, 1) if self.pages else 0.0,
+            # pages actually read: a page served from the page cache takes no time and is not a rate
+            "pages_per_min": round(60.0 * (self.pages - self.cached_pages) / elapsed, 1)
+            if self.pages > self.cached_pages else 0.0,
         }
 
 

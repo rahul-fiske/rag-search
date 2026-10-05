@@ -321,10 +321,13 @@
         `${num(ph.done || 0)} of ${num(ph.total)} document(s) through discover → chunk` + (ph.workers ? ` on ${ph.workers} worker process(es)` : '')
         + Object.entries(ph.outcomes || {}).map(([k, n]) => ` · ${k} ${num(n)}`).join('')) : null,
       CV.flow(totals),
-      CV.live(live.live) ? h('div', { style: { marginTop: '14px' } }, h('h4', null, 'Pages read right now'), CV.live(live.live)) : null,
+      CV.live(live.live) ? h('div', { style: { marginTop: '14px' } }, h('h4', null, 'Pages in active files'), CV.live(live.live)) : null,
       totals.pages ? h('div', { style: { marginTop: '14px' } },
-        h('h4', null, 'How the finished documents’ pages were read'), CV.bands(totals.branches),
-        h('p', { class: 'small muted', style: { margin: '6px 0 0' } }, 'Text-layer pages are read by docling without forced OCR, scanned pages with full-page OCR, repeats come from the page cache; every page then passes the quality gate.')) : null,
+        h('h4', null, 'Pages in successfully converted files'), CV.bands(totals.ok_branches || totals.branches),
+        h('p', { class: 'small muted', style: { margin: '6px 0 0' } },
+          (totals.ok_docs !== undefined ? `${num(totals.ok_docs)} file${totals.ok_docs === 1 ? '' : 's'}, ${num(totals.ok_pages)} pages` : 'The files converted so far')
+          + (totals.cached_pages ? `; ${num(totals.cached_pages)} pages reused from the page cache` : '')
+          + '. Pages are counted by what they are, however this run got them: a reused page keeps its kind. Files that failed or held no text are not in this bar. Every page then passes the quality gate.')) : null,
       totals.pages ? h('div', { class: 'grid g4', style: { marginTop: '14px' } }, CV.tiles(totals)) : (running && p.phase === 'convert' ? h('p', { class: 'small muted', style: { marginTop: '12px' } }, 'Page figures appear as the first documents finish.') : null),
       totals.outcomes && Object.keys(totals.outcomes).length ? h('div', { style: { marginTop: '8px' } }, CV.outcomeChips(totals.outcomes)) : null];
   }
