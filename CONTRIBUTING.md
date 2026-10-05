@@ -8,24 +8,44 @@ uv run python -m unittest discover -s tests/portable -t .      # or: uv run pyte
 uv run ruff check src tests
 ```
 
-## Tests: two folders, chosen by where you run them
+On a Linux machine that is not the Mac (a cloud session, Cowork, CI), `scripts/cloud_setup.sh` does the same
+with CPU-only torch and installs tesseract; see "Working away from the Mac" in `CLAUDE.md`.
 
-| Folder | What it needs | Run it |
-|---|---|---|
-| `tests/portable/` | anywhere (a cloud session, CI, the Mac): fakes stand in for docling, the models and Apple Vision | `python -m unittest discover -s tests/portable -t .` |
-| `tests/machine/` | an Apple Silicon Mac, rag-search's own `uv tool` environment, the models downloaded; skipped elsewhere | `python -m unittest discover -s tests/machine -t .` |
-| both | the Mac | `python -m unittest discover -s tests -t .` |
+## Tests: three tiers, chosen by what they need
 
-`tests/helpers.py` is shared. A portable test must give the same result on every machine: when it is about
-the path taken *without* the document reader, it calls `helpers.no_real_reader(self)` instead of relying on
-the reader being absent. `TempHome.tearDown` stops any daemon the test left running in its temporary data
-folder. The machine tests are the checks of `scripts/sanity_check.py` as unit tests (generated documents,
-nothing downloaded).
+The plan and its reasons are in `docs/design/test-strategy.md`.
 
-The portable tests need only `numpy` (plus `mcp` for the MCP stdio test, which skips itself if it is
-missing): they use a deterministic fake embedder/reranker and start **real daemon and worker
-processes** with it, so the whole stack is exercised in about a minute without downloading models.
-`uv run rag-search doctor --roundtrip` is the real-model smoke test.
+| Tier | Folder | What it needs | Run it |
+|---|---|---|---|
+| A portable | `tests/portable/` | Python, numpy, pypdfium2, Pillow, mcp: no model, no docling, no torch, no network. Runs anywhere | `python -m unittest discover -s tests/portable -t .` |
+| B real | `tests/real/` | A + docling, torch, sentence-transformers, an OCR engine (tesseract, or Apple Vision on the Mac) and two small models downloaded on first use. Runs on the Mac and on any machine that has them | `python -m unittest discover -s tests/real -t .` |
+| C machine | `tests/machine/` | an Apple Silicon Mac, rag-search's own `uv tool` environment, the default models; skipped elsewhere | `python -m unittest discover -s tests/machine -t .` |
+| all | the Mac | | `python -m unittest discover -s tests -t .` |
+
+**A** is where the framework's logic is tested, and where coverage comes from (92 % of the statements: `coverage run -m unittest discover -s tests/portable -t .`,
+then `coverage combine && coverage report -m`; the configuration in `pyproject.toml` counts the daemons and
+workers the tests start as well). It uses a deterministic fake
+embedder and reranker and **real daemon and worker processes**, so sockets, files, the CLI and the dashboard are
+exercised for real. It is hermetic (`tests/guard.py`): importing `docling`, `torch`, `sentence_transformers`,
+`transformers` or `huggingface_hub` fails and Hugging Face is offline, so a portable test gives the same result
+on every machine; when it is about the path taken *without* the document reader it calls
+`helpers.no_real_reader(self)` instead of relying on the reader being absent. Where the code's glue around a real
+library needs testing (device choice, batching, page numbering of a docling result), the library is a small fake
+put in `sys.modules`.
+
+**B** runs the whole corpus once through the real pipeline (docling with OCR, a real small embedder and reranker,
+real daemons) and checks every file against `tests/data/corpus.json`, then search, grep, export/import, the MCP
+tools and the CLI views on that index. It tests the seams, not the framework again, and it is the only check that
+the real docling, OCR and embedding behave as the fakes assume. It skips itself, with the reason, when a tool is
+missing.
+
+**C** is only what needs Apple's hardware and the default models: MLX, Apple Vision, the document reader, the
+routed pipeline that uses them, `models verify`. They are the checks of `scripts/sanity_check.py` as unit tests
+(generated documents, nothing downloaded).
+
+`tests/helpers.py` is shared; `TempHome.tearDown` stops any daemon a test left running in its temporary data
+folder. `tests/corpus.py` and `tests/data/` are the corpus (README there): one small synthetic file per kind of
+input, and what each must produce. `uv run rag-search doctor --roundtrip` is the quick real-model smoke test.
 
 ## Dev loop: test in rag-search's own environment
 

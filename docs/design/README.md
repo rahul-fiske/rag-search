@@ -14,6 +14,7 @@ The architecture and design record of rag-search lives in this repository, next 
 | [`containerisation-analysis.md`](containerisation-analysis.md) | Single-machine assumptions, input for running rag-search in a container. |
 | [`containerisation-plan.md`](containerisation-plan.md) | The agreed containerisation baseline (phase 1); not implemented yet. |
 | [`document-conversion-analysis.md`](document-conversion-analysis.md) | Critical evaluation of page-level routing / quality gate / VLM fallback for scanned PDFs, tables and images; options A–D and a phased plan (C0–C3). Proposal, not implemented. |
+| [`test-strategy.md`](test-strategy.md) | The three test tiers (portable / real / machine): what each needs, runs on and proves, the rules that keep them separate (A is hermetic), the corpus, measured coverage and cost, what the new tests found. Read it before adding or moving a test. |
 | [`document-conversion-plan.md`](document-conversion-plan.md) | Implementation plan for the new conversion pipeline: modules, per-page tracking (branch, time, cost), dashboard views (mockup), Architecture-tab flow chart with tools, phases P0–P5. P0 (tracking) done in 0.8.3; P1 (measurement harness), P2 (routing, page cache, gate) and P3 (document VLM reader) and P4 (cell repair, tables across pages, low-confidence flag) built; P5 in progress; see its "Status after 0.9.1-0.9.9" for what real documents showed and the open items. |
 
 These notes are internal: they are not packaged and are left out of the external release build.
