@@ -210,8 +210,9 @@ def _tokens(text: str) -> tuple[Counter, Counter]:
     thousands separators."""
     import re
 
-    t = unicodedata.normalize("NFKC", text or "").replace("\u00ad", "").replace("\\", "")
-    t = re.sub(r"(\w)-[ \t]*\n[ \t]*(\w)", r"\1\2", t).lower()
+    t = unicodedata.normalize("NFKC", text or "").replace("\r\n", "\n").replace("\r", "\n")
+    t = re.sub(r"(\w)[-\u00ad\u2010\u2011][ \t]*\n[ \t]*(\w)", r"\1\2", t)   # a word broken at a line end
+    t = t.replace("\u00ad", "").replace("\\", "").lower()
     nums = Counter(re.sub(r"[,\s]", "", m) for m in re.findall(r"\d[\d,]*(?:\.\d+)?", t))
     words = Counter(w for w in re.findall(r"[^\W\d_]{2,}", t))
     return words, nums
@@ -235,17 +236,50 @@ def _verdict(w: float | None, n: float | None, layer_words: int, layer_ok: bool,
     return "uncertain"
 
 
-def _layer_text(pdf: Any, i: int) -> str:
+BAND = 0.07                                        # top and bottom share of a page where running headers / footers sit
+
+
+def _layer_parts(pdf: Any, i: int) -> tuple[str, str, str]:
+    """(top band, whole text, bottom band) of a page's text layer; ("", "", "") when the page cannot be read."""
     try:
         page = pdf[i]
         tp = page.get_textpage()
         try:
-            return tp.get_text_range() or ""
+            w, h = page.get_size()
+            top = tp.get_text_bounded(0, h * (1 - BAND), w, h) or ""
+            body = tp.get_text_range() or ""
+            bottom = tp.get_text_bounded(0, 0, w, h * BAND) or ""
+            return top, body, bottom
         finally:
             tp.close()
             page.close()
     except Exception:  # noqa: BLE001 - a page that cannot be read has no layer here
-        return ""
+        return "", "", ""
+
+
+def _band_key(text: str) -> str:
+    import re
+
+    return re.sub(r"\s+", " ", re.sub(r"\d+", "#", text.lower())).strip()
+
+
+def _without_bands(top: str, body: str, bottom: str, bands: set[str]) -> str:
+    """The page's text without its running header (first occurrence of the top band's text) and footer (last
+    occurrence of the bottom band's text), when those repeat across the document."""
+    out = body
+    if top.strip() and _band_key(top) in bands:
+        out = out.replace(top.strip(), " ", 1)
+    if bottom.strip() and _band_key(bottom) in bands:
+        k = out.rfind(bottom.strip())
+        if k >= 0:
+            out = out[:k] + " " + out[k + len(bottom.strip()):]
+    return out
+
+
+def _repeated_bands(parts: list[tuple[str, str, str]]) -> set[str]:
+    """Top / bottom band texts (digits ignored) that occur on at least 3 pages: running headers and footers."""
+    seen = Counter(k for top, _b, bottom in parts for k in {_band_key(top), _band_key(bottom)} if k)
+    return {k for k, n in seen.items() if n >= 3}
 
 
 def _page_number_line(line: str) -> bool:
@@ -256,7 +290,7 @@ def _page_number_line(line: str) -> bool:
 
 def _boilerplate(layers: list[str]) -> set[str]:
     """Running headers and footers of a document: lines among the first and last two of a page (of six lines or more) that repeat (digits
-    ignored) on at least 3 pages and 30 % of them.  docling leaves page headers and footers out of its Markdown on
+    ignored) on at least 3 pages (a chapter's running header repeats within its chapter).  docling leaves page headers and footers out of its Markdown on
     purpose, so they must not count as lost text."""
     import re
 
@@ -267,8 +301,7 @@ def _boilerplate(layers: list[str]) -> set[str]:
         lines = [x.strip() for x in text.splitlines() if x.strip()]
         if len(lines) >= 6:                          # a short page (a form) has no room for a running header and a body
             seen.update({re.sub(r"\d+", "#", x.lower()) for x in lines[:2] + lines[-2:]})
-    need = max(3, int(0.3 * len(layers)))
-    return {k for k, n in seen.items() if n >= need}
+    return {k for k, n in seen.items() if n >= 3}
 
 
 def _clean_layer(text: str, boiler: set[str]) -> tuple[str, int]:
@@ -320,15 +353,19 @@ def check_sources(paths: Any, only: str, which: str) -> dict[str, Any]:
                      for p in want]
             continue
         try:
-            layers = [_layer_text(pdf, i) for i in range(len(pdf))]
+            parts = [_layer_parts(pdf, i) for i in range(len(pdf))]
         finally:
             pdf.close()
+        bands = _repeated_bands(parts)
+        full = [body for _t, body, _b in parts]
+        layers = [_without_bands(top, body, bottom, bands) for top, body, bottom in parts]
         boiler = _boilerplate(layers)
         for p in want:
             n = int(p.get("page") or 0)
             failed = [str(c.get("name")) for c in _failed(p)]
-            raw = layers[n - 1] if 0 < n <= len(layers) else ""
-            layer, dropped = _clean_layer(raw, boiler)
+            raw = full[n - 1] if 0 < n <= len(full) else ""
+            layer, dropped = _clean_layer(layers[n - 1] if 0 < n <= len(layers) else "", boiler)
+            dropped += sum(1 for b in (parts[n - 1][0], parts[n - 1][2]) if b and _band_key(b) in bands) if 0 < n <= len(parts) else 0
             rw, rn = _tokens(raw)
             lw, ln = _tokens(layer)
             ow, on = _tokens(tables.plain_text(pages_md.get(n, "")))

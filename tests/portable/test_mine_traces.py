@@ -173,8 +173,8 @@ class SourceCheckTests(TempHome):
 
     def test_tokens_compare_a_layer_with_markdown(self):
         m = load()
-        words, nums = m._tokens("The ﬁnal exam-\nple costs 1,234.50 in snake\\_case")
-        self.assertEqual(set(words), {"the", "final", "example", "costs", "in", "snake", "case"})
+        words, nums = m._tokens("The ﬁnal exam-\r\nple costs 1,234.50 in snake\\_case, inter\u00ad\r\npreted")
+        self.assertEqual(set(words), {"the", "final", "example", "costs", "in", "snake", "case", "interpreted"})
         self.assertEqual(set(nums), {"1234.50"})
         self.assertEqual(m._verdict(0.99, 1.0, 50, True, ["coverage"]), "intact")
         self.assertEqual(m._verdict(0.99, 0.5, 50, True, []), "lost text")
@@ -193,4 +193,10 @@ class SourceCheckTests(TempHome):
         self.assertEqual(len(clean.strip().splitlines()), 5)                 # the body stays
         self.assertEqual(m._boilerplate(layers[:3]), set())                 # too few pages to tell
         self.assertTrue(m._page_number_line(" 12 ") and m._page_number_line("Page 3 of 10"))
+        parts = [("Acme Confidential", f"body {i}", f"Revision 4.86 June 16, 2024 page {i}") for i in range(1, 5)]
+        self.assertEqual(m._repeated_bands(parts), {"acme confidential", "revision #.# june #, # page #"})
+        self.assertEqual(m._repeated_bands(parts[:2]), set())
+        page = "Acme Confidential\nThe port logs in.\nRevision 4.86 June 16, 2024 page 3"
+        out = m._without_bands("Acme Confidential", page, "Revision 4.86 June 16, 2024 page 3", m._repeated_bands(parts))
+        self.assertEqual(out.split(), "The port logs in.".split())
         self.assertFalse(m._page_number_line("Table 12"))

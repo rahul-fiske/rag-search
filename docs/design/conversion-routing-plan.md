@@ -76,6 +76,34 @@ What it says for this plan:
   coverage alone (361). Nothing acts on them. The owner's samples have to decide between real loss and noise.
 - **Scans: 262 low and 81 repaired out of 1,496.** Images: 146 low, mostly from the dpi false alarm above.
 
+### R0b findings (text layer against the Markdown, all 16,842 digital and embedded pages)
+
+Running headers, footers and page numbers are left out of the comparison (docling drops them on purpose). Second run:
+
+| outcome | intact | intact, table shape only | uncertain | lost text |
+|---|---|---|---|---|
+| low (1,084) | 165 | 313 | 111 | 495 |
+| pass (15,546) | 8,779 | 0 | 2,597 | 4,170 |
+
+- **`coverage` is right:** 333 of its 369 pages lost text, and none are intact.
+- **`table_shape` alone is mostly a false alarm for search:** 313 of its pages hold all the text. The same goes for
+  `totals` (72 of 78 intact), `running_balance` (16 of 17) and much of `docling_grade` (65 of 105) on digital pages.
+- **The gate passes pages that lost text.** The missing words of the second run were still partly running headers that
+  sit outside the first and last lines (`confidential`, `preliminary`, `revision`, chapter titles); a third version
+  removes the repeated top and bottom 7 % bands of the page. The rest is real:
+  - table cells (a Form 16 page lost its amounts; a 26AS page lost its TDS table);
+  - sidebars and call-outs;
+  - footnotes and table notes;
+  - labels inside vector diagrams.
+- **Consequence for gate v2 (digital pages):**
+  - The coverage check becomes the text-layer comparison itself: word and number recall of the layer in the
+    output, with running headers and footers left out. This replaces the share of characters, whose 50 % threshold
+    let a page lose up to half its text.
+  - `totals`, `running_balance`, `docling_grade` and `table_shape` alone no longer make a digital page low when its
+    text is intact; they stay as notes.
+  - A digital page with lost text is completed from its own text layer: the lines docling left out are appended under
+    a marker, which is deterministic and takes milliseconds. No VLM and no repair.
+
 ## 2. Philosophy
 
 **When sure, read with docling (with or without OCR). When in doubt, read with the VLM.** Refined:
