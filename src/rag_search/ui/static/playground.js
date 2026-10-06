@@ -542,7 +542,7 @@
         h('div', { class: 'card-head' }, h('h4', null, 'Settings of this experiment, by pipeline stage'), h('span', { class: 'muted small' }, 'pinned to this experiment only; a blank field means the built-in default'),
           h('button', { class: 'btn small', style: { marginLeft: 'auto' }, on: { click: saveConfig } }, 'Save settings')),
         stageSection('3.2', 'Read',
-          h('div', { class: 'row', style: { gap: '16px', flexWrap: 'wrap', marginBottom: '8px' } }, h('label', { class: 'field' }, 'Document reader model (3.2b, 3.2c)', refs.cReader)),
+          h('div', { class: 'row', style: { gap: '16px', flexWrap: 'wrap', marginBottom: '8px' } }, h('label', { class: 'field' }, 'Document reader model (3.2c, 3.2d)', refs.cReader)),
           formOf('3.2')),
         stageSection('3.4', 'Repair',
           h('div', { class: 'row', style: { gap: '16px', flexWrap: 'wrap', marginBottom: '8px' } }, h('label', { class: 'field' }, 'Repair model', refs.cRepair)),

@@ -35,7 +35,8 @@ _MAX_STATES = 8
 
 def _fresh() -> dict[str, Any]:
     return {"offset": 0, "lanes": {}, "order": 0, "procs": {}, "phases": {}, "main_pid": 0,
-            "live": {"pages": 0, "cached": 0, "branches": {}, "outcomes": {}, "open": {},
+            "live": {"pages": 0, "cached": 0, "branches": {}, "outcomes": {}, "open": {}, "runways": {}, "moves": {},
+                     "runway_outcomes": {}, "engines": {},
                      "first": 0.0, "last": 0.0, "tokens": 0, "gpu_s": 0.0,
                      "first_read": 0.0, "last_read": 0.0}}
 
@@ -166,6 +167,17 @@ def _feed_page(st: dict[str, Any], ev: dict[str, Any]) -> None:
     b, o = str(ev.get("kind") or ev.get("branch") or "unknown"), str(ev.get("outcome") or "pass")
     live["branches"][b] = live["branches"].get(b, 0) + 1
     live["outcomes"][o] = live["outcomes"].get(o, 0) + 1
+    rw = ev.get("runway")
+    if rw:                                      # the lane whose text the page ended with, and how that went
+        rw = str(rw)
+        live["runways"][rw] = live["runways"].get(rw, 0) + 1
+        by = live["runway_outcomes"].setdefault(rw, {})
+        by[o] = by.get(o, 0) + 1
+        if ev.get("moved"):
+            mv = f"{ev['moved']}>{rw}"
+            live["moves"][mv] = live["moves"].get(mv, 0) + 1
+        if ev.get("engine"):
+            live["engines"][str(ev["engine"])] = live["engines"].get(str(ev["engine"]), 0) + 1
     if ev.get("cache") == "hit":
         live["cached"] += 1
     else:                                       # a page that was really read: the rate is made of these only
@@ -211,7 +223,8 @@ def live_view(st: dict[str, Any], running: bool) -> dict[str, Any]:
     read = live["pages"] - live["cached"]
     span = live["last_read"] - live["first_read"]
     return {"pages": live["pages"], "cached": live["cached"], "read": read, "branches": dict(live["branches"]),
-            "outcomes": dict(live["outcomes"]),
+            "outcomes": dict(live["outcomes"]), "runways": dict(live["runways"]), "moves": dict(live["moves"]),
+            "runway_outcomes": {k: dict(v) for k, v in live["runway_outcomes"].items()}, "engines": dict(live["engines"]),
             "active": _active(st) if running else {"files": 0, "pages": 0, "done": 0, "branches": {}, "unprofiled": 0},
             "open": {k: dict(v) for k, v in list(live["open"].items())[-8:]} if running else {},
             "pages_per_min": round(60.0 * read / span, 1) if span >= 5 and read > 1 else 0.0,

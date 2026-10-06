@@ -45,11 +45,12 @@ def decide(kind: str, page: dict[str, Any] | None = None) -> tuple[str, str]:
 # "clean print" -- sure enough for docling's conventional OCR (runway 3.2b) -- and everything else, which is in doubt
 # and goes to the document reader (3.2d).  Wrong guesses cost one cheap OCR pass: the gate sends a failed 3.2b page on.
 THRESHOLDS = {
-    "version": 1,
+    "version": 2,
     "min_dpi": 150,                  # effective resolution of the page's image
     "min_contrast": 0.60,            # (p98 - p2) of the paper-normalised grey levels
     "min_sharp": 1.0,                # strong strokes per unit of ink: a blurred page has almost none
     "max_skew": 2.0,                 # degrees; docling's OCR does not straighten a page
+    "max_deskew": 8.0,               # a page skewed up to this is straightened and read by Tesseract (needs it installed)
     "max_speckle": 0.003,            # isolated dark pixels per ink pixel
     "max_bg_std": 20.0,              # texture of the paper: a photograph is not flat
     "min_text_lines": 8,             # regular short lines of ink: prose, not a drawing
@@ -79,7 +80,7 @@ def decide_scan(facts: dict[str, Any] | None, profile: dict[str, Any] | None = N
     checks = (
         (facts["contrast"] < t["min_contrast"], f"low contrast ({facts['contrast']})"),
         (facts["sharp"] < t["min_sharp"], f"soft strokes ({facts['sharp']})"),
-        (abs(facts["skew"]) > t["max_skew"], f"skewed {facts['skew']} degrees"),
+        (abs(facts["skew"]) > (t["max_deskew"] if caps.get("deskew") else t["max_skew"]), f"skewed {facts['skew']} degrees"),
         (facts["speckle"] > t["max_speckle"], f"speckled ({facts['speckle']})"),
         (facts["bg_std"] > t["max_bg_std"], f"textured paper ({facts['bg_std']})"),
         (facts["text_lines"] < t["min_text_lines"], f"only {facts['text_lines']} text lines"),
@@ -92,3 +93,33 @@ def decide_scan(facts: dict[str, Any] | None, profile: dict[str, Any] | None = N
         return "d", why
     return "b", [f"clean print: {round(dpi)} dpi, contrast {facts['contrast']}, {facts['text_lines']} text lines, "
                  f"skew {facts['skew']}"]
+
+
+def b_engine(facts: dict[str, Any] | None, capabilities: dict[str, Any] | None = None) -> str:
+    """The engine that reads a page of lane b: ``docling`` (its own OCR, for a page that is straight and is a PDF page) or
+    ``tesseract`` (a page that is skewed and has to be straightened first, and every image file: docling reads PDF pages
+    by number)."""
+    caps = capabilities or {}
+    skew = abs((facts or {}).get("skew") or 0.0)
+    if caps.get("deskew") and (skew > THRESHOLDS["max_skew"] or not caps.get("docling_pages", True)):
+        return "tesseract"
+    return "docling"
+
+
+def decide_digital(page: dict[str, Any] | None, regions: list[list[float]] | None = None,
+                   capabilities: dict[str, Any] | None = None) -> tuple[str, list[str]]:
+    """(lane, reasons) for a page that has a text layer: ``a`` (docling reads the layer) or ``c`` (docling reads the layer
+    and the document reader reads the pictures and the regions the layer does not explain).  *regions* are the residue
+    boxes; the profile's big pictures count too.  Without a document reader a page is ``a``."""
+    pics = list((page or {}).get("big_pics") or [])
+    extra = list(regions or [])
+    if not (capabilities or {}).get("vlm", True):
+        return "a", ["text layer" + (" (no document reader for its pictures)" if pics or extra else "")]
+    if not pics and not extra:
+        return "a", ["text layer, nothing that the layer does not explain"]
+    why = []
+    if pics:
+        why.append(f"{len(pics)} large picture(s)")
+    if extra:
+        why.append(f"{len(extra)} region(s) of ink outside the text layer")
+    return "c", why

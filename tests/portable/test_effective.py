@@ -209,7 +209,9 @@ class BehaviourTests(TempHome):
         from rag_search.core.indexer_daemon import IndexerDaemon
 
         os.environ["RAG_SEARCH_OCR"] = "off"
-        self.assertEqual(IndexerDaemon(self.paths).ping_info()["env_overrides"], {"RAG_SEARCH_OCR": "off"})
+        with mock.patch.dict(os.environ):
+            os.environ.pop("RAG_SEARCH_LAYER_FILL", None)          # the test helpers switch the text-layer fill off for every test
+            self.assertEqual(IndexerDaemon(self.paths).ping_info()["env_overrides"], {"RAG_SEARCH_OCR": "off"})
 
 
 if __name__ == "__main__":

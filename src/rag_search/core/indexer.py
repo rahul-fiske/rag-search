@@ -325,6 +325,9 @@ def page_event(path: str | os.PathLike | None, rel: str, rec: dict[str, Any], to
             "tokens": rec.get("tokens"), "gpu_s": rec.get("gpu_s"),
             "model": (rec.get("reader") or {}).get("model") if (rec.get("reader") or {}).get("tool") == "vlm" else None,
             "gate": [c.get("name") for c in (rec.get("gate") or {}).get("checks", [])] or None,
+            "runway": (rec.get("route") or {}).get("final"),
+            "moved": ((rec.get("route") or {}).get("escalated_from") or {}).get("runway"),
+            "engine": (rec.get("route") or {}).get("engine"),
         }, ensure_ascii=False)
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(line + "\n")

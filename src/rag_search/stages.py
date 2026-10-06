@@ -11,7 +11,7 @@ Indexing (one run)::
     2  Fingerprint     unchanged since last time? skip            (document)
     3  Convert         file -> page-marked Markdown               (document)
          3.1 Profile     what is on each page                      CPU
-         3.2 Read        the reader each page needs                (a: docling  b: document reader  c: pictures)
+         3.2 Read        the reader each page needs                (lanes a: text layer  b: OCR  c: text layer + pictures  d: document reader)
          3.3 Gate        does the result look right
          3.4 Repair      re-read suspect table cells               GPU
          3.5 Reconcile   tables that run on across pages
@@ -60,7 +60,7 @@ class Stage:
         return f"{self.id} · {self.name}"
 
 
-# 3.2 has three variants; they are one stage with one set of settings (which reader runs is a decision of
+# 3.2 has four lanes; they are one stage with one set of settings (which lane reads a page is a decision of
 # the router, per page), listed separately so the diagram and the trace can name them.
 INDEXING: tuple[Stage, ...] = (
     Stage("1", "discover", "Discover", RUN, CPU,
@@ -76,16 +76,21 @@ INDEXING: tuple[Stage, ...] = (
     Stage("3.1", "profile", "Profile", DOCUMENT, CPU,
           "look at every page once: text layer, scan or photo, pictures, ink, resolution, script"),
     Stage("3.2", "read", "Read", DOCUMENT, BOTH,
-          "each page goes to the reader it needs: 3.2a docling for text pages and Office files, 3.2b the document "
-          "reader (a vision model) for scans and images, 3.2c the same reader for large pictures on text pages",
+          "each page goes down the lane it needs: 3.2a docling on the text layer (and Office files), 3.2b OCR for a "
+          "clean scan (docling's OCR, or Tesseract for a skewed page and image files), 3.2c docling on the text layer "
+          "plus the document reader on its pictures and regions, 3.2d the document reader (a vision model) for every "
+          "other scan, photo and image; a page a cheaper lane doubts goes on to 3.2d",
           settings=("indexer.routing", "indexer.ocr", "indexer.ocr_engine", "indexer.ocr_lang",
                     "indexer.table_mode", "indexer.pdf_backend", "indexer.pipeline", "indexer.vlm",
                     "models.reader", "models.memory_limit_gb", "indexer.docling_batch",
                     "indexer.doc_timeout"),
           env_only=("RAG_SEARCH_THREADS", "RAG_SEARCH_VLM_PAGE_TIMEOUT", "RAG_SEARCH_VLM_FREE_GB",
-                    "RAG_SEARCH_VLM_BACKEND", "RAG_SEARCH_TESSERACT", "RAG_SEARCH_TESSERACT_LANG")),
+                    "RAG_SEARCH_VLM_BACKEND", "RAG_SEARCH_TESSERACT", "RAG_SEARCH_TESSERACT_LANG",
+                    "RAG_SEARCH_OCR_FIRST", "RAG_SEARCH_RESIDUE", "RAG_SEARCH_ESCALATE_DIGITAL", "RAG_SEARCH_LAYER_FILL")),
     Stage("3.3", "gate", "Gate", DOCUMENT, CPU,
-          "deterministic checks on every page: coverage, script, tables, resolution, running balances and totals, runaway output",
+          "deterministic checks on every page: coverage, script, tables, resolution, running balances and totals, runaway output; "
+          "for a page read by OCR also the amount and plausibility of the text; for a page whose pictures the reader was to read, "
+          "that it read them all",
           constants=(("min characters on a scanned page with ink", 20), ("share of a text layer that must survive", 0.5),
                      ("single-letter word share that marks OCR noise", 0.4), ("minimum resolution (dpi)", 150))),
     Stage("3.4", "repair", "Repair", DOCUMENT, GPU,

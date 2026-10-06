@@ -70,24 +70,103 @@ const CV = (function () {
     return bits.join(' · ');
   }
 
-  /* The flow chart as a row of nodes; nodes of later phases are dashed until they exist. */
-  function flow(t) {
-    t = t || {};
-    const out = t.outcomes || {}, br = t.branches || {}, gf = t.gate_failed || {};
+  /* The four lanes of step 3.2.  A page goes down exactly one lane; a page a cheaper lane doubts is handed on to lane d. */
+  const RUNWAYS = {
+    a: { name: 'Text layer', tool: 'docling reads the text layer and the tables', hw: ['cpu'],
+      tip: 'Lane 3.2a: a page with a text layer is read by docling without forced OCR. Its text is then compared with the PDF\'s own text layer, and what docling left out is added.' },
+    b: { name: 'OCR', tool: 'docling OCR · Tesseract (skewed pages, image files)', hw: ['cpu'], env: 'RAG_SEARCH_OCR_FIRST',
+      tip: 'Lane 3.2b: a clean scan is read by an OCR engine (docling\'s, or Tesseract for a skewed page and for image files) and checked by the gate. A page the gate doubts goes on to lane d.' },
+    c: { name: 'Text layer + pictures', tool: 'docling + document reader on pictures', hw: ['cpu', 'gpu'], env: 'RAG_SEARCH_RESIDUE',
+      tip: 'Lane 3.2c: docling reads the text layer and the document reader reads the large pictures (and, with RAG_SEARCH_RESIDUE=auto, the regions of ink the text layer does not explain). What it finds that the page does not already say is added.' },
+    d: { name: 'Document reader', tool: 'vision model · repair · Tesseract as last resort', hw: ['gpu'],
+      tip: 'Lane 3.2d: a vision-language model reads the whole page image. Suspect table cells are re-read by the repair model; Tesseract is the last resort when a reader runs away.' },
+  };
+  const RW_ORDER = ['a', 'b', 'c', 'd'];
+  const OUTCOME_CLS = { pass: 'ok', repaired: 'fix', low: 'bad', no_text: 'warn', error: 'bad' };
+
+  /* the value a lane switch has in the daemon's environment (from the numbered pipeline), or '' when it is not known */
+  function switchValue(name) {
+    const st = ((PL.last && PL.last()) || {}).stages || [];
+    const s = st.find(x => x.id === '3.2');
+    const e = s && (s.env_only || []).find(x => x.name === name);
+    return e ? String(e.value || '') : '';
+  }
+  function switchChip(k) {
+    const env = RUNWAYS[k].env;
+    if (!env) return h('span', { class: 'chip', title: 'always on' }, 'always on');
+    const v = switchValue(env).toLowerCase(), on = v === 'auto';
+    const text = k === 'c' ? (on ? 'pictures + regions' : 'large pictures') : (on ? 'on' : 'off');
+    return h('span', { class: 'chip ' + (on || k === 'c' ? 'ok' : ''), title: `${env}=${v || (k === 'c' || k === 'b' ? 'off' : '')}${on ? '' : ' (default)'}` }, text);
+  }
+  const sumOf = o => Object.values(o || {}).reduce((a, b) => a + b, 0);
+
+  function laneCard(k, rw, total, mv, lo) {
+    const d = RUNWAYS[k], n = rw[k] || 0, pct = total ? Math.round(100 * n / total) : 0;
+    const out = lo[k] || {}, outN = sumOf(out);
+    const handed = Object.entries(mv).filter(([m]) => m.startsWith(k + '>')).reduce((a, [, v]) => a + v, 0);
+    return h('div', { class: `cv-rw rw-${k}${n ? '' : ' idle'}`, title: d.tip },
+      h('div', { class: 'cv-rw-head' }, h('span', { class: 'cv-rw-badge' }, k), h('b', null, d.name),
+        h('span', { class: 'cv-rw-hw' }, d.hw.map(hw)), switchChip(k)),
+      h('div', { class: 'cv-rw-tool' }, d.tool),
+      h('div', { class: 'cv-rw-row' },
+        h('span', { class: 'cv-rw-meter', title: `${num(n)} of ${num(total)} pages ended in this lane` }, h('i', { style: { width: pct + '%' } })),
+        h('span', { class: 'cv-rw-n' }, n ? `${num(n)} pages · ${pct}%` : 'no pages')),
+      outN ? h('div', { class: 'cv-rw-row' },
+        h('span', { class: 'cv-rw-out', title: Object.entries(out).map(([o, v]) => `${o.replace('_', ' ')} ${num(v)}`).join(' · ') },
+          Object.keys(out).filter(o => out[o]).map(o => h('i', { class: 'o-' + (OUTCOME_CLS[o] || 'ok'), style: { flexGrow: String(out[o]) } }))),
+        h('span', { class: 'cv-rw-n small muted' }, `${num(out.low || 0)} low · ${num(out.repaired || 0)} repaired (this run)`)) : null,
+      handed ? h('div', { class: 'cv-rw-hand' }, `↳ ${num(handed)} page${handed === 1 ? '' : 's'} handed on to the document reader`) : null);
+  }
+
+  /* The pipeline of step 3 as one picture: Profile and router on the left, the four lanes of 3.2 in the middle (how many pages
+     ended in each, how they fared, how many were handed on), Gate, Repair, Reconcile and the outcome on the right.
+     *t* = the run's totals, *l* = the live view (pages finished this run, by lane and outcome). */
+  function flow(t, l) {
+    t = t || {}; l = l || {};
+    const out = t.outcomes || {}, mv = t.moves || l.moves || {}, gf = t.gate_failed || {};
+    let rw = t.runways || l.runways || {}, approx = false;
+    if (!sumOf(rw) && t.pages && t.branches) {            // a run made before the lanes were recorded: the branches say it nearly as well
+      const b = t.branches;
+      rw = { a: (b.digital || 0) + (b.office || 0) + (b.copy || 0), b: b.fallback || 0, c: b.embedded || 0, d: (b.raster || 0) + (b.image || 0) };
+      approx = true;
+    }
+    const total = sumOf(rw), lo = l.runway_outcomes || {};
     const node = (title, sub, kind, state, extra) => h('div', { class: 'cv-node ' + (state || ''), title: extra || '' },
       h('div', { class: 'cv-node-h' }, title, kind ? hw(kind) : null), h('small', null, sub));
-    const arrow = h('span', { class: 'cv-arrow', 'aria-hidden': 'true' }, '→');
-    const digital = (br.digital || 0) + (br.office || 0) + (br.copy || 0);
     const gateFails = Object.keys(gf).length ? Object.entries(gf).map(([k, v]) => `${k.replace('_', ' ')} ${num(v)}`).join(' · ') : (t.pages ? 'no check failed' : 'is the text trustworthy?');
-    return h('div', { class: 'cv-flow' },
-      node('3.1 · Profile', t.pages ? `${num(t.pages)} pages looked at` : 'what is on each page', 'cpu', 'on'), arrow,
-      node('3.2a · docling', t.pages ? `${num(digital)} pages (text layers, Office files)` : 'text layers, structure, tables', 'cpu', 'on', 'Reads text layers, tables and structure without forced OCR'), arrow,
-      node('3.2b · scanned pages', t.pages ? `${num((br.raster || 0) + (br.image || 0))} by the VLM` + (br.fallback ? `, ${num(br.fallback)} by docling OCR` : '') + (t.tokens ? ` · ${num(t.tokens)} tokens` : '') : 'document VLM (docling OCR as fallback)', 'gpu', 'on', 'Scanned pages and image files: a vision-language model in its own process reads each page image. When it is off, not installed or fails on a page, docling reads that page with full-page OCR'), arrow,
-      node('3.2c · pictures', t.pages ? `${num(br.embedded || 0)} pages with a picture read` : 'large pictures inside pages', 'gpu', 'on', 'A large picture on a text page (a photographed receipt, a screenshot) is read by the document VLM; what it finds that the page does not already say is added'), arrow,
-      node('3.3 · Gate', gateFails, 'cpu', 'on', 'Coverage, garbled text, docling grade, table shape, balance checks'), arrow,
-      node('3.4 · Repair', t.repair_tried ? `${num(t.repaired_cells || 0)} of ${num(t.repair_tried)} suspect cells fixed` : 'suspect table cells re-read', 'gpu', 'on', 'A table cell that breaks the table\'s arithmetic is cut out of the scan, read again by the repair model and replaced only when a second, independent reader and the arithmetic agree. Scanned pages only'), arrow,
-      node('3.5 · Reconcile', t.merged_tables ? `${num(t.merged_tables)} tables joined across pages` : 'tables across a page break', 'cpu', 'on', 'A table that continues on the next page is joined (the continuation gets the header) and checked across the break'), arrow,
-      node('Outcome', [`pass ${num(out.pass || 0)}`, out.repaired ? `repaired ${num(out.repaired)}` : null, out.no_text ? `no text ${num(out.no_text)}` : null, out.error ? `error ${num(out.error)}` : null, out.low ? `low ${num(out.low)}` : null].filter(Boolean).join(' · ') || 'pass / low confidence', null, 'on'));
+    const moved = Object.entries(mv).map(([k, v]) => `${k.replace('>', ' → ')} ${num(v)}`).join(' · ');
+    const eng = l.engines && Object.keys(l.engines).length ? Object.entries(l.engines).map(([k, v]) => `${k} ${num(v)}`).join(' · ') : '';
+    return h('div', { class: 'cv-pipe' },
+      h('div', { class: 'cv-col' },
+        node('3.1 · Profile', t.pages ? `${num(t.pages)} pages looked at` : 'what is on each page', 'cpu', 'on', 'Text layer? scan? photo? pictures, ink, resolution, script'),
+        h('span', { class: 'cv-arrow down', 'aria-hidden': 'true' }, '↓'),
+        node('3.2 · Router', total ? `${num(total)} pages sent down a lane` + (moved ? ` · handed on: ${moved}` : '') : 'one lane per page', 'cpu', 'on',
+          'The router picks the cheapest lane that is sure enough: a text layer goes to a (or c when it has large pictures); a clean scan to b when OCR first is on; everything else to d. A page the gate doubts after a cheap lane is handed on to d.')),
+      h('span', { class: 'cv-arrow', 'aria-hidden': 'true' }, '→'),
+      h('div', { class: 'cv-rws' }, RW_ORDER.map(k => laneCard(k, rw, total, mv, lo)),
+        eng ? h('div', { class: 'small muted cv-rw-eng' }, `Lane b engines this run: ${eng}`) : null,
+        approx ? h('div', { class: 'small muted cv-rw-eng' }, 'This run did not record lanes; the counts are worked out from how the pages were read (cached pages count by what they were).') : null),
+      h('span', { class: 'cv-arrow', 'aria-hidden': 'true' }, '→'),
+      h('div', { class: 'cv-col' },
+        node('3.3 · Gate', gateFails, 'cpu', 'on', 'Coverage, garbled text, docling grade, table shape, balance checks; for OCR the amount and plausibility of the text; for pictures that all were read'),
+        h('span', { class: 'cv-arrow down', 'aria-hidden': 'true' }, '↓'),
+        node('3.4 · Repair', t.repair_tried ? `${num(t.repaired_cells || 0)} of ${num(t.repair_tried)} suspect cells fixed` : 'suspect table cells re-read', 'gpu', 'on', 'A table cell that breaks the table\'s arithmetic is cut out of the scan, read again by the repair model and replaced only when a second, independent reader and the arithmetic agree. Pages read as images only'),
+        h('span', { class: 'cv-arrow down', 'aria-hidden': 'true' }, '↓'),
+        node('3.5 · Reconcile', t.merged_tables ? `${num(t.merged_tables)} tables joined across pages` : 'tables across a page break', 'cpu', 'on', 'A table that continues on the next page is joined (the continuation gets the header) and checked across the break'),
+        h('span', { class: 'cv-arrow down', 'aria-hidden': 'true' }, '↓'),
+        node('Outcome', [`pass ${num(out.pass || 0)}`, out.repaired ? `repaired ${num(out.repaired)}` : null, out.no_text ? `no text ${num(out.no_text)}` : null, out.error ? `error ${num(out.error)}` : null, out.low ? `low ${num(out.low)}` : null].filter(Boolean).join(' · ') || 'pass / low confidence', null, 'on')));
+  }
+
+  /* Pages per lane as one proportional bar with the figures beside it (what each lane's reader finished). */
+  function runwayBar(rw, mv) {
+    const total = sumOf(rw);
+    if (!total) return null;
+    const moved = Object.entries(mv || {}).map(([k, v]) => `${k.replace('>', ' → ')} ${num(v)}`).join(' · ');
+    return h('div', null,
+      h('div', { class: 'cv-bands' }, RW_ORDER.filter(k => rw[k]).map(k => h('i', { class: 'rwb-' + k, title: `lane ${k} (${RUNWAYS[k].name}): ${num(rw[k])} pages (${Math.round(100 * rw[k] / total)}%)`, style: { flexGrow: String(rw[k]) } }))),
+      h('div', { style: { marginTop: '6px' } }, RW_ORDER.filter(k => rw[k]).map(k => h('span', { class: 'chip cv-chip', title: RUNWAYS[k].tip },
+        h('i', { class: 'cv-dot rwb-' + k }), `${k} · ${RUNWAYS[k].name} ${num(rw[k])}`)),
+      moved ? h('span', { class: 'small muted', style: { marginLeft: '8px' } }, `handed on to the document reader: ${moved}`) : null));
   }
 
   /* What the run is doing right now, from the page events: pages read per branch, per open document. */
@@ -300,5 +379,5 @@ const CV = (function () {
       e.error_count ? h('div', { class: 'small', style: { color: 'var(--bad)' } }, `${e.error_count} file(s) could not be profiled: ` + (e.errors || []).slice(0, 3).map(x => x.src).join(', ')) : null);
   }
 
-  return { label, branchTitle, strip, branchChips, outcomeChips, bands, flow, lanes, tiles, costText, hw, open, openSummary, estimateView, sortedBranches, live, BRANCHES, OUTCOMES };
+  return { label, branchTitle, strip, branchChips, outcomeChips, bands, runwayBar, RUNWAYS, flow, lanes, tiles, costText, hw, open, openSummary, estimateView, sortedBranches, live, BRANCHES, OUTCOMES };
 })();

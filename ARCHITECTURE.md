@@ -260,9 +260,9 @@ stage, that every environment variable listed is really read, and that the brows
 (`ui/static/pipeline.js`) equals the registry. Conversion is not a side branch: 3 Convert is a stage like
 the others, with its steps 3.1-3.5 numbered inside it.
 
-Indexing (one run; 3.2 has three variants, chosen per page by the router: 3.2a docling for text pages and
-Office files, 3.2b the document reader for scans and images, 3.2c the same reader for large pictures on text
-pages):
+Indexing (one run; 3.2 has four lanes, chosen per page by the router: 3.2a docling on the text layer, 3.2b
+OCR for a clean scan, 3.2c docling on the text layer plus the document reader on its pictures and regions, 3.2d
+the document reader for every other scan and image; a page a cheaper lane doubts goes on to 3.2d):
 
 | Stage | Name | Runs on | Once per | What it does | Settings it owns (`section.key`) |
 |---|---|---|---|---|---|
@@ -270,7 +270,7 @@ pages):
 | 2 | Fingerprint | CPU | document | SHA-256 of the file plus the chunk, model and conversion settings; unchanged documents are skipped in seconds | – |
 | 3 | Convert | CPU+GPU | document | turn the file into page-marked Markdown, page by page, through the steps below; several documents are converted side by side when the machine has the memory for it | `indexer.jobs` |
 | 3.1 | Profile | CPU | document | look at every page once: text layer, scan or photo, pictures, ink, resolution, script | – |
-| 3.2 | Read | CPU+GPU | document | each page goes to the reader it needs: 3.2a docling for text pages and Office files, 3.2b the document reader (a vision model) for scans and images, 3.2c the same reader for large pictures on text pages | `indexer.routing`, `indexer.ocr`, `indexer.ocr_engine`, `indexer.ocr_lang`, `indexer.table_mode`, `indexer.pdf_backend`, `indexer.pipeline`, `indexer.vlm`, `models.reader`, `models.memory_limit_gb`, `indexer.docling_batch`, `indexer.doc_timeout`; env `RAG_SEARCH_THREADS`, env `RAG_SEARCH_VLM_PAGE_TIMEOUT`, env `RAG_SEARCH_VLM_FREE_GB`, env `RAG_SEARCH_VLM_BACKEND` |
+| 3.2 | Read | CPU+GPU | document | each page goes down the lane it needs: 3.2a docling on the text layer (and Office files), 3.2b OCR for a clean scan (docling's OCR, or Tesseract for a skewed page and image files), 3.2c docling on the text layer plus the document reader on its pictures and regions, 3.2d the document reader (a vision model) for every other scan, photo and image; a page a cheaper lane doubts goes on to 3.2d | `indexer.routing`, `indexer.ocr`, `indexer.ocr_engine`, `indexer.ocr_lang`, `indexer.table_mode`, `indexer.pdf_backend`, `indexer.pipeline`, `indexer.vlm`, `models.reader`, `models.memory_limit_gb`, `indexer.docling_batch`, `indexer.doc_timeout`; env `RAG_SEARCH_THREADS`, env `RAG_SEARCH_VLM_PAGE_TIMEOUT`, env `RAG_SEARCH_VLM_FREE_GB`, env `RAG_SEARCH_VLM_BACKEND`, env `RAG_SEARCH_TESSERACT`, env `RAG_SEARCH_TESSERACT_LANG`, env `RAG_SEARCH_OCR_FIRST`, env `RAG_SEARCH_RESIDUE`, env `RAG_SEARCH_ESCALATE_DIGITAL`, env `RAG_SEARCH_LAYER_FILL` |
 | 3.3 | Gate | CPU | document | deterministic checks on every page: coverage, script, tables, resolution, running balances and totals, runaway output | – |
 | 3.4 | Repair (optional) | GPU | document | a table cell that breaks the arithmetic is cut out, read again and replaced only when a second, independent reader and the arithmetic agree | `indexer.repair`, `models.repair`; env `RAG_SEARCH_REPAIR_SECOND` |
 | 3.5 | Reconcile | CPU | document | a table that runs across a page break is joined (the continuation gets the header) and checked across the break | – |
@@ -426,19 +426,55 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   (`text_ok`, `page_text_ok`): such a layer proves nothing and the page belongs to an image reader.
   `RAG_SEARCH_LAYER_FILL`: `fill` (default), `report` (compare and record `would_add_lines`, change nothing, gate as
   before) or `off`. Measured on the first full run (16,842 pages): 16 % had lost text, 2,212 of those had passed the gate.
-* **OCR first for clean scans** (`routed.py`, `router.decide_scan`, `scanfacts.py`; `RAG_SEARCH_OCR_FIRST=auto`, default
-  `off`): for a scanned PDF page (not an image file) one render at 100 dpi gives page-image facts (contrast, stroke
-  sharpness, skew, speckle, paper texture, text lines, ruled lines, ink share; `scanfacts.py`, numpy + Pillow). The
-  threshold table `router.THRESHOLDS` turns them into runway `b` (docling with full-page OCR, branch `fallback`, cache
-  tag `docling:scan`) or `d` (the document reader), with the reasons; unknown resolution, no OCR engine or no facts
-  mean `d`. A `b` page is checked at once by the gate with `ocr=True`, which adds `expected_size` (characters against
-  the ink share), `plausibility` (words that are not words) and `column_types` (digits with letters in a number column)
-  and returns `escalate`; an escalating page (or one with no real text) is read by the document reader, the OCR
-  text is kept for when that fails. The page record has `route` (`runway`, `reasons`, `final`, `escalated_from`
-  with the checks, `time_s.first_try`). A cached document-reader result is used before a cached OCR one, a cached OCR
-  result the gate now doubts goes on to the document reader. `rag-search bench route [--ocr tesseract|docling]` runs a
-  ladder of synthetic damaged scans (`synth.py`) through facts, router, OCR and gate (`routeharness.py`) and reports
-  saved / caught / false_pass / missed_saving / right; a partial loss (about 60 % of the text read) is the known gap.
+* **The four lanes of 3.2** (`routed.py`, `router.py`, `residue.py`, `scanfacts.py`, `tesseract.py`; 0.9.24). Every
+  page that is read goes down exactly one lane, chosen once per page by the router and recorded in the page's `route`
+  (`runway`: the lane chosen, `reasons`, `final`: the lane whose text the page ended with, `engine`, and
+  `escalated_from` with the gate checks when a lane handed the page on):
+
+  | Lane | Reads | When | Gate checks that catch its failures | Default |
+  |---|---|---|---|---|
+  | **a** text layer | docling on the text layer (OCR only for embedded bitmaps) | the page has a text layer and nothing the layer does not explain | `coverage` against the PDF's own text layer (`layer.py`, below), `script`, tables, arithmetic | always on |
+  | **b** OCR | docling's full-page OCR for a straight PDF page; Tesseract (after straightening the page) for a skewed page (2-8 degrees) and for every image file | a scan whose page image says clean print (`router.decide_scan`) | `expected_size`, `plausibility`, `column_types`, plus the common checks | **off**: `RAG_SEARCH_OCR_FIRST=auto` |
+  | **c** text layer + pictures | docling on the text layer, and the document reader on each large picture (profile `big_pics`) and, with the switch, on each *residue* region | a text page with large pictures; with `RAG_SEARCH_RESIDUE=auto` also one with regions of ink the text layer does not explain | `residue_read`: every picture or region asked of the reader was read | pictures **on**, regions **off** |
+  | **d** document reader | a vision model on the whole page image (guarded, then repaired, 5.1.3-5.1.4); Tesseract as the last resort for a runaway | every other scan, photo and image, a page whose text layer is garbled, and every page a cheaper lane doubts | `degenerate`, table arithmetic, repair | always on |
+
+  *Router* (`router.py`): `decide` (the page's kind: text layer, scan, image, Office, text) is as before;
+  `decide_digital` makes a text page lane c when it has large pictures (and, with the residue switch, regions) and a
+  document reader is there, otherwise lane a; `decide_scan` turns the page-image facts (`scanfacts.py`: one render at
+  100 dpi, numpy + Pillow, 50-150 ms: contrast, stroke sharpness, skew, speckle, paper texture, text lines, ruled
+  lines, ink share) and the resolution into lane b or d through `router.THRESHOLDS` (version 2; unknown resolution, no
+  facts, no OCR engine mean d; a ruled table is d, because plain text loses its structure); `b_engine` picks docling or
+  Tesseract. With no document reader every scan is lane b by necessity (`route.forced`; docling's OCR is all there is).
+  An image file goes through the same router (its resolution is estimated from its pixels as if it were an A4 page, since
+  its dpi tag is usually 72 or 96) and is read by Tesseract in lane b.
+
+  *Escalation*: a lane-b page the gate doubts (`gate.check_page(..., ocr=True)` returns `escalate`: any failed check but
+  `low_resolution` and `docling_grade`, or no real text) gets one more cheap try, **Tesseract** on the straightened
+  page, unless the doubt is about structure (`table_shape`, `column_types`, `totals`, `running_balance`: plain text would
+  lose it); only if that is doubted too does the document reader read the page, and the OCR text is kept for when the
+  reader fails. With `RAG_SEARCH_ESCALATE_DIGITAL=auto` a text page (lane a or c) that still has lost text or garbled text
+  after the text-layer fill is read as an image by the document reader (d); when the reader cannot take over, the
+  text-layer result is kept and flagged. Both are off by default. The page cache keys follow the reader (`docling:scan`,
+  `tesseract:scan`, `<vlm>:scan`, `docling:digital+<vlm>[+res1]`), a cached document-reader result is used before a
+  cached OCR one, and a cached OCR result the gate now doubts goes on. The lane switches that are *on* are part of the
+  document's conversion profile (`|ocrfirst=auto`, `|residue=auto`, `|updigital=auto`), so switching one on
+  converts the documents again; the defaults add nothing.
+
+  *Residue* (`residue.py`): the regions of a text page that have ink the text layer cannot hold (a stamp, a signature, a
+  drawing): one render at 60 dpi, the text layer's rectangles and long straight lines (rules, table borders) taken away,
+  the cells of a coarse grid that still hold ink grouped; a region is at least 4 % of the page and 10 % of its width and
+  height and not an embedded picture the profile already has. Measured on 99 real text pages: 37 % had a region at
+  2 % (too many), 10 % at 4 %.
+
+  *Gate constants measured on real pages* (`scripts/mine_traces.py`, 1,107 scanned pages that passed): characters per
+  unit of ink had a median of 15,105 (p05 1,664, p95 48,566), so `CHARS_PER_INK` is 15,000 and `SIZE_LOW`, `SIZE_HIGH` 0.25
+  and 3.0. `scripts/measure_lanes.py` reads a sample of real scans with docling's OCR and Tesseract and scores both
+  against the document reader's Markdown: on 38 scanned pages the router sent 3 to lane b (none wrong), the OCR gate
+  alone kept 29 pages of which 17 were not as good as the reader's text (partial loss, numbers missed: this is why the
+  router stays strict), and two cheap readers agreeing did not make a page safe (numbers differ between engines), so
+  OCR first stays off by default. `plausibility` judges only words in Latin letters: other scripts have other vowels.
+  `rag-search bench route [--ocr tesseract|docling]` runs a ladder of synthetic damaged scans (`synth.py`) through facts,
+  router, OCR and gate (`routeharness.py`).
 * **Quality gate** (`gate.py`): every page's Markdown is checked -- `coverage` (a digital page: the layer
   comparison above, or with no layer the share of characters of the text layer that survived; a scanned page with
   clear ink came out empty), `script` (garbled text, OCR noise, a script
@@ -449,7 +485,8 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   column), `low_resolution` (an image page under 150 dpi, or a small image of unknown dpi; an image file's default dpi tag of 72 or 96 counts as unknown, so its pixels decide), `degenerate` (a
   page read as an image that is a runaway of the reader: one line or phrase repeated hundreds of times, text
   that is nothing but repetition, a script that is not on the page; `degenerate.py`; not applied to a text
-  layer) and the table validators (`running_balance`, `totals`) -- and ends `pass`, `low`
+  layer), for a page read by OCR `expected_size`, `plausibility` and `column_types`, for a page whose pictures the reader
+  was to read `residue_read`, and the table validators (`running_balance`, `totals`) -- and ends `pass`, `low`
   (a check failed: indexed, flagged) or `no_text`. For a digital page whose text is all there (layer verdict `intact`),
   `table_shape`, `totals`, `running_balance` and `docling_grade` no longer make it low: they are listed under the
   record's `gate.notes`, because for search the text is what counts. Failed checks and the validators' suspect cells (with
@@ -459,13 +496,16 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
 * **Per-page times and events**: `time_s.read` (the run's seconds split evenly over its pages) and
   `time_s.gate` per page; `step_s` (read, gate) in the document summary and the run totals; one compact
   `page` event per finished page in the job's event log (`file`, `page`, `of`, `branch`, `kind`, `outcome`,
-  `cache`, `read_s`, `chars`, failed `gate` checks), written by the pool processes themselves like
+  `cache`, `read_s`, `chars`, failed `gate` checks, `runway` (the lane that finished the page), `moved` (the lane that
+  handed it on) and `engine`), written by the pool processes themselves like
   `stage` events, and one `plan` event per document once its pages are profiled (or known from its stored trace):
   `{pages, branches}`, what kinds of pages it has, any format (an Office file is one page of kind `office`).
   A page's **kind** (`trace.page_kind`) is what it is -- `digital`, `raster`, `image`, `office`, ... -- and its
   `branch` is how this run got it: a page reused from the page cache has the branch `cached` and keeps its kind
   in `was`. Everything that shows a distribution (summaries, run totals, the live view, the Collections tab)
-  counts by kind; the number of reused pages is a separate figure (`cached_pages`, `cached`). `runview`
+  counts by kind; the number of reused pages is a separate figure (`cached_pages`, `cached`). Pages are also counted by the
+  lane that finished them (`runways`, with `moves` such as `b>d`, and the lane-b `b_engines`, in the summaries, the run
+  totals as `runways` / `ok_runways`, and the live view with `runway_outcomes`). `runview`
   aggregates the events incrementally into `live`: pages finished by kind and outcome, how many were read now
   (`read`) and how many reused (`cached`), pages read per minute (reused pages are not a rate), the documents
   being read with `done`/`of`, and `active`, the pages of the files being converted right now by kind (from their

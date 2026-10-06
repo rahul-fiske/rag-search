@@ -115,6 +115,51 @@ Running headers, footers and page numbers are left out of the comparison (doclin
   - A digital page with lost text is completed from its own text layer: the lines docling left out are appended under
     a marker, which is deterministic and takes milliseconds. No VLM and no repair.
 
+### 0.9.24: the four lanes wired, first real measurement, review
+
+**Wired** (`routed.py`): every page records its lane (`route.runway`, `final`, `engine`, `escalated_from`). a = docling on
+the text layer, b = OCR (docling's for a straight PDF page, Tesseract after `scanfacts.straighten` for a skewed page and
+for every image file, a Tesseract rung before the document reader for a doubted page that is not a table), c = text
+layer plus the document reader on pictures and, with `RAG_SEARCH_RESIDUE=auto`, on residue regions (`residue.py`), d = the
+document reader with its guard, repair and the Tesseract last resort. `RAG_SEARCH_ESCALATE_DIGITAL=auto` hands a text
+page that still lost or garbled its text to d. The Convert panel and the Architecture tab draw the lanes; `rag-search
+trace`, `doctor`, the run totals (`runways`, `moves`) and the page events carry them.
+
+**Measured on 38 real scanned pages** (`scripts/measure_lanes.py`; the reference is the document reader's Markdown, so
+"worse" means "differs from the reader", which is not the same as "wrong"):
+
+| | pages |
+|---|---|
+| router chose b / d | 3 / 35 |
+| docling OCR read the page in (median) | 0.8 s; Tesseract 2.6 s; the document reader about 22-56 s |
+| docling's text kept by the OCR gate | 29, of which 17 were worse than the reader's (partial loss, numbers missed) |
+| the 3 pages the router chose b for | all good, no false pass |
+| good pages the router sent to d (missed savings) | 3 (low contrast, speckle, a ruled table) |
+| two cheap readers agreeing (word recall >= 0.9 each way) | 2 pages accepted, 1 of them worse than the reader |
+
+So the OCR gate alone is not safe on real scans (it does not see partial loss), the strict router is what keeps lane b
+safe, and an agreement check between two OCR engines does not fix it (digits come out differently from each engine, the
+financial pages are where it matters). Savings are 3 of 38 pages with the router as it is, at most 6 of 38 with looser
+facts: **OCR first stays off by default.** Not measured: whether the pages the engines agree on and the reader differs on
+are the reader's mistakes.
+
+**Lane c**: on 99 real text pages, regions of ink outside the text layer at 2 % of the page: 37 % of pages (too many to send
+to the reader), at 4 %: 10 %. Whether the reader finds text worth indexing in them is not measured (VLM time), so the
+residue switch is off. Large embedded pictures (the old 3.2c) stay on.
+
+**Lane a escalation**: 370 of 16,842 digital pages of the first full run were low for coverage or script before the
+text-layer fill; the document reader would take about 3 hours for them, so it is off.
+
+**Review of the wiring** (what was found and fixed on the way): image files bypassed the router (now routed);
+`plausibility` judged words in other scripts by Latin vowels, so every Marathi or Hindi OCR page would have escalated
+(now Latin words only); a picture the reader could not read left a lane-c page `pass` with a note (now `residue_read`,
+low); the document reader's result for an escalated text page was not reused on the next run (now it is); after a
+Tesseract first try and a failing reader the page was labelled as docling's (fixed); numpy was imported by `routed` at
+import (now lazy). Open: the OCR gate's partial-loss gap; a located escalation (hand only a region of a lane-b page to the
+reader, lane c style); pages whose text layer is a scanner's hidden OCR layer (551 pages) are kept as text pages and
+compared only when read; documents converted before 0.9.24 have no `route` in their traces (the dashboard works the
+lanes out from the branches).
+
 ## 2. Philosophy
 
 **When sure, read with docling (with or without OCR). When in doubt, read with the VLM.** Refined:
@@ -313,10 +358,10 @@ Each phase leaves the product working and measurable. No routing behaviour chang
 | **R0b text-layer check** (**built, and the check is now part of the pipeline as gate v2 for digital pages: `layer.py`, `RAG_SEARCH_LAYER_FILL`**; script option: `mine_traces.py --check-sources [low\|all]`) | for every digital / embedded page (the low ones, or all), the PDF's own text layer (read-only) against the stored Markdown: share of the layer's words and numbers present; verdicts intact / intact, table shape only / uncertain / lost text / no source. Replaces most of the manual sampling: a digital page whose text is all there is a false alarm for search, and `all` also finds text lost on pages the gate passed | the gate's digital checks are re-tuned from the verdicts; only `uncertain` pages need a person |
 | **R0 harness skeleton** (**built: `routeharness.py`, `rag-search bench route`, `synth.py`; first synthetic report: no false pass on routed-b pages, 5 of 22 pages sent to the document reader that OCR would have read (100 dpi, speckle, mild blur), the ruled-table page read at 0.72 word recall by Tesseract and correctly sent to d; partial text loss (60 %) is not caught by the OCR-side gate**) | `bench route` running today's pipeline as runway engines (a = docling digital, b = docling OCR, d = VLM); per-page records; oracle and reports; synthetic damaged-scan generator in `tests/data` tooling | reports on the synthetic set and one owner document set |
 | **R1 profiler 3.1A + 3.1B** (runs alongside R2) | the features of 4.1 and 4.2 in the profile record; probe interface (3.1C hooks) with a no-op probe; features in the harness | feature distributions per oracle runway; profile cost per page measured |
-| **R2 runway b as first-class** (**built, behind `RAG_SEARCH_OCR_FIRST=auto`, default off: `routed.read_b`, `router.decide_scan`, `scanfacts.py`; deskew before OCR and the script check are not done yet**) (priority: most scans are English) | try-3.2b-first for clean scans (3.1B quality features), deskew before OCR, the result's script checked; brings forward the two gate checks 3.2b needs, expected size and plausibility, with escalation to 3.2d; behind a setting, off until the harness agrees | harness: b vs d quality and time on the English scans; share of 3.2b passes that escalate |
-| **R3 gate v2** (**scan side built: `expected_size`, `plausibility`, `column_types`, `escalate`; `mine_traces.py` section 5b measures characters per ink on real passing pages to calibrate `expected_size`; graded and located verdicts not done**) | the rest of the gate: column types, graded and located verdicts, escalation actions | false-pass rate measured and lower than today on the same pages |
+| **R2 runway b as first-class** (**built, behind `RAG_SEARCH_OCR_FIRST=auto`, default off: `routed.read_b`, `router.decide_scan`, `scanfacts.py`; 0.9.24 added deskew (a skewed page is straightened and read by Tesseract), the Tesseract rung before the document reader, plausibility that no longer misjudges non-Latin scripts, and image files through the router**) (priority: most scans are English) | try-3.2b-first for clean scans (3.1B quality features), deskew before OCR, the result's script checked; brings forward the two gate checks 3.2b needs, expected size and plausibility, with escalation to 3.2d; behind a setting, off until the harness agrees | harness: b vs d quality and time on the English scans; share of 3.2b passes that escalate |
+| **R3 gate v2** (**scan side built: `expected_size` (calibrated on 1,107 real pages in 0.9.24), `plausibility`, `column_types`, `escalate`, and `residue_read` for lane c; `mine_traces.py` section 5b measures characters per ink on real passing pages to calibrate `expected_size`; graded and located verdicts not done**) | the rest of the gate: column types, graded and located verdicts, escalation actions | false-pass rate measured and lower than today on the same pages |
 | **R4 router v2 in shadow** | `router.decide` v2 with the threshold table; both decisions in the trace; dashboard shows disagreements | agreement report on real runs; thresholds chosen from the frontier |
-| **R5 switch on** | v2 routing and the escalation ladder live; image files through the router; 3.2c on residue regions | quality not worse than v1 on the verified set; VLM pages and repair runs fewer |
+| **R5 switch on** (**the four lanes are wired in 0.9.24, each behind a switch that is off by default: `RAG_SEARCH_OCR_FIRST`, `RAG_SEARCH_RESIDUE`, `RAG_SEARCH_ESCALATE_DIGITAL`; image files go through the router; the Convert panel and the Architecture tab draw the lanes; nothing is on by default because the measurement below does not yet support it**) | v2 routing and the escalation ladder live; image files through the router; 3.2c on residue regions | quality not worse than v1 on the verified set; VLM pages and repair runs fewer |
 | **R6 first probes** | Tesseract OSD; ONNX text detector; each behind its hook, on only where the harness shows a gain | measured gain per probe |
 | **R7 decisions** | fallback policy (section 9.1) and non-Mac models (section 9.2) | recorded in this document and ARCHITECTURE.md |
 

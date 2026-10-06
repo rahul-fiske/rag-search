@@ -320,10 +320,11 @@
       ph.total != null ? h('p', { class: 'small muted', style: { margin: '0 0 8px' } },
         `${num(ph.done || 0)} of ${num(ph.total)} document(s) through discover → chunk` + (ph.workers ? ` on ${ph.workers} worker process(es)` : '')
         + Object.entries(ph.outcomes || {}).map(([k, n]) => ` · ${k} ${num(n)}`).join('')) : null,
-      CV.flow(totals),
+      CV.flow(totals, live.live),
       CV.live(live.live) ? h('div', { style: { marginTop: '14px' } }, h('h4', null, 'Pages in active files'), CV.live(live.live)) : null,
       totals.pages ? h('div', { style: { marginTop: '14px' } },
         h('h4', null, 'Pages in successfully converted files'), CV.bands(totals.ok_branches || totals.branches),
+        totals.ok_runways && Object.keys(totals.ok_runways).length ? h('div', { style: { marginTop: '8px' } }, h('div', { class: 'small muted', style: { marginBottom: '4px' } }, 'by the lane whose reader finished the page'), CV.runwayBar(totals.ok_runways, totals.moves)) : null,
         h('p', { class: 'small muted', style: { margin: '6px 0 0' } },
           (totals.ok_docs !== undefined ? `${num(totals.ok_docs)} file${totals.ok_docs === 1 ? '' : 's'}, ${num(totals.ok_pages)} pages` : 'The files converted so far')
           + (totals.cached_pages ? `; ${num(totals.cached_pages)} pages reused from the page cache` : '')

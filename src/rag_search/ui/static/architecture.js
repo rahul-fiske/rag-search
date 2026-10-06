@@ -108,8 +108,13 @@
     const n = (...ks) => ks.reduce((a, k) => a + (br[k] || 0), 0);
     const e = A.models.embedding, c = A.chunking;
     const E = (...a) => dedge('idx', ...a);
-    return dsvg('idx', 1180, 660,
-      'The indexing pipeline as one numbered list. 1 Discover lists the files of every collection; 2 Fingerprint skips unchanged documents; 3 Convert turns a file into page-marked Markdown through five steps: 3.1 Profile looks at every page, 3.2 Read sends each page to the reader it needs (a: docling for text pages, b: the document reader for scans and photos, c: the same reader for large pictures), 3.3 Gate checks the result, 3.4 Repair re-reads a suspect table cell of a scanned page, 3.5 Reconcile joins tables that run across pages. Then 4 Chunk, 5 Embed with the model loaded once per run, 6 Write, 7 Merge per collection and 8 Publish.',
+    const rw = t.runways || {}, rwn = Object.values(rw).reduce((x, y) => x + y, 0);
+    const mv = Object.entries(t.moves || {}).filter(([k]) => k.endsWith('>d')).reduce((x, [, y]) => x + y, 0);
+    const envOf = name => { const e = (stageOf('3.2').env_only || []).find(x => x.name === name); return e ? String(e.value || '') : ''; };
+    const lane = (k, y, title, l1, l2, hwk) => [
+      dbox(420, y, 340, 70, title, [l1, l2], k === 'd' ? 'hl' : (rw[k] ? 'hl' : null)), hwchip(718, y + 6, hwk)];
+    return dsvg('idx', 1180, 700,
+      'The indexing pipeline as one numbered list. 1 Discover lists the files of every collection; 2 Fingerprint skips unchanged documents; 3 Convert turns a file into page-marked Markdown through five steps: 3.1 Profile looks at every page, 3.2 Read sends each page down one of four lanes (a: docling on the text layer, b: OCR for a clean scan, c: the text layer plus the document reader on pictures, d: the document reader for every other scan and photo; a page a cheaper lane doubts goes on to d), 3.3 Gate checks the result, 3.4 Repair re-reads a suspect table cell of a scanned page, 3.5 Reconcile joins tables that run across pages. Then 4 Chunk, 5 Embed with the model loaded once per run, 6 Write, 7 Merge per collection and 8 Publish.',
       dhead(20, 24, 'PER RUN, THEN PER DOCUMENT'),
       dbox(20, 40, 170, 90, '1 · Discover', ['every collection:', 'registered folders', 'and imports'], 'store'),
       dbox(240, 40, 180, 90, '2 · Fingerprint', ['SHA-256 of the file +', 'chunk, model and', 'conversion settings'], 'hl'),
@@ -119,29 +124,32 @@
       dbox(880, 40, 280, 90, 'One numbered pipeline', ['the numbers are the same in the Indexing', 'tab, Settings, page traces and logs', 'CPU outlined · GPU dark'], 'store'),
       E('M190,85 H236', 'each file', 213, 79), E('M420,85 H451', null), E('M575,85 H636', 'yes', 605, 79), E('M515,130 V166', 'no', 523, 154, 'start'),
       // 3 · Convert: the container
-      sv('rect', { x: 20, y: 170, width: 1140, height: 310, rx: 14, class: 'grp' }),
-      sv('text', { x: 36, y: 192, class: 'hd' }, '3 · CONVERT, PAGE BY PAGE · several documents side by side'),
-      dbox(44, 288, 150, 76, '3.1 · Profile', [t.pages ? `${num(t.pages)} pages this run` : 'text layer? scan? photo?', 'pictures · ink · script'], 'hl'), hwchip(152, 294, 'cpu'),
-      dbox(250, 204, 250, 76, '3.2a · docling', [br.digital || br.office ? `${num(n('digital', 'office', 'copy'))} pages: text, Office, HTML` : 'text pages · Office · HTML', `OCR ${setting('3.2', 'indexer.ocr')} · tables ${setting('3.2', 'indexer.table_mode')}`], 'hl'), hwchip(458, 210, 'cpu'),
-      dbox(250, 288, 250, 76, '3.2b · document reader', [br.raster || br.image || br.fallback ? `${num(n('raster', 'image'))} scanned · ${num(br.fallback || 0)} by docling OCR` : 'scans and photos · image files', 'docling OCR when it cannot run'], 'hl'), hwchip(458, 294, 'gpu'),
-      dbox(250, 372, 250, 76, '3.2c · pictures', [br.embedded ? `${num(br.embedded)} pages with a picture read` : 'large pictures on text pages', 'same reader as 3.2b'], 'hl'), hwchip(458, 378, 'gpu'),
-      dbox(560, 288, 170, 76, '3.3 · Gate', ['coverage · script ·', 'tables · balances'], 'hl'), hwchip(688, 294, 'cpu'),
-      dbox(820, 204, 170, 76, '3.4 · Repair', [t.repair_tried ? `${num(t.repaired_cells || 0)} of ${num(t.repair_tried)} cells fixed` : 'suspect cell of a scan', 're-read; sums must agree'], 'hl'), hwchip(948, 210, 'gpu'),
-      dbox(1000, 288, 140, 76, '3.5 · Reconcile', [t.merged_tables ? `${num(t.merged_tables)} tables joined` : 'tables across', 'a page break'], 'hl'), hwchip(1098, 340, 'cpu'),
-      E('M194,326 H246', null), E('M222,326 V242 H246', null), E('M222,326 V410 H246', null),
-      E('M500,242 H530 V326 H556', null), E('M500,326 H556', null), E('M500,410 H530 V326 H556', null),
-      E('M730,326 H770 V242 H816', 'suspect', 793, 236, 'middle'), E('M730,346 H996', 'pass', 860, 340, 'middle'),
-      E('M990,242 H1070 V284', 'repaired', 1076, 264, 'start'),
-      sv('text', { x: 36, y: 472, class: 's' }, 'Outcome per page: pass · repaired · low confidence (kept, flagged) · no text · error.  Colours on the Indexing tab show how each page was read.'),
-      sv('text', { x: 126, y: 500, class: 's' }, 'page-marked Markdown + a trace of every page'), E('M115,480 V526', null),
+      sv('rect', { x: 20, y: 170, width: 1140, height: 350, rx: 14, class: 'grp' }),
+      sv('text', { x: 36, y: 192, class: 'hd' }, '3 · CONVERT, PAGE BY PAGE · several documents side by side · one lane per page'),
+      dbox(40, 300, 150, 76, '3.1 · Profile', [t.pages ? `${num(t.pages)} pages this run` : 'text layer? scan? photo?', 'pictures · ink · script'], 'hl'), hwchip(148, 306, 'cpu'),
+      dbox(222, 300, 150, 76, '3.2 · Router', [rwn ? `${num(rwn)} pages sent` : 'cheapest lane that', 'is sure enough'], 'hl'), hwchip(330, 306, 'cpu'),
+      lane('a', 204, '3.2a · text layer', `${num(rw.a || 0)} pages · docling, tables ${setting('3.2', 'indexer.table_mode')}`, `compared with the PDF's text layer · ${envOf('RAG_SEARCH_LAYER_FILL') || 'fill'}`, 'cpu'),
+      lane('b', 280, '3.2b · OCR', `${num(rw.b || 0)} pages · docling OCR · Tesseract`, `clean scans first · ${envOf('RAG_SEARCH_OCR_FIRST') === 'auto' ? 'on' : 'off (default)'}`, 'cpu'),
+      lane('c', 356, '3.2c · text layer + pictures', `${num(rw.c || 0)} pages · reader on the pictures`, `regions too · ${envOf('RAG_SEARCH_RESIDUE') === 'auto' ? 'on' : 'off (default)'}`, 'gpu'),
+      lane('d', 432, '3.2d · document reader', `${num(rw.d || 0)} pages · vision model`, mv ? `took over ${mv} pages the others doubted` : 'takes over what a, b and c doubt', 'gpu'),
+      dbox(796, 300, 150, 76, '3.3 · Gate', ['coverage · script ·', 'tables · balances'], 'hl'), hwchip(904, 306, 'cpu'),
+      dbox(990, 206, 150, 76, '3.4 · Repair', [t.repair_tried ? `${num(t.repaired_cells || 0)} of ${num(t.repair_tried)} fixed` : 'suspect cell of a scan', 're-read; sums must agree'], 'hl'), hwchip(1098, 212, 'gpu'),
+      dbox(990, 394, 150, 76, '3.5 · Reconcile', [t.merged_tables ? `${num(t.merged_tables)} tables joined` : 'tables across', 'a page break'], 'hl'), hwchip(1098, 400, 'cpu'),
+      E('M190,338 H218', null), E('M372,338 H396', null),
+      E('M396,338 V239 H420', null), E('M396,338 V315 H420', null), E('M396,338 V391 H420', null), E('M396,338 V467 H420', null),
+      E('M760,239 H776 V338 H792', null), E('M760,315 H776 V338', null), E('M760,391 H776 V338', null), E('M760,467 H776 V338', null),
+      E('M946,338 H966 V240 H986', 'suspect', 976, 232, 'middle'), E('M946,350 H966 V432 H986', 'pass', 976, 450, 'middle'),
+      E('M1065,282 V390', 'repaired', 1072, 336, 'start'),
+      sv('text', { x: 36, y: 514, class: 's' }, 'A page that lane a, b or c doubts after the gate is read again by lane d (b tries Tesseract first). Outcome per page: pass · repaired · low confidence (kept, flagged) · no text · error.'),
+      sv('text', { x: 126, y: 540, class: 's' }, 'page-marked Markdown + a trace of every page'), E('M115,520 V566', null),
       // 4 .. 8
-      dhead(132, 520, 'THEN: 4 PER DOCUMENT · 5 ONCE PER RUN, MODEL LOADED A SINGLE TIME · 6 PER DOCUMENT · 7–8 PER COLLECTION'),
-      dbox(20, 536, 190, 100, '4 · Chunk', [`~${c.size} tokens, ~${c.overlap} overlap`, 'never across a page', 'page + heading kept'], null), hwchip(168, 542, 'cpu'),
-      dbox(257, 536, 190, 100, '5 · Embed', [shortName(e.name), `${e.dim || 1024}-d vectors, batch ${e.batch}`, `≤ ${e.max_seq} tokens per chunk`], 'hl'), hwchip(405, 542, 'gpu'),
-      dbox(494, 536, 190, 100, '6 · Write', ['nodes.json', 'embeddings.npy', 'index.meta.json last'], 'store'),
-      dbox(731, 536, 190, 100, '7 · Merge', ['_all/ per collection', 'concatenate, no', 're-embedding']),
-      dbox(968, 536, 190, 100, '8 · Publish', ['hard-link → serving/gen-N', 'switch “current” symlink', `keep ${A.index.generations_kept}; search reloads`], 'hl'),
-      E('M210,586 H253', 'new chunks', 232, 580), E('M447,586 H490', null), E('M684,586 H727', null), E('M921,586 H964', null));
+      dhead(132, 560, 'THEN: 4 PER DOCUMENT · 5 ONCE PER RUN, MODEL LOADED A SINGLE TIME · 6 PER DOCUMENT · 7–8 PER COLLECTION'),
+      dbox(20, 576, 190, 100, '4 · Chunk', [`~${c.size} tokens, ~${c.overlap} overlap`, 'never across a page', 'page + heading kept'], null), hwchip(168, 582, 'cpu'),
+      dbox(257, 576, 190, 100, '5 · Embed', [shortName(e.name), `${e.dim || 1024}-d vectors, batch ${e.batch}`, `≤ ${e.max_seq} tokens per chunk`], 'hl'), hwchip(405, 582, 'gpu'),
+      dbox(494, 576, 190, 100, '6 · Write', ['nodes.json', 'embeddings.npy', 'index.meta.json last'], 'store'),
+      dbox(731, 576, 190, 100, '7 · Merge', ['_all/ per collection', 'concatenate, no', 're-embedding']),
+      dbox(968, 576, 190, 100, '8 · Publish', ['hard-link → serving/gen-N', 'switch “current” symlink', `keep ${A.index.generations_kept}; search reloads`], 'hl'),
+      E('M210,626 H253', 'new chunks', 232, 620), E('M447,626 H490', null), E('M684,626 H727', null), E('M921,626 H964', null));
   }
 
   function searchDiagram() {

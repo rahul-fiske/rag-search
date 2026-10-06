@@ -169,6 +169,17 @@ def run_checks(paths: Paths) -> list[tuple[str, str, str]]:
     except Exception as exc:  # noqa: BLE001
         out.append(_line(WARN, "Tesseract (last-resort page reader)", f"{type(exc).__name__}: {exc}"))
     try:
+        from .conversion import routed
+
+        sw = routed.lane_settings()
+        out.append(_line(OK, "Conversion lanes",
+                         f"a text layer (docling), d document reader: always on; b OCR first for clean scans: {sw['ocr_first']}"
+                         f" (RAG_SEARCH_OCR_FIRST); c regions the text layer does not explain: {sw['residue']} (RAG_SEARCH_RESIDUE; "
+                         f"large pictures are always read); text pages that lost text go to the reader: {sw['escalate_digital']}"
+                         f" (RAG_SEARCH_ESCALATE_DIGITAL); text layer fill: {sw['layer_fill']}"))
+    except Exception as exc:  # noqa: BLE001
+        out.append(_line(WARN, "Conversion lanes", f"{type(exc).__name__}: {exc}"))
+    try:
         if platform.system() == "Darwin" and platform.machine() == "arm64" and importlib.util.find_spec("mlx_vlm"):
 
             for kind, what in ((models.READER, "document reader"), (models.REPAIR, "repair model (re-reads flagged pages)")):

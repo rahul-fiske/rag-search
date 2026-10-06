@@ -59,6 +59,9 @@ class OcrFirstTests(TempHome):
         self.cache = pagecache.PageCache(self.paths.workspace)
         os.environ["RAG_SEARCH_OCR_FIRST"] = "auto"
         self.addCleanup(os.environ.pop, "RAG_SEARCH_OCR_FIRST", None)
+        tess = mock.patch("rag_search.core.conversion.tesseract.why_not", return_value="the real binary is not used by tier A")
+        tess.start()
+        self.addCleanup(tess.stop)
         self.runway = mock.patch("rag_search.core.conversion.router.decide_scan", return_value=("b", ["clean print"]))
         self.runway.start()
         self.addCleanup(self.runway.stop)
@@ -79,7 +82,7 @@ class OcrFirstTests(TempHome):
         self.assertIn((3, 3, "scan"), r.calls)
         rec = self.rec(res, 3)
         self.assertEqual(rec["branch"], "fallback")
-        self.assertEqual(rec["route"], {"runway": "b", "reasons": ["clean print"], "final": "b"})
+        self.assertEqual(rec["route"], {"runway": "b", "reasons": ["clean print"], "final": "b", "engine": "docling"})
         self.assertEqual(rec["reader"]["mode"], "ocr-full-page")
 
     def test_a_doubted_page_goes_to_the_document_reader_and_is_remembered(self):
@@ -118,7 +121,8 @@ class OcrFirstTests(TempHome):
         r, v = FakeReader(bad={3: GOOD}), StubVlm()
         res = self.convert(r, v)
         self.assertEqual(v.calls, [(3, 3)])
-        self.assertNotIn("route", self.rec(res, 3))
+        self.assertEqual(self.rec(res, 3)["route"]["runway"], "d")      # every page records its lane, whatever the setting
+        self.assertEqual(self.rec(res, 3)["route"]["final"], "d")
 
 
 class ScanGateTests(unittest.TestCase):

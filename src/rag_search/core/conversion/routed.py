@@ -128,6 +128,8 @@ def _new_text(page_md: str, pic_md: str) -> str:
 
 # gate checks that a re-read by another model cannot cure (the page's resolution, docling's own grade)
 NOT_ESCALATED = ("low_resolution", "docling_grade")
+# a page doubted for one of these has a structure (a table) that plain text would lose: no Tesseract rung, the document reader reads it
+STRUCTURE_CHECKS = {"table_shape", "column_types", "totals", "running_balance"}
 
 
 def layer_fill_mode() -> str:
@@ -143,6 +145,26 @@ def ocr_first_mode() -> str:
     every scanned page)."""
     v = os.environ.get("RAG_SEARCH_OCR_FIRST", "off").strip().lower()
     return "auto" if v == "auto" else "off"
+
+
+def residue_mode() -> str:
+    """``RAG_SEARCH_RESIDUE``: ``auto`` (a page with a text layer is also searched for regions of ink that the layer does not
+    explain, and the document reader reads them: lane 3.2c) or ``off`` (default: only the large embedded pictures)."""
+    v = os.environ.get("RAG_SEARCH_RESIDUE", "off").strip().lower()
+    return "auto" if v == "auto" else "off"
+
+
+def escalate_digital_mode() -> str:
+    """``RAG_SEARCH_ESCALATE_DIGITAL``: ``auto`` (a page with a text layer whose result still lost text or is garbled after the
+    layer was used goes to the document reader: lane 3.2a or 3.2c to 3.2d) or ``off`` (default: it is kept and flagged)."""
+    v = os.environ.get("RAG_SEARCH_ESCALATE_DIGITAL", "off").strip().lower()
+    return "auto" if v == "auto" else "off"
+
+
+def lane_settings() -> dict[str, str]:
+    """The switches that decide which lanes are used, for ``rag-search doctor`` and the trace."""
+    return {"ocr_first": ocr_first_mode(), "residue": residue_mode(), "escalate_digital": escalate_digital_mode(),
+            "layer_fill": layer_fill_mode()}
 
 
 class _Converter:
@@ -170,29 +192,71 @@ class _Converter:
         self.escalate: dict[int, list[str]] = {}        # page -> checks that sent a runway-b page on to the document reader
         self.first_try: dict[int, dict[str, Any]] = {}  # page -> the runway-b result kept while the document reader tries
         self.routing = ocr_first_mode() == "auto"
+        self.find_residue = residue_mode() == "auto"
+        self.up_digital = escalate_digital_mode() == "auto"
+        self.up_from: dict[int, str] = {}               # page -> the lane (a or c) whose result the document reader takes over
+        self.up_pages: list[int] = []                   # pages of lanes a and c on their way to the document reader
 
-    def route_scans(self) -> None:
-        """Runway b or d for every scanned page of a PDF (``router.decide_scan`` on the page image's facts).  Only when
-        ``RAG_SEARCH_OCR_FIRST=auto`` and the document reader is there: without it docling's OCR reads every scan anyway."""
-        if not (self.routing and not self.is_image and self.vlm_ok()):
+    def caps(self) -> dict[str, Any]:
+        return {"ocr": self.cfg["ocr"] != "off", "vlm": self.vlm_ok(), "deskew": tesseract.usable(),
+                "docling_pages": not self.is_image}
+
+    def route_all(self) -> None:
+        """The lane of every page that is read: ``a`` / ``c`` for a page with a text layer (``router.decide_digital``; the
+        residue regions are looked for only with ``RAG_SEARCH_RESIDUE=auto``), ``b`` / ``d`` for a page without one
+        (``router.decide_scan`` on the page image's facts, only with ``RAG_SEARCH_OCR_FIRST=auto`` and a document reader:
+        otherwise the document reader reads every scan, or docling's OCR when there is none)."""
+        caps = self.caps()
+        from . import residue                    # numpy: only when routing
+        digital = [e["page"] for e in self.plan if e["mode"] == "digital" and not e["blank"]]
+        regions = residue.pages_regions(self.src, digital, {e["page"]: e["profile"].get("big_pics") or [] for e in self.plan}) \
+            if (self.find_residue and caps["vlm"] and digital) else {}
+        for e in self.plan:
+            if e["blank"] or not e["mode"]:
+                continue
+            if e["mode"] == "digital":
+                lane, why = router.decide_digital(e["profile"], regions.get(e["page"]), caps)
+                e["boxes"] = (list(e["profile"].get("big_pics") or []) + regions.get(e["page"], [])) if lane == "c" else []
+                e["route"] = {"runway": lane, "reasons": why}
+        scans = [e for e in self.plan if e["mode"] == "scan" and not e["blank"]]
+        if not scans:
+            return
+        if not caps["vlm"]:
+            for e in scans:
+                e["route"] = {"runway": "b", "reasons": ["no document reader: docling's OCR reads the page"], "forced": True}
+            return
+        if not (self.routing and (caps["docling_pages"] or caps["deskew"])):
+            for e in scans:
+                e["route"] = {"runway": "d", "reasons": ["the document reader reads every scan (RAG_SEARCH_OCR_FIRST is off)"
+                                                          if not self.routing else "no OCR engine for this file"]}
             return
         from . import scanfacts                  # numpy: only when routing
 
-        want = [e["page"] for e in self.plan if e["mode"] == "scan" and not e["blank"]]
-        facts = scanfacts.pages_facts(self.src, want) if want else {}
-        caps = {"ocr": self.cfg["ocr"] != "off"}
-        for e in self.plan:
-            if e["page"] in facts:
-                runway, why = router.decide_scan(facts[e["page"]], e["profile"], caps)
-                e["route"] = {"runway": runway, "reasons": why}
+        facts = scanfacts.pages_facts(self.src, [e["page"] for e in scans]) if not self.is_image else \
+            {e["page"]: scanfacts.image_facts(self.src, e["page"]) for e in scans}
+        for e in scans:
+            prof = dict(e["profile"])
+            if self.is_image:                    # an image file's dpi tag says nothing: its pixels do (as if it were an A4 page)
+                px = prof.get("size_px")
+                prof["dpi"] = round(max(px) / 11.7) if isinstance(px, (list, tuple)) and px else 0
+            f = facts.get(e["page"])
+            runway, why = router.decide_scan(f, prof, caps)
+            e["route"] = {"runway": runway, "reasons": why}
+            if runway == "b":
+                e["route"]["engine"] = router.b_engine(f, caps)
+                e["skew"] = float((f or {}).get("skew") or 0.0)
 
     def is_b(self, e: dict[str, Any]) -> bool:
-        return (e.get("route") or {}).get("runway") == "b"
+        """Is lane b tried first on this page, with the document reader to take over?"""
+        rt = e.get("route") or {}
+        return rt.get("runway") == "b" and not rt.get("forced")
+
+    def engine(self, e: dict[str, Any]) -> str:
+        return str((e.get("route") or {}).get("engine") or "docling")
 
     def ocr_page(self, e: dict[str, Any], r: dict[str, Any]) -> bool:
         """Is this scanned page's text docling OCR's (so the OCR-side gate checks apply)?"""
-        return (self.is_b(e) and r.get("via") not in ("vlm", "tesseract", "apple-vision")
-                and (r.get("reader") or {}).get("tool") not in ("vlm", "tesseract", "apple-vision"))
+        return (self.is_b(e) and r.get("lane") == "b")
 
     def doubts(self, e: dict[str, Any], md: str, conf: Any) -> list[str]:
         """The gate's reasons to send a runway-b page to the document reader (empty: keep it)."""
@@ -239,15 +303,16 @@ class _Converter:
         return bool(self.vlm and self.vlm.usable())
 
     def pics(self, e: dict[str, Any]) -> list[list[float]]:
-        return list(e["profile"].get("big_pics") or []) if (e["mode"] == "digital" and self.vlm_ok()) else []
+        """The pictures and regions of a lane-c page that the document reader reads."""
+        return list(e.get("boxes") or []) if (e["mode"] == "digital" and self.vlm_ok()) else []
 
     def reader_tag(self, e: dict[str, Any]) -> str:
         if e["mode"] == "scan" and self.is_b(e):
-            return f"{self.reader.id}:scan"
+            return f"{tesseract.ID if self.engine(e) == 'tesseract' else self.reader.id}:scan"
         if e["mode"] == "scan" and self.vlm_ok():
             return f"{self.vlm.id}:scan"
         if e["mode"] == "digital" and self.pics(e):
-            return f"{self.reader.id}:digital+{self.vlm.id}"
+            return f"{self.reader.id}:digital+{self.vlm.id}" + ("+res1" if self.find_residue else "")
         return f"{self.reader.id}:{e['mode']}"
 
     def key(self, e: dict[str, Any], tag: str | None = None) -> str:
@@ -259,7 +324,9 @@ class _Converter:
         return res.get("branch") or e["branch"]
 
     # -- the record of one page
-    def finish(self, n: int) -> None:
+    def finish(self, n: int, may_escalate: bool = False) -> bool:
+        """Gate, repair and record page *n*.  True when the page was *not* recorded because a page with a text layer is on
+        its way to the document reader (lane a or c to d, ``RAG_SEARCH_ESCALATE_DIGITAL=auto``): the caller reads it."""
         e, r = self.by_no[n], self.results[n]
         kind = "digital" if e["mode"] == "digital" else ("scan" if e["mode"] else "other")
         r["md"], n_tables = tables.normalize_html_tables(r["md"])        # one table format, whoever read the page
@@ -273,8 +340,17 @@ class _Converter:
         conf = r.get("confidence") or (r.get("stats") or {}).get("confidence")
         g_layer = None if (lay is None or lay.get("report_only")) else lay      # report mode records, the gate keeps its old rule
         ocr = kind == "scan" and self.ocr_page(e, r)
-        g = gate.check_page(r["md"], branch_kind=kind, profile=e["profile"], confidence=conf, layer=g_layer, ocr=ocr)
+        g = gate.check_page(r["md"], branch_kind=kind, profile=e["profile"], confidence=conf, layer=g_layer, ocr=ocr,
+                            residue=r.get("residue"))
         gate_s = round(time.perf_counter() - t_gate, 4)
+        up = [c for c in gate.failed(g) if c in ("coverage", "script")] if (may_escalate and kind == "digital" and not e["blank"]
+                                                                          and self.up_digital and self.vlm_ok()
+                                                                          and n not in self.up_from) else []
+        if up:                                      # the text layer and docling together did not give the page: read its image
+            self.up_from[n] = str((e.get("route") or {}).get("runway") or "a")
+            self.escalate[n], self.first_try[n] = up, r
+            e["mode"], e["branch"] = "scan", "raster"
+            return True
         repair_s, rep = 0.0, None
         flagged = [c for c in gate.failed(g) if c not in NOT_ESCALATED]
         if (kind == "scan" and not e["blank"] and self.repairer
@@ -321,7 +397,9 @@ class _Converter:
         rec["cache"] = r["cache"]
         if e.get("route"):
             rec["route"] = {"runway": e["route"]["runway"], "reasons": e["route"]["reasons"][:6],
-                            "final": "b" if self.ocr_page(e, r) else "d"}
+                            "final": self.final_lane(e, r)}
+            if e["route"].get("engine") or (e["route"]["runway"] == "b" and r.get("via") in ("docling", "tesseract")):
+                rec["route"]["engine"] = "tesseract" if r.get("via") == "tesseract" else (e["route"].get("engine") or "docling")
             if r.get("escalated_from"):
                 rec["route"]["escalated_from"] = r["escalated_from"]
                 if r.get("first_try_s"):
@@ -351,6 +429,17 @@ class _Converter:
         self.records[n] = rec
         if self.on_page:
             self.on_page(rec, self.total)
+        return False
+
+    def final_lane(self, e: dict[str, Any], r: dict[str, Any]) -> str:
+        """The lane whose reader's text the page ends with (the planned lane when nothing took over)."""
+        if r.get("escalated_from"):
+            return "d"
+        if r.get("lane"):
+            return str(r["lane"])
+        if e["mode"] == "digital":
+            return "c" if r.get("via") == "vlm" else "a"
+        return "d" if r.get("via") == "vlm" else "b"
 
     def _repair(self, n: int, e: dict[str, Any], r: dict[str, Any], g: dict[str, Any], kind: str,
                 conf: Any) -> dict[str, Any]:
@@ -396,7 +485,7 @@ class _Converter:
         if self.vlm and any(not e["blank"] and (e["mode"] == "scan" or e["profile"].get("big_pics"))
                             for e in self.plan):
             self.vlm.check()                                 # a reader that cannot start is ruled out now
-        self.route_scans()
+        self.route_all()
         todo: dict[str, list[int]] = {"digital": [], "scan": []}
         for e in self.plan:
             n = e["page"]
@@ -410,6 +499,19 @@ class _Converter:
                 vhit = self.cache.get(vkey) if vkey else None
                 if vhit:
                     hit, self.keys[n] = vhit, vkey
+                elif self.engine(e) == "docling":                      # Tesseract read it, after docling's OCR doubted it
+                    tkey = self.key(e, f"{tesseract.ID}:scan")
+                    thit = self.cache.get(tkey) if tkey else None
+                    if thit:
+                        hit, self.keys[n] = thit, tkey
+            if e["mode"] == "digital" and self.up_digital and self.vlm_ok() and self.cache:   # the reader took this page over before
+                vkey = self.key(e, f"{self.vlm.id}:scan")
+                vhit = self.cache.get(vkey) if vkey else None
+                if vhit and (vhit.get("reader_info") or {}).get("tool") == "vlm":
+                    hit, self.keys[n] = vhit, vkey
+                    e["mode"], e["branch"] = "scan", "raster"
+                    self.up_from[n] = str((e.get("route") or {}).get("runway") or "a")
+                    self.escalate[n] = ["read by the document reader before"]
             if (hit and (hit.get("reader_info") or {}).get("tool") == "vlm" and hit.get("guard") != vlm.GUARD_VERSION
                     and degenerate.assess(hit.get("md") or "")["bad"]):
                 hit = None                    # read before the loop guard existed and it ran away: read it again
@@ -427,11 +529,15 @@ class _Converter:
                         self.keys[n] = av_key
                         break
             if hit:
+                tool = (hit.get("reader_info") or {}).get("tool")
                 self.results[n] = {"md": hit["md"], "stats": hit.get("stats") or {}, "time_s": 0.0, "cache": "hit",
+                                   "lane": ("c" if tool == "vlm" else "a") if e["mode"] == "digital" else ("d" if tool == "vlm" else "b"),
                                    "confidence": (hit.get("stats") or {}).get("confidence"),
                                    "was_s": hit.get("time_s"), "was_branch": hit.get("branch"),
                                    "reader": hit.get("reader_info"), "via": "cache", "repair": hit.get("repair"),
                                    "tokens": hit.get("tokens"), "gpu_s": hit.get("gpu_s"), "model": hit.get("model")}
+                if n in self.up_from and e["mode"] == "scan":
+                    self.results[n]["escalated_from"] = {"runway": self.up_from[n], "checks": self.escalate[n]}
                 self.tags[n] = str(hit.get("reader") or "")
                 self.hits += 1
             else:
@@ -439,12 +545,40 @@ class _Converter:
                 self.misses += 1
         return todo
 
+    def tesseract_b(self, n: int) -> dict[str, Any] | None:
+        """Lane b by Tesseract: the page is straightened when it is skewed, then read as plain text.  None when Tesseract is
+        not there, fails, or finds no text."""
+        if tesseract.why_not():
+            return None
+        e, t0 = self.by_no[n], time.perf_counter()
+        try:
+            text = tesseract.read_page(self.src, n, is_image=self.is_image, skew=float(e.get("skew") or 0.0))
+        except Exception:  # noqa: BLE001 - an optional engine
+            return None
+        if not has_real_text(text):
+            return None
+        skew = float(e.get("skew") or 0.0)
+        return {"md": text.strip() + "\n", "stats": {"chars": len("".join(text.split()))}, "time_s": time.perf_counter() - t0,
+                "cache": "miss", "confidence": None, "via": "tesseract", "lane": "b", "branch": "fallback",
+                "reader_info": {"tool": "tesseract", "mode": "page"},
+                "note": "read by Tesseract" + (f" after straightening the page ({skew} degrees)" if abs(skew) >= 0.3 else "")
+                        + " (plain text, no tables)"}
+
+    def keep_b(self, n: int, r: dict[str, Any], tag: str) -> None:
+        self.keys[n] = self.key(self.by_no[n], tag)
+        self.results[n] = r
+        self.store(n, self.keys[n], r, tag)
+        self.finish(n)
+
     def read_b(self, pages: list[int]) -> list[int]:
-        """Runway b: docling reads the pages with full-page OCR.  A page the gate doubts is kept aside and its number
-        returned, for the document reader to read; the others are done."""
+        """Lane b.  docling reads the pages with full-page OCR (a straight PDF page) and Tesseract reads a skewed page or an
+        image file after straightening it.  A page the gate doubts gets one more cheap try -- Tesseract, when docling read it
+        and the page is not a table -- and only then goes to the document reader.  The pages for the document reader are
+        returned (their first try is kept aside); the others are done."""
         sent: list[int] = []
-        for first, last in _runs(pages):
-            want = [n for n in range(first, last + 1) if n in pages]
+        by_docling = [n for n in pages if self.engine(self.by_no[n]) == "docling"]
+        for first, last in _runs(by_docling):
+            want = [n for n in range(first, last + 1) if n in by_docling]
             res = self.reader.read(self.src, first, last, "scan")
             self.runs += 1
             per = float(res.get("seconds") or 0.0) / max(1, len(want))
@@ -452,12 +586,19 @@ class _Converter:
                 e = self.by_no[n]
                 stats = (res.get("stats") or {}).get(n) or {}
                 r = {"md": (res.get("pages") or {}).get(n, ""), "stats": stats, "time_s": per, "cache": "miss",
-                     "confidence": stats.get("confidence"), "via": "docling", "branch": "fallback",
+                     "confidence": stats.get("confidence"), "via": "docling", "lane": "b", "branch": "fallback",
                      "note": stats.get("note") or ""}
                 tag = self.reader_tag(e)
                 self.keys[n] = self.key(e, tag)
                 self.store(n, self.keys[n], r, tag)
                 why = self.doubts(e, r["md"], r["confidence"])
+                if why and not (set(why) & STRUCTURE_CHECKS):
+                    r2 = self.tesseract_b(n)
+                    if r2 is not None and not self.doubts(e, r2["md"], None):
+                        r2["time_s"] += r["time_s"]
+                        r2["note"] = f"docling's OCR was doubted ({', '.join(why)}); " + r2["note"]
+                        self.keep_b(n, r2, f"{tesseract.ID}:scan")
+                        continue
                 if why:
                     self.escalate[n] = why
                     self.first_try[n] = r
@@ -465,6 +606,17 @@ class _Converter:
                 else:
                     self.results[n] = r
                     self.finish(n)
+        for n in (n for n in pages if n not in by_docling):
+            e = self.by_no[n]
+            r = self.tesseract_b(n)
+            why = self.doubts(e, r["md"], None) if r is not None else ["coverage"]
+            if r is not None and not why:
+                self.keep_b(n, r, f"{tesseract.ID}:scan")
+                continue
+            self.escalate[n] = why
+            if r is not None:
+                self.first_try[n] = r
+            sent.append(n)
         return sent
 
     def read_digital(self, pages: list[int]) -> None:
@@ -477,7 +629,7 @@ class _Converter:
                 e = self.by_no[n]
                 stats = (res.get("stats") or {}).get(n) or {}
                 r = {"md": (res.get("pages") or {}).get(n, ""), "stats": stats, "time_s": per, "cache": "miss",
-                     "confidence": stats.get("confidence"), "via": "docling"}
+                     "confidence": stats.get("confidence"), "via": "docling", "lane": "a"}
                 if stats.get("note"):
                     r["note"] = stats["note"]
                 tag = f"{self.reader.id}:digital"
@@ -490,14 +642,18 @@ class _Converter:
                         key = ""
                 self.results[n] = r
                 self.store(n, key, r, tag)
-                self.finish(n)
+                if self.finish(n, may_escalate=True):
+                    self.up_pages.append(n)
 
     def add_pictures(self, n: int, r: dict[str, Any]) -> None:
         """The document VLM reads each large picture on a text page; what it finds that the page does
         not already have is appended.  Any failure leaves the docling result as it is."""
         e = self.by_no[n]
         added, tokens, gpu, t0 = [], 0, 0.0, time.perf_counter()
-        for i, box in enumerate(e["profile"].get("big_pics") or [], 1):
+        boxes = self.pics(e)
+        done = 0
+        r["residue"] = {"asked": len(boxes), "read": 0}
+        for i, box in enumerate(boxes, 1):
             img = self.vlm._tmp_dir() / f"p{n}_{i}.png"
             try:
                 vlm.render_pdf_page(self.src, n, img, crop=tuple(box))
@@ -512,10 +668,12 @@ class _Converter:
                 img.unlink(missing_ok=True)
             tokens += int(res.get("tokens") or 0)
             gpu += float(res.get("seconds") or 0.0)
+            done += 1
+            r["residue"]["read"] = done
             new = _new_text(r["md"] + "\n\n" + "\n\n".join(added), str(res.get("md") or ""))
             if new:
                 added.append(new)
-        r.update(via="vlm", branch="embedded", model=self.vlm.model, tokens=tokens, gpu_s=gpu,
+        r.update(via="vlm", branch="embedded", lane="c", model=self.vlm.model, tokens=tokens, gpu_s=gpu,
                  reader_info={"tool": "vlm", "model": self.vlm.model, "mode": "picture"},
                  time_s=r["time_s"] + (time.perf_counter() - t0))
         if added:
@@ -548,10 +706,10 @@ class _Converter:
                              "cache": "miss", "via": "vlm", "model": self.vlm.model, "tokens": st.get("tokens"),
                              "note": st.get("note") or "",
                              "reader_info": {"tool": "vlm", "model": self.vlm.model, "mode": "page"},
-                             "gpu_s": st.get("gpu_s"), "branch": "image" if self.is_image else "raster"}
+                             "gpu_s": st.get("gpu_s"), "branch": "image" if self.is_image else "raster", "lane": "d"}
                         if n in self.escalate:
                             ft = self.first_try.get(n) or {}
-                            r["escalated_from"] = {"runway": "b", "checks": self.escalate[n]}
+                            r["escalated_from"] = {"runway": self.up_from.get(n, "b"), "checks": self.escalate[n]}
                             r["first_try_s"] = float(ft.get("time_s") or 0.0)
                         self.results[n] = r
                         self.store(n, self.keys.get(n, ""), r, tags[n])
@@ -566,6 +724,13 @@ class _Converter:
         if self.is_image:                                   # image files have no page fallback
             first = sorted(failed)[0]
             raise vlm.ReaderUnavailable(failed[first])
+        for n in sorted(n for n in failed if n in self.up_from):        # the page keeps what its text layer gave
+            e = self.by_no[n]
+            e["mode"], e["branch"] = "digital", "digital"
+            self.results[n] = dict(self.first_try[n], cache="miss", via="docling", lane=self.up_from[n],
+                                   note=f"the document reader could not take over ({failed[n][:120]}); the text-layer result is kept")
+            self.finish(n)
+            del failed[n]
         for first, last in _runs(sorted(failed)):
             want = [n for n in range(first, last + 1) if n in failed]
             res = self.reader.read(self.src, first, last, "scan")
@@ -578,7 +743,7 @@ class _Converter:
                      "confidence": stats.get("confidence"), "via": "docling", "branch": "fallback",
                      "note": "; ".join(x for x in (f"read by docling OCR: {failed[n][:200]}", stats.get("note")) if x)}
                 if n in self.first_try:                         # OCR read it already, the document reader failed: keep OCR's text
-                    r = dict(self.first_try[n], cache="miss", via="docling", branch="fallback", confidence=None,
+                    r = dict(self.first_try[n], cache="miss", via=self.first_try[n].get("via", "docling"), branch="fallback", confidence=None,
                              note=f"the document reader could not take over ({failed[n][:120]}); docling OCR's text kept")
                 if not e["blank"] and not has_real_text(r["md"]):
                     self.rescue(n, r)
@@ -699,7 +864,7 @@ class _Converter:
             for n in sorted(self.results):                  # cached and blank pages are done already
                 self.finish(n)
             self.read_digital(todo["digital"])
-            self.read_scan(todo["scan"])
+            self.read_scan(todo["scan"] + self.up_pages)
             self.reconcile()
             return self.results
         finally:

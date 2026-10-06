@@ -21,6 +21,9 @@ goes to the document reader (``escalate`` in the result):
 9. ``plausibility``  the words are not words (no vowels, letters mixed with digits, stray symbols)
 10. ``column_types`` a number column holds cells that are digits with letters among them (``1O5``, ``l2``)
 
+For a text page whose pictures or residue regions the document reader was to read (lane 3.2c) ``residue_read`` checks
+that it read them all.
+
 ``verdict`` is ``ok``, ``suspect`` (at least one check failed) or ``empty`` (nothing was read and
 nothing is expected).  ``violations`` are the validators' suspect cells (with a hypothesis each) for
 the repair step.  Everything here is deterministic and cheap: milliseconds per page.
@@ -177,6 +180,12 @@ def _expected_size(md: str, prof: dict[str, Any]) -> dict[str, Any]:
     return _check("expected_size", True)
 
 
+def _latin(tok: str) -> bool:
+    """A word written in Latin letters (with accents), the only script whose vowels ``_plausible_token`` knows."""
+    letters = [c for c in tok if c.isalpha()]
+    return bool(letters) and all(ord(c) < 0x250 for c in letters)
+
+
 def _plausible_token(tok: str) -> bool:
     low = tok.lower()
     if len(low) <= 2:
@@ -200,7 +209,7 @@ def _plausibility(md: str) -> dict[str, Any]:
     import re
 
     toks = re.findall(r"[^\W_]+", tables.plain_text(md))
-    words = [t for t in toks if not t.isdigit() and len(t) >= 3]
+    words = [t for t in toks if not t.isdigit() and len(t) >= 3 and _latin(t)]       # other scripts have other vowels
     if len(words) < MIN_WORDS_FOR_PLAUSIBILITY:
         return _check("plausibility", True)
     bad = sum(1 for t in words if not _plausible_token(t))
@@ -228,14 +237,25 @@ def _column_types(md: str) -> dict[str, Any]:
     return _check("column_types", True)
 
 
+def _residue(res: dict[str, Any] | None) -> dict[str, Any]:
+    """Lane 3.2c: every picture or region the document reader was to read was read (``res`` = ``{"asked", "read"}``)."""
+    asked, read = int((res or {}).get("asked") or 0), int((res or {}).get("read") or 0)
+    if asked and read < asked:
+        return _check("residue_read", False, f"{asked - read} of {asked} picture(s) or region(s) were not read by the document reader")
+    return _check("residue_read", True)
+
+
 NOTE_ONLY_WHEN_TEXT_INTACT = ("table_shape", "totals", "running_balance", "docling_grade")
 
 
 def check_page(md: str, *, branch_kind: str, profile: dict[str, Any] | None = None,
                confidence: dict[str, Any] | None = None, validate: bool = True,
-               layer: dict[str, Any] | None = None, ocr: bool = False) -> dict[str, Any]:
+               layer: dict[str, Any] | None = None, ocr: bool = False, residue: dict[str, Any] | None = None) -> dict[str, Any]:
     """Gate result for one page's Markdown.  *branch_kind* is ``digital`` (a text layer exists),
     ``scan`` (the page was read as an image) or ``other``; *profile* the page's profile record.
+
+    *residue* is what lane 3.2c asked of the document reader and got (``{"asked", "read"}``): a picture or region it could not
+    read leaves the page low, because what is in it is not in the index.
 
     *layer* is ``layer.compare`` of the page's own text layer with *md* (digital pages): coverage is then the share
     of the layer's words and numbers the result holds, not a share of characters.  When that says the text is all
@@ -253,6 +273,8 @@ def check_page(md: str, *, branch_kind: str, profile: dict[str, Any] | None = No
               _table_shape(md), _resolution(branch_kind, prof), _degenerate(md, branch_kind)]
     if ocr and branch_kind == "scan":
         checks += [_expected_size(md, prof), _plausibility(md), _column_types(md)]
+    if residue:
+        checks.append(_residue(residue))
     violations: list[dict[str, Any]] = []
     if validate:
         violations = validators.page_violations(md)

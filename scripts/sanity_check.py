@@ -305,8 +305,12 @@ def check_e2e(tmp: Path) -> tuple[str, str]:
             text = mds[0].read_text(errors="replace") if mds else ""
             tr = next(iter((home / "workspace" / "markup").rglob(f"{stem}*.trace.json")), None)
             pages = (json.loads(tr.read_text()).get("pages") if tr else None) or []
-            how = ", ".join(f"p{p.get('page')}:{p.get('branch')}/{p.get('outcome')}" for p in pages) or "no trace"
+            how = ", ".join(f"p{p.get('page')}:{p.get('branch')}/{p.get('outcome')}/lane {(p.get('route') or {}).get('final', '?')}"
+                            for p in pages) or "no trace"
             notes.append(f"{stem}: {how}")
+            want = "a" if stem.endswith("digital") else "d"          # a text page: lane a; a scan: the document reader
+            if pages and any((p.get("route") or {}).get("final") != want for p in pages if p.get("branch") != "fallback"):
+                bad.append(f"{stem}: expected lane {want}")
             if not has_number(text):
                 bad.append(f"{stem} lacks {NUMBER} ({text[:80]!r})")
         return ("FAIL", "; ".join(bad) + " | " + "; ".join(notes)) if bad else ("PASS", "; ".join(notes))

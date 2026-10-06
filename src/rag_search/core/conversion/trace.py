@@ -116,6 +116,11 @@ def summarize(pages: list[dict[str, Any]], *, time_s: dict[str, float] | None = 
                        if (p.get("repair") or {}).get("model") and (p.get("repair") or {}).get("tried")})
     rep_tried = sum(int((p.get("repair") or {}).get("tried") or 0) for p in pages)
     rep_fixed = sum(int((p.get("repair") or {}).get("fixed") or 0) for p in pages)
+    runways = _count(str((p.get("route") or {}).get("final")) for p in pages if (p.get("route") or {}).get("final"))
+    moves = _count(f"{(p['route'].get('escalated_from') or {}).get('runway', '?')}>{p['route'].get('final', '?')}"
+                   for p in pages if (p.get("route") or {}).get("escalated_from"))
+    b_engines = _count(str(p["route"].get("engine")) for p in pages
+                       if (p.get("route") or {}).get("final") == "b" and p["route"].get("engine"))
     out = {
         "v": TRACE_VERSION, "pages": len(pages), "branches": branches, "outcomes": outcomes,
         "strip": make_strip(page_kind(p) for p in pages),
@@ -128,6 +133,12 @@ def summarize(pages: list[dict[str, Any]], *, time_s: dict[str, float] | None = 
     }
     if step_s:
         out["step_s"] = {k: round(v, 2) for k, v in step_s.items()}
+    if runways:
+        out["runways"] = runways
+    if moves:
+        out["moves"] = moves
+    if b_engines:
+        out["b_engines"] = b_engines
     if cached:
         out["cached_pages"] = cached
     if tokens:
@@ -220,6 +231,9 @@ class RunTotals:
         self.ok_docs = 0                      # documents that converted successfully (not no-text, not failed)
         self.ok_pages = 0
         self.ok_branches: dict[str, int] = {}
+        self.runways: dict[str, int] = {}     # pages by the lane (a, b, c, d) whose text they ended with
+        self.ok_runways: dict[str, int] = {}
+        self.moves: dict[str, int] = {}       # pages a cheaper lane handed to the document reader ("b>d")
         self.outcomes: dict[str, int] = {}
         self.scripts: dict[str, int] = {}
         self.grades: dict[str, int] = {}
@@ -252,7 +266,9 @@ class RunTotals:
             self.ok_pages += int(summary.get("pages", 0))
             for k, v in (summary.get("branches") or {}).items():
                 self.ok_branches[k] = self.ok_branches.get(k, 0) + int(v)
-        for key, dst in (("branches", self.branches), ("outcomes", self.outcomes),
+            for k, v in (summary.get("runways") or {}).items():
+                self.ok_runways[k] = self.ok_runways.get(k, 0) + int(v)
+        for key, dst in (("branches", self.branches), ("runways", self.runways), ("moves", self.moves), ("outcomes", self.outcomes),
                          ("scripts", self.scripts), ("docling_grades", self.grades)):
             for k, v in (summary.get(key) or {}).items():
                 dst[k] = dst.get(k, 0) + int(v)
@@ -281,7 +297,8 @@ class RunTotals:
         return {
             "v": TRACE_VERSION, "files": self.files, "docs": self.docs, "pages": self.pages,
             "branches": self.branches, "ok_docs": self.ok_docs, "ok_pages": self.ok_pages,
-            "ok_branches": self.ok_branches, "outcomes": self.outcomes, "scripts": self.scripts,
+            "ok_branches": self.ok_branches, "runways": self.runways, "ok_runways": self.ok_runways, "moves": self.moves,
+            "outcomes": self.outcomes, "scripts": self.scripts,
             "docling_grades": self.grades, "big_pictures": self.big_pictures,
             "tables": self.tables, "low_docs": self.low_docs, "no_record": self.no_record,
             "time_s": {k: round(v, 1) for k, v in self.time_s.items()},

@@ -160,6 +160,10 @@ def convert_profile(ocr: bool | None = None, *, readers: bool = True) -> str:
             out += "|vlm=off"
         if _switched_off("RAG_SEARCH_REPAIR"):
             out += "|repair=off"
+        for var, tag in (("RAG_SEARCH_OCR_FIRST", "ocrfirst"), ("RAG_SEARCH_RESIDUE", "residue"),
+                         ("RAG_SEARCH_ESCALATE_DIGITAL", "updigital")):     # lanes that are off by default: on is part of it
+            if os.environ.get(var, "").strip().lower() == "auto":
+                out += f"|{tag}=auto"
     return out
 
 

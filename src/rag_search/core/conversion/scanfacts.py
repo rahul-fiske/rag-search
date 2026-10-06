@@ -138,3 +138,43 @@ def pages_facts(src: Path, pages: list[int], *, dpi: float = RENDER_DPI) -> dict
     finally:
         pdf.close()
     return out
+
+
+def straighten(im: Any, skew: float) -> Any:
+    """The PIL page image *im* turned so that its text lines are horizontal.  *skew* is the page's measured angle; the
+    direction is not trusted to a sign convention but tried both ways on a small copy, and the one that makes the ink
+    rows sharper is used.  A page with no measurable skew is returned as it is."""
+    from PIL import Image
+
+    if abs(skew) < 0.3:
+        return im
+    gray = im.convert("L")
+    small = gray.resize((400, max(1, round(400 * gray.height / max(1, gray.width)))))
+    norm = _normalise(np.asarray(small, dtype=np.uint8))
+
+    def sharp(angle: float) -> float:
+        rot = np.asarray(Image.fromarray((norm < 170).astype(np.uint8) * 255).rotate(angle, resample=Image.NEAREST, fillcolor=0)) > 127
+        return float(np.var(rot.sum(axis=1)))
+
+    angle = abs(skew) if sharp(abs(skew)) >= sharp(-abs(skew)) else -abs(skew)
+    return im.convert("RGB").rotate(angle, resample=Image.BICUBIC, expand=True, fillcolor=(255, 255, 255))
+
+
+def image_facts(src: Path, frame: int, *, dpi: float = RENDER_DPI) -> dict[str, Any] | None:
+    """The facts of frame *frame* (1-based) of an image file, rendered with its long side at an A4 page's length at *dpi*
+    (an image file's own dpi tag is rarely a scan's: 72 or 96 by default).  None when it cannot be examined."""
+    import tempfile
+
+    from . import vlm
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="rag-search-facts-") as tmp:
+            png = Path(tmp) / "f.png"
+            vlm.render_image_frame(src, frame, png, long_side=int(11.7 * dpi))
+            from PIL import Image
+
+            with Image.open(png) as im:
+                im.load()
+                return facts_of_image(im.copy(), dpi=dpi)
+    except Exception:  # noqa: BLE001
+        return None

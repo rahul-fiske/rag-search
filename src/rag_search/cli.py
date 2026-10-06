@@ -152,6 +152,11 @@ def _fmt_conv_totals(c: dict[str, Any] | None, indent: str = "  ") -> list[str]:
              f"{_fmt_branches(c.get('branches'))}"]
     if c.get("outcomes"):
         lines.append(f"{indent}outcomes: {_fmt_outcomes(c['outcomes'])}")
+    if c.get("runways"):
+        names = {"a": "a text layer", "b": "b OCR", "c": "c text layer + reader on pictures", "d": "d document reader"}
+        moved = ", ".join(f"{k.replace('>', ' to ')} {v}" for k, v in (c.get("moves") or {}).items())
+        lines.append(f"{indent}lanes: " + ", ".join(f"{names.get(k, k)} {v}" for k, v in sorted(c["runways"].items()))
+                     + (f"  (handed on: {moved})" if moved else ""))
     if c.get("time_s"):
         lines.append(f"{indent}time: " + ", ".join(f"{_stage(k)} {_dur(v)}" for k, v in c["time_s"].items()))
     cost = c.get("cost") or {}
@@ -568,6 +573,9 @@ def _cmd_trace(a: argparse.Namespace) -> int:
         return EXIT_OK
     for p in t["pages"]:
         bits = [f"p.{p['page']:<4} {p['branch']:<9} {p['outcome']}"]
+        if p.get("runway"):
+            bits.append(f"lane {p['runway']}" + (f" (from {p['moved_from']})" if p.get("moved_from") else "")
+                        + (f" {p['engine']}" if p.get("engine") and p["runway"] == "b" else ""))
         if p.get("chars") is not None:
             bits.append(f"{p['chars']} chars")
         if p.get("grade"):

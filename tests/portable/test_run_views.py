@@ -98,5 +98,40 @@ class ActiveFilesTests(unittest.TestCase):
         self.assertEqual(runview.live_view(self.st, running=True)["branches"], {"digital": 1})
 
 
+class LaneCountTests(unittest.TestCase):
+    """Pages are also counted by the lane (a text layer, b OCR, c text layer + pictures, d document reader) whose reader
+    finished them, and by the lane that handed them on."""
+
+    def test_the_summary_totals_and_the_live_view_count_lanes_and_moves(self):
+        pages = [rec(1, "digital", route={"runway": "a", "final": "a", "reasons": []}),
+                 rec(2, "embedded", route={"runway": "c", "final": "c", "reasons": []}),
+                 rec(3, "fallback", route={"runway": "b", "final": "b", "engine": "tesseract", "reasons": []}),
+                 rec(4, "raster", route={"runway": "b", "final": "d", "reasons": [], "escalated_from": {"runway": "b", "checks": ["plausibility"]}}),
+                 rec(5, "raster", route={"runway": "d", "final": "d", "reasons": []}), rec(6, "digital")]
+        s = trace.summarize(pages)
+        self.assertEqual(s["runways"], {"a": 1, "c": 1, "b": 1, "d": 2})
+        self.assertEqual(s["moves"], {"b>d": 1})
+        self.assertEqual(s["b_engines"], {"tesseract": 1})
+        tot = trace.RunTotals()
+        tot.add(s)
+        tot.add(s, ok=False)
+        snap = tot.snapshot()
+        self.assertEqual(snap["runways"]["d"], 4)
+        self.assertEqual(snap["ok_runways"]["d"], 2)
+        self.assertEqual(snap["moves"], {"b>d": 2})
+
+    def test_page_events_carry_the_lane_and_the_live_view_counts_them_with_their_outcomes(self):
+        st, t = runview._fresh(), 1000.0
+        evs = [dict(runway="a", outcome="pass"), dict(runway="b", outcome="pass", engine="docling"),
+               dict(runway="d", outcome="low", moved="b"), dict(runway="d", outcome="repaired")]
+        for i, e in enumerate(evs, 1):
+            runview._feed(st, ev(ts=t + i, event="page", pid=1, file="c/a.pdf", page=i, of=4, kind="raster", cache="", **e))
+        live = runview.live_view(st, running=True)
+        self.assertEqual(live["runways"], {"a": 1, "b": 1, "d": 2})
+        self.assertEqual(live["moves"], {"b>d": 1})
+        self.assertEqual(live["runway_outcomes"]["d"], {"low": 1, "repaired": 1})
+        self.assertEqual(live["engines"], {"docling": 1})
+
+
 if __name__ == "__main__":
     unittest.main()

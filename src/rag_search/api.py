@@ -339,6 +339,9 @@ def conversion_trace(paths: Paths, collection: str, doc: str, *, page: int = 0) 
             return protocol.error(protocol.BAD_REQUEST, f"{coll}/{doc}: no page {page} in the trace")
     else:
         pages = [{"page": p.get("page"), "branch": p.get("branch"), "outcome": p.get("outcome"),
+                  "runway": (p.get("route") or {}).get("final"),
+                  "moved_from": (p.get("route") or {}).get("escalated_from", {}).get("runway"),
+                  "engine": (p.get("route") or {}).get("engine"),
                   "chars": (p.get("out") or {}).get("chars"),
                   "grade": (p.get("docling") or {}).get("grade"),
                   "cache": p.get("cache"), "read_s": (p.get("time_s") or {}).get("read"),

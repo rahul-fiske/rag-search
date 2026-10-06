@@ -87,8 +87,9 @@ def read_image(image: Path, langs: str = "") -> str:
     return proc.stdout.strip()
 
 
-def read_page(src: Path, page: int, *, is_image: bool = False) -> str:
-    """Text of page *page* (1-based) of a PDF, or of frame *page* of an image file."""
+def read_page(src: Path, page: int, *, is_image: bool = False, skew: float = 0.0) -> str:
+    """Text of page *page* (1-based) of a PDF, or of frame *page* of an image file.  A page whose measured *skew* is
+    more than a quarter degree is straightened first."""
     from . import vlm
 
     with tempfile.TemporaryDirectory(prefix="rag-search-tess-") as tmp:
@@ -97,4 +98,12 @@ def read_page(src: Path, page: int, *, is_image: bool = False) -> str:
             vlm.render_image_frame(src, page, img, long_side=LONG_SIDE)
         else:
             vlm.render_pdf_page(src, page, img, long_side=LONG_SIDE)
+        if abs(skew) >= 0.3:
+            from PIL import Image
+
+            from . import scanfacts
+
+            with Image.open(img) as im:
+                im.load()
+                scanfacts.straighten(im.copy(), skew).save(img, "PNG")
         return read_image(img)
