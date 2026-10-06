@@ -50,6 +50,32 @@ What it says for this plan:
   re-check reused pages) before adding checks.
 - **Cell repair did nothing here** (0 of 13); the 92 repaired pages came from the 8B page re-read.
 
+### R0a findings (first report from the owner's workspace)
+
+19,723 pages in 2,059 documents with a trace.
+
+- **The gate's 4 h 30 min came from two pages.** Page 19 of one scanned registry deed took 14,857 s at the gate and
+  page 30 took 1,068 s; every other page took milliseconds. Cause: `tables.plain_text` removed table separator rows
+  with a regex whose `\s*` also matched newlines, and that backtracked cubically on a run of blank lines (a runaway
+  reading). 2,000 newlines took 34 s; the deed pages had far more. **Fixed:** the regex is now line-local, so
+  200,000 newlines take 13 ms. A regression test pins it. Pages already converted keep their recorded times until
+  they are converted again.
+- **Low resolution on image files was mostly a false alarm.** 135 of the 231 image pages failed `low_resolution`. An
+  image file's dpi tag of 72 or 96 is what screenshots, phones and image software write by default, not a
+  resolution. **Fixed:** such a tag is ignored and the pixels decide. A real scanner setting below 150 dpi still
+  flags.
+- **Repair costs almost as much as reading.**
+  - Repair time stored in the traces is about 30,000 s (8.4 h), against about 42,000 s of VLM reading for scans,
+    images and pictures.
+  - It produced 92 repaired pages.
+  - The 45 pages that ended with Tesseract (runaways) averaged 198 s of reading and 261 s of repair before the last
+    resort.
+  - So one runaway page costs several minutes of 4B plus 8B time. A cheaper path for such pages (3.2b, or
+    Tesseract sooner) pays off directly.
+- **Digital pages: 1,002 low** (6 % of 16,448), mostly from table shape alone (605 of all low pages across kinds) or
+  coverage alone (361). Nothing acts on them. The owner's samples have to decide between real loss and noise.
+- **Scans: 262 low and 81 repaired out of 1,496.** Images: 146 low, mostly from the dpi false alarm above.
+
 ## 2. Philosophy
 
 **When sure, read with docling (with or without OCR). When in doubt, read with the VLM.** Refined:
@@ -244,7 +270,7 @@ Each phase leaves the product working and measurable. No routing behaviour chang
 
 | Phase | Content | Exit criterion |
 |---|---|---|
-| **R0a trace mining** (first, no reading; **built**: `scripts/mine_traces.py`) | a report from the stored traces of a run: pages by kind × gate check × outcome, read and gate time per kind, the low pages listed per check for sampling; the profile cost; why the gate takes 4 h 30 min | the owner samples about 20 low pages per main check (table shape, coverage) and says which are real |
+| **R0a trace mining** (first, no reading; **built and run once**: `scripts/mine_traces.py`, findings above) | a report from the stored traces of a run: pages by kind × gate check × outcome, read and gate time per kind, the low pages listed per check for sampling; the profile cost; why the gate takes 4 h 30 min | the owner samples about 20 low pages per main check (table shape, coverage) and says which are real |
 | **R0 harness skeleton** | `bench route` running today's pipeline as runway engines (a = docling digital, b = docling OCR, d = VLM); per-page records; oracle and reports; synthetic damaged-scan generator in `tests/data` tooling | reports on the synthetic set and one owner document set |
 | **R1 profiler 3.1A + 3.1B** (runs alongside R2) | the features of 4.1 and 4.2 in the profile record; probe interface (3.1C hooks) with a no-op probe; features in the harness | feature distributions per oracle runway; profile cost per page measured |
 | **R2 runway b as first-class** (priority: most scans are English) | try-3.2b-first for clean scans (3.1B quality features), deskew before OCR, the result's script checked; brings forward the two gate checks 3.2b needs, expected size and plausibility, with escalation to 3.2d; behind a setting, off until the harness agrees | harness: b vs d quality and time on the English scans; share of 3.2b passes that escalate |

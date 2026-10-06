@@ -442,6 +442,7 @@ def plain_text(md: str) -> str:
     s = re.sub(r"<!--.*?-->", " ", md, flags=re.S)
     s = re.sub(r"</?(table|thead|tbody|tr|td|th|br|p|div|span|b|i|u)[^>]*>", " ", s, flags=re.I)
     s = html.unescape(s)
-    s = re.sub(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$", " ", s, flags=re.M)
+    # line-local whitespace only: with \s* a run of blank lines (a runaway reading) backtracked for hours
+    s = re.sub(r"^[ \t]*\|?[ \t]*:?-{2,}:?[ \t]*(?:\|[ \t]*:?-{2,}:?[ \t]*)*\|?[ \t]*$", " ", s, flags=re.M)
     s = re.sub(r"[|#*_`>~]", " ", s)
     return re.sub(r"\s+", " ", s).strip()

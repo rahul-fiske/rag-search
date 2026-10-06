@@ -486,15 +486,17 @@ class ImageFileTests(VlmBase):
         self.assertEqual([c["name"] for c in rec["gate"]["checks"]], ["low_resolution"])
         self.assertIn("500 x 700", rec["gate"]["checks"][0]["detail"])
 
-    def test_dpi_in_the_file_decides_when_it_is_given(self):
-        good, bad = self.tmp / "good.png", self.tmp / "bad.png"
+    def test_a_scanners_dpi_decides_but_a_default_tag_does_not(self):
+        good, bad, tagged = self.tmp / "good.png", self.tmp / "bad.png", self.tmp / "tagged.png"
         base = Image.new("RGB", (1500, 2000), (255, 255, 255))
         ImageDraw.Draw(base).rectangle((100, 100, 900, 140), fill=(0, 0, 0))
         base.save(good, dpi=(300, 300))
-        base.save(bad, dpi=(96, 96))
+        base.save(bad, dpi=(100, 100))                 # a real scan setting, too low
+        base.save(tagged, dpi=(72, 72))                # a screenshot / phone default: the 1500 x 2000 pixels decide
         self.assertEqual(self.convert(good, self.reader())[0]["records"][0]["outcome"], "pass")
         rec = self.convert(bad, self.reader())[0]["records"][0]
-        self.assertIn("96 dpi", rec["gate"]["checks"][0]["detail"])
+        self.assertIn("100 dpi", rec["gate"]["checks"][0]["detail"])
+        self.assertEqual(self.convert(tagged, self.reader())[0]["records"][0]["outcome"], "pass")
 
     def test_a_photograph_without_text_is_no_text(self):
         self.plan(empty=True)

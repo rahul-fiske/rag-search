@@ -32,8 +32,17 @@ class TesseractStepTests(TempHome):
             exe.chmod(exe.stat().st_mode | stat.S_IXUSR)
         script = ('set -euo pipefail; say(){ printf "==> %s\\n" "$*"; }; IMPORT_ONLY=0; NO_TESSERACT='
                   + (extra_env or {}).get("NO_TESSERACT", "0") + "\n" + tesseract_block())
-        env = {"PATH": f"{bindir}:/usr/bin:/bin", "HOME": str(self.tmp)}
-        proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env, timeout=60)
+        # only the tools the step uses, and no tesseract, brew or curl from this machine: the step must not find a
+        # real Tesseract or download language data into the system (a Linux test box has both)
+        for tool in ("sed", "grep", "rm", "cat"):
+            found = shutil.which(tool)
+            if found and not (bindir / tool).exists():
+                (bindir / tool).symlink_to(found)
+        uname = bindir / "uname"                         # the Mac branch of the step, on any machine
+        uname.write_text("#!/bin/sh\necho Darwin\n")
+        uname.chmod(uname.stat().st_mode | stat.S_IXUSR)
+        env = {"PATH": str(bindir), "HOME": str(self.tmp)}
+        proc = subprocess.run([shutil.which("bash"), "-c", script], capture_output=True, text=True, env=env, timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout
 

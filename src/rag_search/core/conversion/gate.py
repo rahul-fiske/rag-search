@@ -80,6 +80,7 @@ def _script(md: str, branch_kind: str, prof: dict[str, Any]) -> dict[str, Any]:
 
 LOW_DPI = 150                        # an image file below this resolution is read, but flagged
 LOW_PX = 1000                        # ... and so is one whose long side is shorter than this (no dpi given)
+DEFAULT_DPI_TAGS = (72, 96)          # what screenshots, phones and image software write by default: not a scan's resolution
 
 
 def _resolution(branch_kind: str, prof: dict[str, Any]) -> dict[str, Any]:
@@ -89,6 +90,8 @@ def _resolution(branch_kind: str, prof: dict[str, Any]) -> dict[str, Any]:
         return _check("low_resolution", True)
     dpi = prof.get("dpi")
     px = prof.get("size_px")
+    if px and isinstance(dpi, (int, float)) and round(dpi) in DEFAULT_DPI_TAGS:
+        dpi = None                   # an image file's default tag says nothing: judge it by its pixels
     if isinstance(dpi, (int, float)) and 0 < dpi < LOW_DPI:
         return _check("low_resolution", False, f"the image is only {round(dpi)} dpi (a scan should be {LOW_DPI} or more)")
     if not dpi and isinstance(px, (list, tuple)) and len(px) == 2 and 0 < max(px) < LOW_PX:

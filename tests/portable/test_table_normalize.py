@@ -118,3 +118,17 @@ class JoinSplitTableTests(unittest.TestCase):
         after = [validators.running_balance(t).get("checked") for t in find_tables(out)]
         self.assertEqual(before, [0])
         self.assertGreater(after[0], 0)
+
+
+class PlainTextTests(unittest.TestCase):
+    def test_separator_rows_go_and_text_stays(self):
+        self.assertEqual(tables.plain_text("| a | b |\n|---|:---:|\n| 1 | 2 |\n  | --- | --- |  \n"), "a b 1 2")
+
+    def test_a_runaway_page_of_blank_lines_is_handled_in_linear_time(self):
+        # a page that a reader filled with blank lines once kept the gate busy for four hours
+        import time
+
+        for page in ("\n" * 200_000 + "x", "  \n" * 50_000 + "x", "|" + "---|" * 5_000 + " x"):
+            t0 = time.perf_counter()
+            tables.plain_text(page)
+            self.assertLess(time.perf_counter() - t0, 1.0)

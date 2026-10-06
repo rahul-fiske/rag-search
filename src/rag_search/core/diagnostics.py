@@ -170,7 +170,6 @@ def run_checks(paths: Paths) -> list[tuple[str, str, str]]:
         out.append(_line(WARN, "Tesseract (last-resort page reader)", f"{type(exc).__name__}: {exc}"))
     try:
         if platform.system() == "Darwin" and platform.machine() == "arm64" and importlib.util.find_spec("mlx_vlm"):
-            from .. import models
 
             for kind, what in ((models.READER, "document reader"), (models.REPAIR, "repair model (re-reads flagged pages)")):
                 mid = models.vlm_selection(kind)[0]

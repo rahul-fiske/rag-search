@@ -420,7 +420,7 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   empty tables, a statement whose balance column is mostly empty because its numbers slid into a
   neighbouring column, consecutive rows that repeat each other, one amount repeated in three or more
   columns of most rows, amounts in the cheque / reference column, `Cr`/`Dr` balances in a debit or credit
-  column), `low_resolution` (an image page under 150 dpi, or a small image of unknown dpi), `degenerate` (a
+  column), `low_resolution` (an image page under 150 dpi, or a small image of unknown dpi; an image file's default dpi tag of 72 or 96 counts as unknown, so its pixels decide), `degenerate` (a
   page read as an image that is a runaway of the reader: one line or phrase repeated hundreds of times, text
   that is nothing but repetition, a script that is not on the page; `degenerate.py`; not applied to a text
   layer) and the table validators (`running_balance`, `totals`) -- and ends `pass`, `low`
