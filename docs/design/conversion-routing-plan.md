@@ -201,7 +201,7 @@ Each phase leaves the product working and measurable. No routing behaviour chang
 |---|---|---|
 | **R0 harness skeleton** | `bench route` running today's pipeline as runway engines (a = docling digital, b = docling OCR, d = VLM); per-page records; oracle and reports; synthetic damaged-scan generator in `tests/data` tooling | reports on the synthetic set and one owner document set |
 | **R1 profiler 3.1A + 3.1B** | the features of 4.1 and 4.2 in the profile record; probe interface (3.1C hooks) with a no-op probe; features in the harness | feature distributions per oracle runway; profile cost per page measured |
-| **R2 runway b as first-class** | 3.2b chosen by the router (not only as fallback), OCR engine chosen by script, deskew before OCR | harness: b vs d quality and time on clean scans, by script |
+| **R2 runway b as first-class** (priority: many clean English scans) | 3.2b chosen by the router (not only as fallback), OCR engine chosen by script, deskew before OCR | harness: b vs d quality and time on clean scans, by script |
 | **R3 gate v2** | expected size, plausibility, column types, graded and located verdicts, escalation actions | false-pass rate measured and lower than today on the same pages |
 | **R4 router v2 in shadow** | `router.decide` v2 with the threshold table; both decisions in the trace; dashboard shows disagreements | agreement report on real runs; thresholds chosen from the frontier |
 | **R5 switch on** | v2 routing and the escalation ladder live; image files through the router; 3.2c on residue regions | quality not worse than v1 on the verified set; VLM pages and repair runs fewer |
@@ -226,13 +226,16 @@ re-routing reuses earlier reads by the same reader.
    confidently wrong cheap read depends on the gate catching it. History is a warning: 49 of 56 runaways passed
    before 0.9.18. That is why R3 comes before R4/R5 and why the false-pass rate is the primary metric, ahead of
    speed.
-2. **3.2b may help less than hoped on these documents.**
-   - Much of the owner's scanned material is tables (passbooks) and Devanagari. Apple Vision on this macOS does not
-     offer Marathi or Hindi.
-   - Tesseract reads them, but writes no tables.
-   - docling's OCR on scanned tables has been weak.
-   - So 3.2b may be eligible mostly for prose scans. R0/R2 will show the share. If it is small, 3.2b is a
-     robustness path (machines without a VLM), not a speed gain, and the plan still holds.
+2. **3.2b's value depends on the mix, and the mix favours it.**
+   - The owner has many well-scanned English documents. Those without a text layer go to the VLM today (branch
+     `raster`); those with a scanner's OCR layer are already read as digital (3.2a). The first group is 3.2b's main
+     target: clean Latin print read by Apple Vision or Tesseract through docling in seconds, against tens of seconds
+     to minutes per page for the VLM, and an OCR engine cannot loop or invent text.
+   - It is weaker where the Devanagari passbooks and deeds are: Apple Vision on this macOS has no Marathi or Hindi,
+     Tesseract reads them but writes no tables, and docling's OCR has been weak on scanned tables. Those pages stay
+     on 3.2d.
+   - So 3.2b is kept and moved forward (R2 straight after R0). The harness has to confirm it on the English scans:
+     quality against 3.2d, and the gate's ability to catch the pages where it fails (multi-column, faint, tables).
 3. **Ground truth is scarce.**
    - No verified gold set exists yet ("no baseline numbers exist until a gold set has been checked").
    - Agreement between two readers is a weak proxy: they can agree on the same mistake.
