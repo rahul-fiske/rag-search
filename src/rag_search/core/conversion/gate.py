@@ -153,8 +153,8 @@ def _table_shape(md: str) -> dict[str, Any]:
     return _check("table_shape", True)
 
 
-CHARS_PER_INK = 10000.0              # characters per 1.0 of ink share: synthetic pages give 14,500; real print is lighter (mine_traces.py measures it)
-SIZE_LOW, SIZE_HIGH = 0.3, 3.0       # the text found is within this range of what the ink says
+CHARS_PER_INK = 15000.0              # characters per 1.0 of ink share: the median of 1,107 real scanned pages that passed (p05 1,700, p95 48,600; synthetic pages give 14,500); mine_traces.py section 5b
+SIZE_LOW, SIZE_HIGH = 0.25, 3.0      # the text found is within this range of what the ink says
 MIN_INK_FOR_SIZE = 0.01
 IMPLAUSIBLE_SHARE = 0.25             # share of word-like tokens that are not plausible words
 MIN_WORDS_FOR_PLAUSIBILITY = 12

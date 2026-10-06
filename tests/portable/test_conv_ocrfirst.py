@@ -53,6 +53,9 @@ class OcrFirstTests(TempHome):
         self.pdf = self.tmp / "r.pdf"
         write_routing_pdf(self.pdf)                             # pages: text, text, scan, blank
         self.profile = profiler.profile_file(self.pdf)
+        for pg in self.profile["pages"]:
+            if pg.get("ink"):
+                pg["ink"] = 0.1                           # a page with about as much text as GOOD
         self.cache = pagecache.PageCache(self.paths.workspace)
         os.environ["RAG_SEARCH_OCR_FIRST"] = "auto"
         self.addCleanup(os.environ.pop, "RAG_SEARCH_OCR_FIRST", None)
