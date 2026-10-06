@@ -102,6 +102,9 @@ in the same change -- see `docs/design/README.md`.
 
 `scripts/try_readers.py FILE` runs every page reader (Apple Vision, the document reader, docling OCR) on one
 document outside the pipeline and compares what each finds; use it to judge a reader before wiring it in.
+`scripts/mine_traces.py` reads the conversion traces of a workspace (nothing else) and reports pages by kind and
+outcome, gate checks, times and readers, with samples of low pages to look at (step R0a of
+`docs/design/conversion-routing-plan.md`).
 `scripts/sanity_check.py` checks that the installed tool can run the tools and models at all (see *Dev loop*).
 
 ## Conventions

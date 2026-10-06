@@ -1,0 +1,187 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 1330" width="1300" height="1330" role="img" aria-label="Proposed conversion routing v2: a layered profiler (3.1A document facts, 3.1B page-image facts, 3.1C probe hooks) feeds a router that sends each page to one of four runways (3.2a docling without OCR, 3.2b docling with OCR, 3.2c docling plus VLM on regions, 3.2d VLM whole page); a gate passes, escalates to 3.2d, or sends to repair; a routing harness measures every step." font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">
+<defs><marker id="ma" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/></marker><marker id="mg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#15803d"/></marker><marker id="mb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker></defs>
+<rect width="1300" height="1330" fill="#ffffff"/>
+<text x="40" y="44" font-size="22" font-weight="700" fill="#0f172a" text-anchor="start">rag-search · stage 3 Convert · routing v2 (proposal, nothing built)</text>
+<text x="40" y="68" font-size="14" font-weight="600" fill="#475569" text-anchor="start">When sure, read with docling (with or without OCR). When in doubt, read with the vision model (VLM).</text>
+<rect x="40" y="86" width="22" height="16" rx="4" fill="#fff" stroke="#2563eb" stroke-width="2"/>
+<text x="70" y="99" font-size="12" font-weight="400" fill="#475569" text-anchor="start">CPU</text>
+<rect x="124" y="86" width="22" height="16" rx="4" fill="#fff" stroke="#7c3aed" stroke-width="2"/>
+<text x="154" y="99" font-size="12" font-weight="400" fill="#475569" text-anchor="start">CPU + GPU</text>
+<rect x="256" y="86" width="22" height="16" rx="4" fill="#1e3a8a" stroke="#1e3a8a" stroke-width="2"/>
+<text x="286" y="99" font-size="12" font-weight="400" fill="#475569" text-anchor="start">GPU</text>
+<rect x="340" y="86" width="22" height="16" rx="4" fill="#f8fafc" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4 3"/>
+<text x="370" y="99" font-size="12" font-weight="400" fill="#475569" text-anchor="start">hook (plug-in, off at first)</text>
+<path d="M624,94 L658,94" stroke="#b91c1c" stroke-width="2" marker-end="url(#mr)"/>
+<text x="666" y="99" font-size="12" font-weight="400" fill="#475569" text-anchor="start">escalation</text>
+<path d="M764,94 L798,94" stroke="#15803d" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#mg)"/>
+<text x="806" y="99" font-size="12" font-weight="400" fill="#475569" text-anchor="start">measured by the harness</text>
+<rect x="40" y="122" width="450" height="62" rx="10" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2"/>
+<text x="54" y="148" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">A page of a PDF, or an image file</text>
+<text x="54" y="172" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">Office / HTML: docling as a whole · Markdown / text: copied (no change)</text>
+<path d="M230,184 L230,214" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#ma)"/>
+<rect x="30" y="214" width="880" height="232" rx="14" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="46" y="238" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">3.1  PROFILE  ·  per page, cheapest layer first; the next layer runs only for pages still open</text>
+<rect x="46" y="252" width="262" height="168" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2"/>
+<text x="60" y="278" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">3.1A  document facts</text>
+<rect x="257" y="262" width="41" height="20" rx="6" fill="#eef2ff" stroke="#2563eb" stroke-width="1"/>
+<text x="277.5" y="276" font-size="11" font-weight="700" fill="#2563eb" text-anchor="middle">CPU</text>
+<text x="60" y="302" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">pypdfium2 objects, no render · ~ms/page</text>
+<text x="60" y="320" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">chars, text plausibility, script</text>
+<text x="60" y="338" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">invisible text = hidden OCR layer</text>
+<text x="60" y="356" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">fonts without Unicode map</text>
+<text x="60" y="374" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">char boxes, ruled lines, columns</text>
+<text x="60" y="392" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">pictures and their boxes</text>
+<rect x="334" y="252" width="262" height="168" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2"/>
+<text x="348" y="278" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">3.1B  page-image facts</text>
+<rect x="545" y="262" width="41" height="20" rx="6" fill="#eef2ff" stroke="#2563eb" stroke-width="1"/>
+<text x="565.5" y="276" font-size="11" font-weight="700" fill="#2563eb" text-anchor="middle">CPU</text>
+<text x="348" y="302" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">one render 100-150 dpi · numpy, Pillow</text>
+<text x="348" y="320" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">ink the text layer does not explain</text>
+<text x="348" y="338" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">skew, blur, contrast, noise, dpi</text>
+<text x="348" y="356" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">text-line regularity</text>
+<text x="348" y="374" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">ruled lines on scans, photo-likeness</text>
+<text x="348" y="392" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">only for pages 3.1A leaves open</text>
+<rect x="622" y="252" width="272" height="168" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="2" stroke-dasharray="6 5"/>
+<text x="636" y="278" font-size="14" font-weight="700" fill="#475569" text-anchor="start">3.1C  probes (hooks)</text>
+<text x="636" y="302" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">only for pages A + B leave open, budgeted</text>
+<text x="636" y="320" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">1 script + orientation (Tesseract OSD)</text>
+<text x="636" y="338" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">2 text detector (ONNX, CPU)</text>
+<text x="636" y="356" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">3 OCR confidence probe</text>
+<text x="636" y="374" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">4 layout model (tables, pictures)</text>
+<text x="636" y="392" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">5 page classifier, if needed</text>
+<path d="M308,300 L334,300" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#ma)"/>
+<path d="M596,300 L622,300" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#ma)"/>
+<rect x="46" y="470" width="848" height="78" rx="10" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2"/>
+<text x="60" y="496" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">router.decide(features, capabilities)  -&gt;  runway, confidence, reasons</text>
+<text x="60" y="520" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">ordered rules, thresholds in one versioned table · capabilities = what this machine can run (VLM, OCR engines and scripts)</text>
+<text x="60" y="538" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">scans: clean ones try 3.2b first, hard ones (photo, ruled table, poor) go to 3.2d · blank pages are not read</text>
+<path d="M177,420 L177,470" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#ma)"/>
+<path d="M465,420 L465,470" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#ma)"/>
+<path d="M758,420 L758,470" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#ma)"/>
+<text x="183" y="452" font-size="11" font-weight="600" fill="#475569" text-anchor="start">decided</text>
+<text x="471" y="452" font-size="11" font-weight="600" fill="#475569" text-anchor="start">decided</text>
+<text x="764" y="452" font-size="11" font-weight="600" fill="#475569" text-anchor="start">features</text>
+<rect x="46" y="600" width="200" height="150" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2"/>
+<text x="60" y="626" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">3.2a  docling</text>
+<rect x="195" y="610" width="41" height="20" rx="6" fill="#eef2ff" stroke="#2563eb" stroke-width="1"/>
+<text x="215.5" y="624" font-size="11" font-weight="700" fill="#2563eb" text-anchor="middle">CPU</text>
+<text x="60" y="650" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">no OCR (OCR only in pictures)</text>
+<text x="60" y="668" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">layout + TableFormer</text>
+<text x="60" y="686" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">text layer plausible, complete,</text>
+<text x="60" y="704" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">agrees with the image</text>
+<text x="60" y="722" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">~ 83 % of pages today</text>
+<path d="M146,548 L146,600" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#ma)"/>
+<path d="M146,750 L146,800" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#ma)"/>
+<rect x="260" y="600" width="200" height="150" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2"/>
+<text x="274" y="626" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">3.2b  docling + OCR</text>
+<rect x="409" y="610" width="41" height="20" rx="6" fill="#eef2ff" stroke="#2563eb" stroke-width="1"/>
+<text x="429.5" y="624" font-size="11" font-weight="700" fill="#2563eb" text-anchor="middle">CPU</text>
+<text x="274" y="650" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">page read as an image</text>
+<text x="274" y="668" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">engine by script: Apple Vision /</text>
+<text x="274" y="686" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">Tesseract (Devanagari)</text>
+<text x="274" y="704" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">clean print, no hard structure</text>
+<text x="274" y="722" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">target: clean English scans</text>
+<path d="M360,548 L360,600" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#ma)"/>
+<path d="M360,750 L360,800" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#ma)"/>
+<rect x="474" y="600" width="200" height="150" rx="10" fill="#ffffff" stroke="#7c3aed" stroke-width="2"/>
+<text x="488" y="626" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">3.2c  docling + VLM</text>
+<rect x="587" y="610" width="77" height="20" rx="6" fill="#eef2ff" stroke="#7c3aed" stroke-width="1"/>
+<text x="625.5" y="624" font-size="11" font-weight="700" fill="#7c3aed" text-anchor="middle">CPU+GPU</text>
+<text x="488" y="650" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">docling reads the text layer,</text>
+<text x="488" y="668" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">the VLM reads pictures and</text>
+<text x="488" y="686" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">regions of unexplained ink</text>
+<text x="488" y="704" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">only new text is added</text>
+<text x="488" y="722" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">(today: picture objects only)</text>
+<path d="M574,548 L574,600" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#ma)"/>
+<path d="M574,750 L574,800" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#ma)"/>
+<rect x="688" y="600" width="200" height="150" rx="10" fill="#1e3a8a" stroke="#1e3a8a" stroke-width="2"/>
+<text x="702" y="626" font-size="14" font-weight="700" fill="#ffffff" text-anchor="start">3.2d  VLM page</text>
+<rect x="837" y="610" width="41" height="20" rx="6" fill="#ffffff" stroke="#1e3a8a" stroke-width="1"/>
+<text x="857.5" y="624" font-size="11" font-weight="700" fill="#1e3a8a" text-anchor="middle">GPU</text>
+<text x="702" y="650" font-size="12.5" font-weight="400" fill="#dbeafe" text-anchor="start">whole page by the reader</text>
+<text x="702" y="668" font-size="12.5" font-weight="400" fill="#dbeafe" text-anchor="start">(Qwen3-VL 4B today)</text>
+<text x="702" y="686" font-size="12.5" font-weight="400" fill="#dbeafe" text-anchor="start">photos, complex tables, poor</text>
+<text x="702" y="704" font-size="12.5" font-weight="400" fill="#dbeafe" text-anchor="start">scans, handwriting, unknown</text>
+<text x="702" y="722" font-size="12.5" font-weight="400" fill="#dbeafe" text-anchor="start">and every escalated page</text>
+<path d="M788,548 L788,600" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#ma)"/>
+<path d="M788,750 L788,800" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#ma)"/>
+<rect x="40" y="574" width="250" height="22" fill="#ffffff"/>
+<text x="46" y="590" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">3.2  READ  ·  one runway per page</text>
+<rect x="46" y="800" width="848" height="104" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2"/>
+<text x="60" y="826" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">3.3  GATE v2  ·  graded and located verdict per page</text>
+<rect x="843" y="810" width="41" height="20" rx="6" fill="#eef2ff" stroke="#2563eb" stroke-width="1"/>
+<text x="863.5" y="824" font-size="11" font-weight="700" fill="#2563eb" text-anchor="middle">CPU</text>
+<text x="60" y="850" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">today: coverage, script, docling grade, table shape, resolution, loops, running balance, totals</text>
+<text x="60" y="868" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">new: expected amount of text · word plausibility per script · column types · reader confidence · layer agreement</text>
+<text x="60" y="886" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">each runway is allowed only where the gate can catch its typical failure</text>
+<path d="M894,830 L930,830 L930,676 L888,676" fill="none" stroke="#b91c1c" stroke-width="2.5" marker-end="url(#mr)"/>
+<text x="940" y="736" font-size="12" font-weight="600" fill="#b91c1c" text-anchor="start">escalate:</text>
+<text x="940" y="752" font-size="12" font-weight="600" fill="#b91c1c" text-anchor="start">3.2a/b/c failed</text>
+<text x="940" y="768" font-size="12" font-weight="600" fill="#b91c1c" text-anchor="start">-&gt; read again</text>
+<text x="940" y="784" font-size="12" font-weight="600" fill="#b91c1c" text-anchor="start">by 3.2d, once</text>
+<rect x="484" y="970" width="410" height="96" rx="10" fill="#1e3a8a" stroke="#1e3a8a" stroke-width="2"/>
+<text x="498" y="996" font-size="14" font-weight="700" fill="#ffffff" text-anchor="start">3.4  REPAIR  ·  heavier VLM</text>
+<rect x="843" y="980" width="41" height="20" rx="6" fill="#ffffff" stroke="#1e3a8a" stroke-width="1"/>
+<text x="863.5" y="994" font-size="11" font-weight="700" fill="#1e3a8a" text-anchor="middle">GPU</text>
+<text x="498" y="1020" font-size="12.5" font-weight="400" fill="#dbeafe" text-anchor="start">Qwen3-VL 8B: crop and re-read suspect cells,</text>
+<text x="498" y="1038" font-size="12.5" font-weight="400" fill="#dbeafe" text-anchor="start">re-read the whole page; kept only if the gate</text>
+<text x="498" y="1056" font-size="12.5" font-weight="400" fill="#dbeafe" text-anchor="start">passes and nothing is lost</text>
+<path d="M760,904 L760,970" fill="none" stroke="#b91c1c" stroke-width="2" marker-end="url(#mr)"/>
+<text x="768" y="944" font-size="12" font-weight="600" fill="#b91c1c" text-anchor="start">3.2d failed, problems located</text>
+<path d="M600,970 L600,904" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#ma)"/>
+<text x="530" y="944" font-size="12" font-weight="600" fill="#475569" text-anchor="start">gate again</text>
+<rect x="46" y="970" width="400" height="96" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2"/>
+<text x="60" y="996" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">3.5  RECONCILE</text>
+<rect x="395" y="980" width="41" height="20" rx="6" fill="#eef2ff" stroke="#2563eb" stroke-width="1"/>
+<text x="415.5" y="994" font-size="11" font-weight="700" fill="#2563eb" text-anchor="middle">CPU</text>
+<text x="60" y="1020" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">tables across pages joined, headers repeated</text>
+<text x="60" y="1038" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">then 4 Chunk -&gt; 5 Embed -&gt; 6 Write -&gt; 7 Merge -&gt; 8 Publish</text>
+<path d="M246,904 L246,970" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#mb)"/>
+<text x="254" y="944" font-size="12" font-weight="600" fill="#2563eb" text-anchor="start">pass</text>
+<rect x="484" y="1110" width="410" height="82" rx="10" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2"/>
+<text x="498" y="1136" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">outcome: low</text>
+<text x="498" y="1160" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">kept and flagged (search marks it low-confidence)</text>
+<text x="498" y="1178" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">last resort when the VLM is unavailable or fails: decided in R7</text>
+<path d="M690,1066 L690,1110" fill="none" stroke="#b91c1c" stroke-width="2" marker-end="url(#mr)"/>
+<text x="698" y="1094" font-size="12" font-weight="600" fill="#b91c1c" text-anchor="start">repair failed</text>
+<rect x="1060" y="122" width="220" height="1070" rx="10" fill="#f0fdf4" stroke="#15803d" stroke-width="2" stroke-dasharray="6 5"/>
+<text x="1074" y="148" font-size="15" font-weight="700" fill="#14532d" text-anchor="start">Routing harness</text>
+<text x="1074" y="176" font-size="12.5" font-weight="600" fill="#166534" text-anchor="start">R0a: mine stored traces</text>
+<text x="1074" y="194" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start">  kinds x checks x outcomes,</text>
+<text x="1074" y="212" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start">  times, low pages to sample</text>
+<text x="1074" y="230" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start"></text>
+<text x="1074" y="248" font-size="12.5" font-weight="600" fill="#166534" text-anchor="start">R0: read each gold page</text>
+<text x="1074" y="266" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start">  with every runway that applies</text>
+<text x="1074" y="284" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start">  (a, b per OCR engine, c, d)</text>
+<text x="1074" y="302" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start"></text>
+<text x="1074" y="320" font-size="12.5" font-weight="600" fill="#166534" text-anchor="start">oracle = cheapest runway</text>
+<text x="1074" y="338" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start">  that reaches the target</text>
+<text x="1074" y="356" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start"></text>
+<text x="1074" y="374" font-size="12.5" font-weight="600" fill="#166534" text-anchor="start">reports:</text>
+<text x="1074" y="392" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start">  router vs oracle</text>
+<text x="1074" y="410" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start">  cost / quality frontier</text>
+<text x="1074" y="428" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start">  gate false-pass rate</text>
+<text x="1074" y="446" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start">  (the primary metric)</text>
+<text x="1074" y="464" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start">  escalation, repair rates</text>
+<text x="1074" y="482" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start">  profiling cost</text>
+<text x="1074" y="500" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start"></text>
+<text x="1074" y="518" font-size="12.5" font-weight="600" fill="#166534" text-anchor="start">threshold sweeps feed the</text>
+<text x="1074" y="536" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start">  router's table</text>
+<text x="1074" y="554" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start"></text>
+<text x="1074" y="572" font-size="12.5" font-weight="600" fill="#166534" text-anchor="start">shadow mode: real runs record</text>
+<text x="1074" y="590" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start">  old and new decision side</text>
+<text x="1074" y="608" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start">  by side before switching</text>
+<text x="1074" y="626" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start"></text>
+<text x="1074" y="644" font-size="12.5" font-weight="600" fill="#166534" text-anchor="start">probes (3.1C) are switched on</text>
+<text x="1074" y="662" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start">  only where it shows a gain</text>
+<text x="1074" y="680" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start"></text>
+<text x="1074" y="698" font-size="12.5" font-weight="600" fill="#166534" text-anchor="start">truth: verified gold pages</text>
+<text x="1074" y="716" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start">  + synthetic damaged scans</text>
+<text x="1074" y="734" font-size="12.5" font-weight="400" fill="#166534" text-anchor="start">  (no personal data in repo)</text>
+<path d="M1060,336 L914,336" fill="none" stroke="#15803d" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#mg)"/>
+<path d="M1060,640 L940,640" fill="none" stroke="#15803d" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#mg)"/>
+<path d="M1060,880 L940,880" fill="none" stroke="#15803d" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#mg)"/>
+<text x="40" y="1240" font-size="13" font-weight="600" fill="#475569" text-anchor="start">Phases: R0a trace mining -&gt; R0 harness -&gt; R2 3.2b first-class (with expected-size and plausibility checks) | R1 profiler A+B alongside</text>
+<text x="40" y="1260" font-size="13" font-weight="600" fill="#475569" text-anchor="start">-&gt; R3 rest of gate v2 -&gt; R4 router in shadow -&gt; R5 switch on -&gt; R6 first probes -&gt; R7 decisions: fallback policy, non-Mac models.</text>
+<text x="40" y="1290" font-size="12" font-weight="400" fill="#475569" text-anchor="start" font-style="italic">docs/design/conversion-routing-plan.md</text>
+</svg>

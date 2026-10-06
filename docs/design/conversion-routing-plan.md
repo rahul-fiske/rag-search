@@ -68,6 +68,8 @@ What it says for this plan:
 
 ## 3. The pipeline
 
+Picture: [`conversion-routing-v2.svg`](conversion-routing-v2.svg).
+
 ```
 3  CONVERT (per document)
    3.1  PROFILE  -- per page; stops at the first layer that makes the route clear
@@ -242,7 +244,7 @@ Each phase leaves the product working and measurable. No routing behaviour chang
 
 | Phase | Content | Exit criterion |
 |---|---|---|
-| **R0a trace mining** (first, no reading) | a report from the stored traces of a run: pages by kind × gate check × outcome, read and gate time per kind, the low pages listed per check for sampling; the profile cost; why the gate takes 4 h 30 min | the owner samples about 20 low pages per main check (table shape, coverage) and says which are real |
+| **R0a trace mining** (first, no reading; **built**: `scripts/mine_traces.py`) | a report from the stored traces of a run: pages by kind × gate check × outcome, read and gate time per kind, the low pages listed per check for sampling; the profile cost; why the gate takes 4 h 30 min | the owner samples about 20 low pages per main check (table shape, coverage) and says which are real |
 | **R0 harness skeleton** | `bench route` running today's pipeline as runway engines (a = docling digital, b = docling OCR, d = VLM); per-page records; oracle and reports; synthetic damaged-scan generator in `tests/data` tooling | reports on the synthetic set and one owner document set |
 | **R1 profiler 3.1A + 3.1B** (runs alongside R2) | the features of 4.1 and 4.2 in the profile record; probe interface (3.1C hooks) with a no-op probe; features in the harness | feature distributions per oracle runway; profile cost per page measured |
 | **R2 runway b as first-class** (priority: most scans are English) | try-3.2b-first for clean scans (3.1B quality features), deskew before OCR, the result's script checked; brings forward the two gate checks 3.2b needs, expected size and plausibility, with escalation to 3.2d; behind a setting, off until the harness agrees | harness: b vs d quality and time on the English scans; share of 3.2b passes that escalate |

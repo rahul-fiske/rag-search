@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+"""Mine the conversion traces of a workspace: what kinds of page there are, what the gate flags, where the time goes.
+
+Step R0a of docs/design/conversion-routing-plan.md.  It reads; it converts, reads with a model and changes nothing.
+Run it with rag-search's own Python, so it sees the same packages and data folder the dashboard does:
+
+    "$(uv tool dir)/rag-search/bin/python" scripts/mine_traces.py
+    ... mine_traces.py --collection documents          # one collection
+    ... mine_traces.py --sample 30 --seed 7                # more pages per check to look at
+    ... mine_traces.py --time-gate 0                       # skip re-timing the gate checks
+    ... mine_traces.py --home /path/to/data --out /tmp/mine
+
+What it writes (default folder ``~/.cache/rag-search-mine/<date-time>/``, never inside the data folder):
+
+  report.md       the tables below, readable
+  report.json     the same numbers, for comparing runs
+  low_pages.csv   every page whose outcome is ``low``, with the checks that failed and their details
+  samples.md      for each failed check, a random sample of pages (digital and scanned separately) with the
+                  commands that show the page's record and its converted text -- the pages to look at by hand
+
+The report answers, from the traces stored next to the converted Markdown (``markup/<coll>/<doc>.trace.json``):
+
+  1. pages by kind (digital, scanned, image, embedded, ...) and outcome (pass, low, repaired, no text)
+  2. gate checks that failed, by kind of page, and how often a check is the *only* reason a page is low
+  3. read, gate and repair time by kind, split into pages read in their run and pages reused from the page cache
+  4. readers used (docling, the document reader and its model, Apple Vision, Tesseract) and their tokens
+  5. the slowest pages at the gate
+  6. (``--time-gate N``, default 200) the gate's checks re-timed one by one on up to N stored pages per kind, from the
+     stored Markdown: which check takes the time
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import random
+import shlex
+import statistics
+import sys
+import time
+from collections import Counter, defaultdict
+from pathlib import Path
+from typing import Any
+
+SHOW = {"raster": "scanned", "fallback": "scanned (OCR)", "embedded": "embedded", "digital": "digital",
+        "image": "image", "office": "office", "copy": "text", "unknown": "unprofiled", "cached": "cached"}
+SCAN_KINDS = ("raster", "fallback", "image")
+
+
+def _show(kind: str) -> str:
+    return SHOW.get(kind, kind)
+
+
+def _read_traces(markup: Path, only: str):
+    """(collection, document, trace) for every readable trace file under *markup*."""
+    from rag_search.core.conversion.trace import TRACE_SUFFIX, read_trace
+
+    root = markup / only if only else markup
+    for f in sorted(root.rglob("*" + TRACE_SUFFIX)) if root.is_dir() else []:
+        rel = f.relative_to(markup).as_posix()
+        coll, _, rest = rel.partition("/")
+        data = read_trace(f)
+        if data and rest:
+            yield coll, rest[:-len(TRACE_SUFFIX)], data, f
+
+
+def _failed(p: dict[str, Any]) -> list[dict[str, Any]]:
+    return [c for c in (p.get("gate") or {}).get("checks", []) if not c.get("ok", False)]
+
+
+def _commands(coll: str, doc: str, page: int) -> tuple[str, str]:
+    target = shlex.quote(f"{coll}/{doc}")
+    return (f"rag-search trace {target} --page {page}", f"rag-search trace {target} --page {page} --md")
+
+
+def mine(markup: Path, only: str = "") -> dict[str, Any]:
+    by_kind_outcome: dict[str, Counter] = defaultdict(Counter)
+    checks_by_kind: dict[str, Counter] = defaultdict(Counter)
+    only_reason: dict[str, Counter] = defaultdict(Counter)
+    times: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    readers: Counter = Counter()
+    tokens: Counter = Counter()
+    low_rows: list[dict[str, Any]] = []
+    slow_gate: list[tuple[float, str, str, int, str]] = []
+    docs = pages = 0
+    for coll, doc, data, _f in _read_traces(markup, only):
+        docs += 1
+        from rag_search.core.conversion.trace import page_kind
+
+        for p in data.get("pages", []):
+            pages += 1
+            kind = page_kind(p)
+            outcome = str(p.get("outcome") or "pass")
+            by_kind_outcome[kind][outcome] += 1
+            failed = _failed(p)
+            for c in failed:
+                checks_by_kind[str(c.get("name"))][kind] += 1
+            if outcome == "low" and len(failed) == 1:
+                only_reason[str(failed[0].get("name"))][kind] += 1
+            cached = p.get("cache") == "hit" or p.get("branch") == "cached"
+            t = p.get("time_s") or {}
+            for step in ("read", "gate", "repair"):
+                if isinstance(t.get(step), (int, float)):
+                    times[kind][f"{step}_{'cached' if cached else 'read'}"].append(float(t[step]))
+            if isinstance(t.get("gate"), (int, float)):
+                slow_gate.append((float(t["gate"]), coll, doc, int(p.get("page") or 0), kind))
+            r = p.get("reader") or {}
+            tool = str(r.get("tool") or "?")
+            name = f"{tool} {r.get('model')}" if r.get("model") else tool
+            readers[name] += 1
+            if p.get("tokens"):
+                tokens[name] += int(p["tokens"])
+            if outcome == "low":
+                low_rows.append({"collection": coll, "doc": doc, "page": int(p.get("page") or 0), "kind": _show(kind),
+                                 "reader": name, "checks": ";".join(str(c.get("name")) for c in failed),
+                                 "details": " | ".join(f"{c.get('name')}: {c.get('detail', '')}" for c in failed),
+                                 "cached": cached})
+    slow_gate.sort(reverse=True)
+
+    def tsum(kind: str) -> dict[str, Any]:
+        out = {}
+        for key, vals in sorted(times[kind].items()):
+            out[key] = {"pages": len(vals), "total_s": round(sum(vals), 1),
+                        "mean_s": round(statistics.fmean(vals), 3) if vals else 0.0,
+                        "max_s": round(max(vals), 2) if vals else 0.0}
+        return out
+
+    return {
+        "documents": docs, "pages": pages,
+        "by_kind_outcome": {k: dict(v) for k, v in sorted(by_kind_outcome.items())},
+        "checks_by_kind": {k: dict(v) for k, v in sorted(checks_by_kind.items(), key=lambda kv: -sum(kv[1].values()))},
+        "only_reason_low": {k: dict(v) for k, v in sorted(only_reason.items(), key=lambda kv: -sum(kv[1].values()))},
+        "times_by_kind": {k: tsum(k) for k in sorted(times)},
+        "readers": dict(readers.most_common()), "tokens": dict(tokens.most_common()),
+        "slowest_gate": [{"seconds": round(s, 3), "collection": c, "doc": d, "page": n, "kind": _show(k)}
+                         for s, c, d, n, k in slow_gate[:20]],
+        "low_rows": low_rows,
+    }
+
+
+def time_gate(markup: Path, only: str, per_kind: int, seed: int) -> dict[str, Any]:
+    """Re-run the gate's checks one by one on stored pages and time each: which check costs the time."""
+    from rag_search.core.conversion import gate, pagemd, tables, validators
+    from rag_search.core.conversion.trace import page_kind
+
+    rng = random.Random(seed)
+    pool: dict[str, list[tuple[Path, int, dict[str, Any]]]] = defaultdict(list)
+    for _coll, _doc, data, f in _read_traces(markup, only):
+        md = f.with_name(f.name[:-len(".trace.json")] + ".md")
+        for p in data.get("pages", []):
+            pool[page_kind(p)].append((md, int(p.get("page") or 0), p))
+    checks = {
+        "find_tables": lambda md, kind, prof: tables.find_tables(md),
+        "coverage": lambda md, kind, prof: gate._coverage(md, kind, prof),
+        "script": lambda md, kind, prof: gate._script(md, kind, prof),
+        "table_shape": lambda md, kind, prof: gate._table_shape(md),
+        "degenerate": lambda md, kind, prof: gate._degenerate(md, kind),
+        "validators": lambda md, kind, prof: validators.page_violations(md),
+        "whole gate": lambda md, kind, prof: gate.check_page(md, branch_kind=kind, profile=prof),
+    }
+    out: dict[str, Any] = {}
+    texts: dict[Path, dict[int, str]] = {}
+    for kind, items in sorted(pool.items()):
+        sample = rng.sample(items, min(per_kind, len(items)))
+        spent: dict[str, list[float]] = defaultdict(list)
+        chars: list[int] = []
+        for md_path, n, p in sample:
+            if md_path not in texts:
+                try:
+                    texts[md_path] = pagemd.split_pages(md_path.read_text(encoding="utf-8", errors="replace"))
+                except OSError:
+                    texts[md_path] = {}
+            md = texts[md_path].get(n)
+            if md is None:
+                continue
+            chars.append(len(md))
+            gkind = "digital" if kind in ("digital", "embedded") else ("scan" if kind in SCAN_KINDS else "other")
+            prof = p.get("profile") or {}
+            for name, fn in checks.items():
+                t0 = time.perf_counter()
+                try:
+                    fn(md, gkind, prof)
+                except Exception:  # noqa: BLE001 - a check that fails here is timed all the same
+                    pass
+                spent[name].append(time.perf_counter() - t0)
+        if chars:
+            out[kind] = {"pages": len(chars), "mean_chars": round(statistics.fmean(chars)),
+                         "checks_ms": {k: {"mean": round(1000 * statistics.fmean(v), 2), "max": round(1000 * max(v), 1)}
+                                       for k, v in spent.items()}}
+    return out
+
+
+def _table(rows: list[list[Any]], head: list[str]) -> str:
+    lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
+    lines += ["| " + " | ".join(str(c) for c in r) + " |" for r in rows]
+    return "\n".join(lines)
+
+
+def write_report(out_dir: Path, rep: dict[str, Any], timing: dict[str, Any], sample: int, seed: int,
+                 home: Path) -> None:
+    kinds = sorted(rep["by_kind_outcome"], key=lambda k: -sum(rep["by_kind_outcome"][k].values()))
+    outcomes = ["pass", "low", "repaired", "no_text", "error"]
+    md: list[str] = [f"# Conversion traces of {home}", "",
+                     f"{rep['documents']} documents with a trace, {rep['pages']} pages. Written {time.strftime('%Y-%m-%d %H:%M')}.", ""]
+    md += ["## 1. Pages by kind and outcome", "", _table(
+        [[_show(k), sum(rep["by_kind_outcome"][k].values())] + [rep["by_kind_outcome"][k].get(o, 0) for o in outcomes]
+         for k in kinds], ["kind", "pages"] + outcomes), ""]
+    md += ["## 2. Gate checks that failed, by kind of page", "",
+           "A page can fail several checks; `only reason` counts low pages where this check was the single failure.", "",
+           _table([[name] + [counts.get(k, 0) for k in kinds] + [sum(rep["only_reason_low"].get(name, {}).values())]
+                   for name, counts in rep["checks_by_kind"].items()],
+                  ["check"] + [_show(k) for k in kinds] + ["only reason"]), ""]
+    md += ["## 3. Time by kind (seconds; `read` = read in its run, `cached` = reused from the page cache)", ""]
+    rows = []
+    for k in kinds:
+        for key, v in rep["times_by_kind"].get(k, {}).items():
+            rows.append([_show(k), key, v["pages"], v["total_s"], v["mean_s"], v["max_s"]])
+    md += [_table(rows, ["kind", "step", "pages", "total", "mean", "max"]), ""]
+    md += ["## 4. Readers", "", _table([[name, n, rep["tokens"].get(name, "")] for name, n in rep["readers"].items()],
+                                       ["reader", "pages", "tokens"]), ""]
+    md += ["## 5. Slowest pages at the gate", "", _table(
+        [[r["seconds"], r["kind"], f"{r['collection']}/{r['doc']}", r["page"]] for r in rep["slowest_gate"]],
+        ["seconds", "kind", "document", "page"]), ""]
+    if timing:
+        names = list(next(iter(timing.values()))["checks_ms"])
+        md += ["## 6. The gate's checks re-timed on stored pages (milliseconds, mean / max)", "", _table(
+            [[_show(k), v["pages"], v["mean_chars"]] + [f"{v['checks_ms'][n]['mean']} / {v['checks_ms'][n]['max']}" for n in names]
+             for k, v in timing.items()], ["kind", "pages", "chars"] + names), ""]
+    md += ["## Next", "", "Open `samples.md` and look at the pages listed for the big checks (table shape, coverage):",
+           "for each, is the problem real (content lost or mangled) or a false alarm? That decides how gate v2 changes."]
+    (out_dir / "report.md").write_text("\n".join(md) + "\n", encoding="utf-8")
+    (out_dir / "report.json").write_text(json.dumps({**{k: v for k, v in rep.items() if k != "low_rows"},
+                                                     "gate_timing": timing}, indent=2), encoding="utf-8")
+    with open(out_dir / "low_pages.csv", "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=["collection", "doc", "page", "kind", "reader", "checks", "details", "cached"])
+        w.writeheader()
+        w.writerows(rep["low_rows"])
+    rng = random.Random(seed)
+    by_check: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for r in rep["low_rows"]:
+        for name in r["checks"].split(";"):
+            if name:
+                by_check[name].append(r)
+    sm = ["# Low pages to look at", "",
+          "For each page: is the problem real (text lost, columns shifted, wrong script) or a false alarm?",
+          "Note the answer next to the page; the counts per check decide how the gate changes.", ""]
+    for name, rows_ in sorted(by_check.items(), key=lambda kv: -len(kv[1])):
+        sm += [f"## {name} ({len(rows_)} low pages)", ""]
+        for group, keep in (("digital pages", lambda r: r["kind"] in ("digital", "embedded")),
+                            ("scanned and image pages", lambda r: r["kind"] not in ("digital", "embedded"))):
+            pick = [r for r in rows_ if keep(r)]
+            if not pick:
+                continue
+            sm += [f"### {group} ({len(pick)})", ""]
+            for r in rng.sample(pick, min(sample, len(pick))):
+                rec, text = _commands(r["collection"], r["doc"], r["page"])
+                detail = next((d.split(": ", 1)[1] for d in r["details"].split(" | ") if d.startswith(name + ":")), "")
+                sm += [f"- [ ] `{r['collection']}/{r['doc']}` page {r['page']} ({r['kind']}, {r['reader']}): {detail}",
+                       f"  `{rec}` · `{text}`"]
+            sm.append("")
+    (out_dir / "samples.md").write_text("\n".join(sm) + "\n", encoding="utf-8")
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--home", type=Path, default=None, help="rag-search's data folder (default: the one in use)")
+    ap.add_argument("--collection", default="", help="only this collection")
+    ap.add_argument("--out", type=Path, default=None, help="where the report goes (default ~/.cache/rag-search-mine/...)")
+    ap.add_argument("--sample", type=int, default=20, help="low pages listed per check and page group (default 20)")
+    ap.add_argument("--seed", type=int, default=1, help="random seed of the samples")
+    ap.add_argument("--time-gate", type=int, default=200, help="re-time the gate checks on up to N pages per kind (0 = off)")
+    a = ap.parse_args(argv)
+    from rag_search.paths import get_paths
+
+    paths = get_paths(a.home.expanduser()) if a.home else get_paths()
+    if not paths.markup.is_dir():
+        print(f"no converted documents under {paths.markup}", file=sys.stderr)
+        return 1
+    out_dir = (a.out or Path.home() / ".cache" / "rag-search-mine" / time.strftime("%Y%m%d-%H%M%S")).expanduser()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    t0 = time.perf_counter()
+    print(f"reading traces under {paths.markup} ...", flush=True)
+    rep = mine(paths.markup, a.collection)
+    timing = time_gate(paths.markup, a.collection, a.time_gate, a.seed) if a.time_gate > 0 else {}
+    write_report(out_dir, rep, timing, a.sample, a.seed, paths.home)
+    print(f"{rep['documents']} documents, {rep['pages']} pages, {len(rep['low_rows'])} low pages "
+          f"in {time.perf_counter() - t0:.1f} s")
+    print(f"report: {out_dir / 'report.md'}\nsamples to look at: {out_dir / 'samples.md'}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
