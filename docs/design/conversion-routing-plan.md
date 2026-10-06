@@ -129,6 +129,17 @@ the deferred fallback decision (section 9). Sketch:
    script supported by an available OCR engine -> 3.2b.
 6. Everything else -> 3.2d.
 
+**Scans: try 3.2b first, verify, escalate.** The owner reports that most scanned pages are English. A scan has no
+text layer, so its script is unknown until something reads it. Two ways to learn it:
+- read the page with 3.2b and check the result's script, quality and size in the gate;
+- or ask the OSD probe (3.1C) first.
+
+When most scans are clean Latin print, the first way is the cheaper one. Clean scans go to 3.2b, and only those that
+fail the gate are read again by 3.2d. A wrong guess costs one OCR pass, about a second, not a VLM read. Pages that 3.1B
+already marks as hard (photos, ruled tables, poor quality) go straight to 3.2d. Rule 5's "supported script" condition
+is then checked on the result rather than predicted, and the OSD probe only becomes worth adding if the harness shows
+many wasted 3.2b passes (for example a collection that is mostly Devanagari).
+
 ## 5. 3.2 Read and 3.3 Gate
 
 ### 5.1 Runways
@@ -200,9 +211,9 @@ Each phase leaves the product working and measurable. No routing behaviour chang
 | Phase | Content | Exit criterion |
 |---|---|---|
 | **R0 harness skeleton** | `bench route` running today's pipeline as runway engines (a = docling digital, b = docling OCR, d = VLM); per-page records; oracle and reports; synthetic damaged-scan generator in `tests/data` tooling | reports on the synthetic set and one owner document set |
-| **R1 profiler 3.1A + 3.1B** | the features of 4.1 and 4.2 in the profile record; probe interface (3.1C hooks) with a no-op probe; features in the harness | feature distributions per oracle runway; profile cost per page measured |
-| **R2 runway b as first-class** (priority: many clean English scans) | 3.2b chosen by the router (not only as fallback), OCR engine chosen by script, deskew before OCR | harness: b vs d quality and time on clean scans, by script |
-| **R3 gate v2** | expected size, plausibility, column types, graded and located verdicts, escalation actions | false-pass rate measured and lower than today on the same pages |
+| **R1 profiler 3.1A + 3.1B** (runs alongside R2) | the features of 4.1 and 4.2 in the profile record; probe interface (3.1C hooks) with a no-op probe; features in the harness | feature distributions per oracle runway; profile cost per page measured |
+| **R2 runway b as first-class** (priority: most scans are English) | try-3.2b-first for clean scans (3.1B quality features), deskew before OCR, the result's script checked; brings forward the two gate checks 3.2b needs, expected size and plausibility, with escalation to 3.2d; behind a setting, off until the harness agrees | harness: b vs d quality and time on the English scans; share of 3.2b passes that escalate |
+| **R3 gate v2** | the rest of the gate: column types, graded and located verdicts, escalation actions | false-pass rate measured and lower than today on the same pages |
 | **R4 router v2 in shadow** | `router.decide` v2 with the threshold table; both decisions in the trace; dashboard shows disagreements | agreement report on real runs; thresholds chosen from the frontier |
 | **R5 switch on** | v2 routing and the escalation ladder live; image files through the router; 3.2c on residue regions | quality not worse than v1 on the verified set; VLM pages and repair runs fewer |
 | **R6 first probes** | Tesseract OSD; ONNX text detector; each behind its hook, on only where the harness shows a gain | measured gain per probe |
