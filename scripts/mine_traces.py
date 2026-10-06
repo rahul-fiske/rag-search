@@ -255,7 +255,7 @@ def _page_number_line(line: str) -> bool:
 
 
 def _boilerplate(layers: list[str]) -> set[str]:
-    """Running headers and footers of a document: lines among the first and last three of a page that repeat (digits
+    """Running headers and footers of a document: lines among the first and last two of a page (of six lines or more) that repeat (digits
     ignored) on at least 3 pages and 30 % of them.  docling leaves page headers and footers out of its Markdown on
     purpose, so they must not count as lost text."""
     import re
@@ -265,7 +265,8 @@ def _boilerplate(layers: list[str]) -> set[str]:
     seen: Counter = Counter()
     for text in layers:
         lines = [x.strip() for x in text.splitlines() if x.strip()]
-        seen.update({re.sub(r"\d+", "#", x.lower()) for x in lines[:3] + lines[-3:]})
+        if len(lines) >= 6:                          # a short page (a form) has no room for a running header and a body
+            seen.update({re.sub(r"\d+", "#", x.lower()) for x in lines[:2] + lines[-2:]})
     need = max(3, int(0.3 * len(layers)))
     return {k for k, n in seen.items() if n >= need}
 
