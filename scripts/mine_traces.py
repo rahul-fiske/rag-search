@@ -27,6 +27,13 @@ The report answers, from the traces stored next to the converted Markdown (``mar
   5. the slowest pages at the gate
   6. (``--time-gate N``, default 200) the gate's checks re-timed one by one on up to N stored pages per kind, from the
      stored Markdown: which check takes the time
+  7. (``--check-sources [low|all]``, step R0b) for pages read from a PDF text layer (digital and embedded), whether
+     docling's Markdown still holds the text layer's words and numbers: the source PDF is opened read-only (only
+     files inside a registered location) and each page's layer is compared with the stored Markdown.  ``low`` checks
+     the pages the gate flagged; ``all`` every such page, which also shows text lost on pages the gate passed.
+     Verdicts: ``intact`` (the flag is a false alarm for search), ``intact, table shape only`` (the text is there,
+     only the table's layout was questioned), ``lost text``, ``uncertain`` (in between, or a layer too short or
+     garbled to judge), ``no source`` (file not found).  Written to ``source_check.csv`` and section 7 of the report.
 """
 
 from __future__ import annotations
@@ -39,6 +46,7 @@ import shlex
 import statistics
 import sys
 import time
+import unicodedata
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
@@ -191,14 +199,142 @@ def time_gate(markup: Path, only: str, per_kind: int, seed: int) -> dict[str, An
     return out
 
 
+INTACT_WORDS, INTACT_NUMBERS = 0.97, 0.98          # at least this share of the layer is in the Markdown: intact
+LOST = 0.90                                        # below this share of words or numbers: lost text
+MIN_LAYER_TOKENS = 15                              # fewer layer words than this: too short to judge
+
+
+def _tokens(text: str) -> tuple[Counter, Counter]:
+    """(words, numbers) of a text, normalised so that a PDF layer and docling's Markdown compare: NFKC (ligatures),
+    lower case, words broken at a line end joined, Markdown escapes and soft hyphens dropped, numbers without
+    thousands separators."""
+    import re
+
+    t = unicodedata.normalize("NFKC", text or "").replace("\u00ad", "").replace("\\", "")
+    t = re.sub(r"(\w)-[ \t]*\n[ \t]*(\w)", r"\1\2", t).lower()
+    nums = Counter(re.sub(r"[,\s]", "", m) for m in re.findall(r"\d[\d,]*(?:\.\d+)?", t))
+    words = Counter(w for w in re.findall(r"[^\W\d_]{2,}", t))
+    return words, nums
+
+
+def _recall(layer: Counter, out: Counter) -> float | None:
+    total = sum(layer.values())
+    if not total:
+        return None
+    return sum(min(n, out.get(k, 0)) for k, n in layer.items()) / total
+
+
+def _verdict(w: float | None, n: float | None, layer_words: int, layer_ok: bool, failed: list[str]) -> str:
+    if w is None or layer_words < MIN_LAYER_TOKENS or not layer_ok:
+        return "uncertain"
+    nn = 1.0 if n is None else n
+    if w < LOST or nn < LOST:
+        return "lost text"
+    if w >= INTACT_WORDS and nn >= INTACT_NUMBERS:
+        return "intact, table shape only" if failed and set(failed) <= {"table_shape"} else "intact"
+    return "uncertain"
+
+
+def check_sources(paths: Any, only: str, which: str) -> dict[str, Any]:
+    """Compare the text layer of every digital / embedded page (``which`` = low | all) with its stored Markdown."""
+    from rag_search import api
+    from rag_search.core.conversion import pagemd, tables
+    from rag_search.core.conversion.trace import page_kind
+    from rag_search.core.docling_convert import page_text_ok
+
+    try:
+        import pypdfium2 as pdfium
+    except ImportError:
+        return {"error": "pypdfium2 is not installed in this Python"}
+    rows: list[dict[str, Any]] = []
+    for coll, doc, data, f in _read_traces(paths.markup, only):
+        want = [p for p in data.get("pages", []) if page_kind(p) in ("digital", "embedded")
+                and (which == "all" or p.get("outcome") == "low")]
+        if not want:
+            continue
+        idx = paths.index.joinpath(coll, *doc.split("/"))
+        src = api._doc_source(paths, coll, doc, idx, f)
+        md_path = f.with_name(f.name[:-len(".trace.json")] + ".md")
+        base = {"collection": coll, "doc": doc}
+        if src is None or src.suffix.lower() != ".pdf":
+            rows += [{**base, "page": int(p.get("page") or 0), "outcome": p.get("outcome"), "verdict": "no source",
+                      "checks": ";".join(str(c.get("name")) for c in _failed(p))} for p in want]
+            continue
+        try:
+            pages_md = pagemd.split_pages(md_path.read_text(encoding="utf-8", errors="replace"))
+            pdf = pdfium.PdfDocument(str(src))
+        except Exception as exc:  # noqa: BLE001 - an unreadable file is a row, not a crash
+            rows += [{**base, "page": int(p.get("page") or 0), "outcome": p.get("outcome"), "verdict": "no source",
+                      "checks": ";".join(str(c.get("name")) for c in _failed(p)), "note": f"{type(exc).__name__}: {exc}"}
+                     for p in want]
+            continue
+        try:
+            for p in want:
+                n = int(p.get("page") or 0)
+                failed = [str(c.get("name")) for c in _failed(p)]
+                try:
+                    page = pdf[n - 1]
+                    tp = page.get_textpage()
+                    layer = tp.get_text_range() or ""
+                    tp.close()
+                    page.close()
+                except Exception:  # noqa: BLE001
+                    layer = ""
+                lw, ln = _tokens(layer)
+                ow, on = _tokens(tables.plain_text(pages_md.get(n, "")))
+                w, num = _recall(lw, ow), _recall(ln, on)
+                rows.append({**base, "page": n, "outcome": p.get("outcome"), "checks": ";".join(failed),
+                             "layer_words": sum(lw.values()), "layer_numbers": sum(ln.values()),
+                             "word_recall": None if w is None else round(w, 3),
+                             "number_recall": None if num is None else round(num, 3),
+                             "verdict": _verdict(w, num, sum(lw.values()), page_text_ok(layer), failed)})
+        finally:
+            pdf.close()
+    by_check: dict[str, Counter] = defaultdict(Counter)
+    by_outcome: dict[str, Counter] = defaultdict(Counter)
+    for r in rows:
+        by_outcome[str(r.get("outcome"))][r["verdict"]] += 1
+        for name in (r.get("checks") or "").split(";"):
+            if name:
+                by_check[name][r["verdict"]] += 1
+    return {"which": which, "pages": len(rows), "rows": rows,
+            "by_check": {k: dict(v) for k, v in sorted(by_check.items(), key=lambda kv: -sum(kv[1].values()))},
+            "by_outcome": {k: dict(v) for k, v in sorted(by_outcome.items())}}
+
+
 def _table(rows: list[list[Any]], head: list[str]) -> str:
     lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
     lines += ["| " + " | ".join(str(c) for c in r) + " |" for r in rows]
     return "\n".join(lines)
 
 
+def _sources_section(src: dict[str, Any], sample: int, seed: int) -> list[str]:
+    if src.get("error"):
+        return ["## 7. Text layer against the Markdown", "", f"Not run: {src['error']}", ""]
+    verdicts = ["intact", "intact, table shape only", "uncertain", "lost text", "no source"]
+    out = ["## 7. Text layer against the Markdown (digital and embedded pages, " + src["which"] + ")", "",
+           f"{src['pages']} pages compared. `intact`: at least {round(100 * INTACT_WORDS)} % of the layer's words and "
+           f"{round(100 * INTACT_NUMBERS)} % of its numbers are in the Markdown. `lost text`: under {round(100 * LOST)} %.", "",
+           "By outcome:", "", _table([[o] + [c.get(v, 0) for v in verdicts] for o, c in src["by_outcome"].items()],
+                                     ["outcome"] + verdicts), "",
+           "By failed check (a page can count under several):", "",
+           _table([[k] + [c.get(v, 0) for v in verdicts] for k, c in src["by_check"].items()], ["check"] + verdicts), ""]
+    rng = random.Random(seed)
+    for v in ("lost text", "uncertain", "intact, table shape only"):
+        pick = [r for r in src["rows"] if r["verdict"] == v]
+        if not pick:
+            continue
+        out += [f"Sample, {v} ({len(pick)}):", ""]
+        for r in rng.sample(pick, min(sample, len(pick))):
+            rec, text = _commands(r["collection"], r["doc"], r["page"])
+            out.append(f"- `{r['collection']}/{r['doc']}` page {r['page']} ({r.get('outcome')}; words "
+                       f"{r.get('word_recall')}, numbers {r.get('number_recall')}; {r.get('checks') or 'no check'}): `{text}`")
+        out.append("")
+    return out
+
+
 def write_report(out_dir: Path, rep: dict[str, Any], timing: dict[str, Any], sample: int, seed: int,
-                 home: Path) -> None:
+                 home: Path, sources: dict[str, Any] | None = None) -> None:
     kinds = sorted(rep["by_kind_outcome"], key=lambda k: -sum(rep["by_kind_outcome"][k].values()))
     outcomes = ["pass", "low", "repaired", "no_text", "error"]
     md: list[str] = [f"# Conversion traces of {home}", "",
@@ -227,11 +363,22 @@ def write_report(out_dir: Path, rep: dict[str, Any], timing: dict[str, Any], sam
         md += ["## 6. The gate's checks re-timed on stored pages (milliseconds, mean / max)", "", _table(
             [[_show(k), v["pages"], v["mean_chars"]] + [f"{v['checks_ms'][n]['mean']} / {v['checks_ms'][n]['max']}" for n in names]
              for k, v in timing.items()], ["kind", "pages", "chars"] + names), ""]
+    if sources:
+        md += _sources_section(sources, sample, seed)
     md += ["## Next", "", "Open `samples.md` and look at the pages listed for the big checks (table shape, coverage):",
            "for each, is the problem real (content lost or mangled) or a false alarm? That decides how gate v2 changes."]
     (out_dir / "report.md").write_text("\n".join(md) + "\n", encoding="utf-8")
     (out_dir / "report.json").write_text(json.dumps({**{k: v for k, v in rep.items() if k != "low_rows"},
-                                                     "gate_timing": timing}, indent=2), encoding="utf-8")
+                                                     "gate_timing": timing,
+                                                     "source_check": {k: v for k, v in (sources or {}).items() if k != "rows"}},
+                                                    indent=2), encoding="utf-8")
+    if sources and sources.get("rows"):
+        cols = ["collection", "doc", "page", "outcome", "checks", "verdict", "word_recall", "number_recall",
+                "layer_words", "layer_numbers", "note"]
+        with open(out_dir / "source_check.csv", "w", newline="", encoding="utf-8") as fh:
+            w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
+            w.writeheader()
+            w.writerows(sources["rows"])
     with open(out_dir / "low_pages.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=["collection", "doc", "page", "kind", "reader", "checks", "details", "cached"])
         w.writeheader()
@@ -270,6 +417,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--sample", type=int, default=20, help="low pages listed per check and page group (default 20)")
     ap.add_argument("--seed", type=int, default=1, help="random seed of the samples")
     ap.add_argument("--time-gate", type=int, default=200, help="re-time the gate checks on up to N pages per kind (0 = off)")
+    ap.add_argument("--check-sources", nargs="?", const="low", default="", choices=["low", "all"],
+                    help="compare each digital page's PDF text layer with its Markdown: the low pages, or all (R0b)")
     a = ap.parse_args(argv)
     from rag_search.paths import get_paths
 
@@ -283,9 +432,16 @@ def main(argv: list[str] | None = None) -> int:
     print(f"reading traces under {paths.markup} ...", flush=True)
     rep = mine(paths.markup, a.collection)
     timing = time_gate(paths.markup, a.collection, a.time_gate, a.seed) if a.time_gate > 0 else {}
-    write_report(out_dir, rep, timing, a.sample, a.seed, paths.home)
+    sources = None
+    if a.check_sources:
+        print(f"comparing text layers with the Markdown ({a.check_sources} pages) ...", flush=True)
+        sources = check_sources(paths, a.collection, a.check_sources)
+    write_report(out_dir, rep, timing, a.sample, a.seed, paths.home, sources)
     print(f"{rep['documents']} documents, {rep['pages']} pages, {len(rep['low_rows'])} low pages "
           f"in {time.perf_counter() - t0:.1f} s")
+    if sources and not sources.get("error"):
+        lost = sum(1 for r in sources["rows"] if r["verdict"] == "lost text")
+        print(f"text layer check: {sources['pages']} pages, {lost} with lost text")
     print(f"report: {out_dir / 'report.md'}\nsamples to look at: {out_dir / 'samples.md'}")
     return 0
 

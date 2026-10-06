@@ -7,6 +7,7 @@ import csv
 import importlib.util
 import io
 import json
+import unittest
 from pathlib import Path
 
 from tests.helpers import TempHome
@@ -103,3 +104,80 @@ class MineTracesTests(TempHome):
         shutil.rmtree(self.paths.markup)
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(load().main(["--home", str(self.paths.home), "--out", str(self.tmp / "o2")]), 1)
+
+
+try:
+    import pypdfium2  # noqa: F401
+    HAVE_PDFIUM = True
+except ImportError:
+    HAVE_PDFIUM = False
+
+
+@unittest.skipUnless(HAVE_PDFIUM, "needs pypdfium2")
+class SourceCheckTests(TempHome):
+    """R0b: a digital page's text layer compared with the Markdown that was indexed."""
+
+    def setUp(self):
+        super().setUp()
+        import pypdfium2 as pdfium
+        from tests import corpus
+        from rag_search.core.conversion import trace
+
+        src = corpus.copy("pdf/text.pdf", self.source("docs") / "plan.pdf")
+        pdf = pdfium.PdfDocument(str(src))
+        layers = [pdf[i].get_textpage().get_text_range() for i in range(len(pdf))]
+        pdf.close()
+        half = " ".join(layers[1].split()[: len(layers[1].split()) // 2])
+        md_pages = {1: layers[0], 2: half, 3: layers[2]}            # page 2 lost half its text
+        pages = [trace.page_record(1, "digital", "why", outcome="low"),
+                 trace.page_record(2, "digital", "why", outcome="low"),
+                 trace.page_record(3, "digital", "why", outcome="pass")]
+        pages[0]["gate"] = {"verdict": "suspect", "checks": [{"name": "table_shape", "ok": False}]}
+        pages[1]["gate"] = {"verdict": "suspect", "checks": [{"name": "coverage", "ok": False}]}
+        md = self.paths.markup / "docs" / "plan.md"
+        md.parent.mkdir(parents=True)
+        md.write_text("".join(f"<!-- page {n} -->\n\n{t}\n\n" for n, t in md_pages.items()))
+        trace.write_trace(trace.trace_path_for(md), source="plan.pdf", src_sha="x", pages=pages,
+                          summary=trace.summarize(pages))
+        self.src = src
+
+    def run_script(self, *args):
+        out = self.tmp / "out"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(load().main(["--home", str(self.paths.home), "--out", str(out), "--time-gate", "0", *args]), 0)
+        return out, buf.getvalue()
+
+    def test_low_pages_are_judged_by_the_text_layer(self):
+        before = self.src.read_bytes()
+        out, said = self.run_script("--check-sources")
+        self.assertIn("text layer check: 2 pages, 1 with lost text", said)
+        with (out / "source_check.csv").open() as fh:
+            rows = {int(r["page"]): r for r in csv.DictReader(fh)}
+        self.assertEqual(rows[1]["verdict"], "intact, table shape only")      # the flag was about layout only
+        self.assertEqual(rows[2]["verdict"], "lost text")
+        self.assertLess(float(rows[2]["word_recall"]), 0.6)
+        rep = json.loads((out / "report.json").read_text())
+        self.assertEqual(rep["source_check"]["by_check"]["coverage"], {"lost text": 1})
+        self.assertIn("Text layer against the Markdown", (out / "report.md").read_text())
+        self.assertEqual(self.src.read_bytes(), before)                      # the source is only read
+
+    def test_all_pages_and_a_missing_source(self):
+        out, _ = self.run_script("--check-sources", "all")
+        rep = json.loads((out / "report.json").read_text())
+        self.assertEqual(rep["source_check"]["by_outcome"]["pass"], {"intact": 1})
+        self.src.unlink()
+        out, said = self.run_script("--check-sources")
+        rep = json.loads((out / "report.json").read_text())
+        self.assertEqual(rep["source_check"]["by_outcome"]["low"], {"no source": 2})
+
+    def test_tokens_compare_a_layer_with_markdown(self):
+        m = load()
+        words, nums = m._tokens("The ﬁnal exam-\nple costs 1,234.50 in snake\\_case")
+        self.assertEqual(set(words), {"the", "final", "example", "costs", "in", "snake", "case"})
+        self.assertEqual(set(nums), {"1234.50"})
+        self.assertEqual(m._verdict(0.99, 1.0, 50, True, ["coverage"]), "intact")
+        self.assertEqual(m._verdict(0.99, 0.5, 50, True, []), "lost text")
+        self.assertEqual(m._verdict(0.95, 1.0, 50, True, []), "uncertain")
+        self.assertEqual(m._verdict(1.0, 1.0, 5, True, []), "uncertain")            # too short to judge
+        self.assertEqual(m._verdict(1.0, 1.0, 50, False, []), "uncertain")          # a garbled layer proves nothing
