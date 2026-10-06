@@ -64,7 +64,10 @@ def _domain() -> str:
 
 
 def _launchctl(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["launchctl", *args], capture_output=True, text=True)
+    try:
+        return subprocess.run(["launchctl", *args], capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(["launchctl", *args], 124, "", "launchctl did not answer within 60 seconds")
 
 
 def _require_macos() -> str | None:

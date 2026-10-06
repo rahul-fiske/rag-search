@@ -91,7 +91,8 @@ def documents(paths: Paths, job_id: str, limit: int = 50, *, status: str = "",
         if ev.get("event") != "doc":
             continue
         item = {("finished_at" if k == "ts" else k): v for k, v in ev.items() if k != "event"}
-        key = (str(item.get("collection", "")), str(item.get("source", "")))
+        # by the document's path inside its collection (older logs have only the file name)
+        key = (str(item.get("collection", "")), str(item.get("path") or item.get("source", "")))
         earlier = latest.pop(key, None)          # re-inserted: the list stays in order of last change
         if earlier and item.get("status") != "skipped":
             item = {**{k: v for k, v in earlier.items() if k not in ("status", "message")}, **item}
@@ -125,7 +126,7 @@ def documents(paths: Paths, job_id: str, limit: int = 50, *, status: str = "",
         filtered = [i for i in filtered if ((i.get("conversion") or {}).get("outcomes") or {}).get(outcome)]
     if q:
         ql = q.casefold()
-        filtered = [i for i in filtered if ql in str(i.get("source", "")).casefold()]
+        filtered = [i for i in filtered if ql in str(i.get("path") or i.get("source", "")).casefold()]
     out["matched"] = len(filtered)
     out["items"] = filtered[-max(0, int(limit)):] if limit else []
     return out

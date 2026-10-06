@@ -36,6 +36,7 @@ from ..config import ConfigStore, effective_jobs
 from ..effective import ambient, settings_env
 from ..jobs import ACTIVE, all_records, events_file, job_file, now, read_record, view
 from ..paths import SUPPORTED_EXTENSIONS, Paths, detached_start, get_paths, write_json_atomic
+from . import stallwatch
 from .daemon_base import LOG_DATE_FORMAT, DaemonBase
 from .worker import EXIT_BUSY
 
@@ -343,8 +344,22 @@ class IndexerDaemon(DaemonBase):
                     elif ev.get("event") == "error":
                         err = ev.get("error", "")
 
+            # The run's own stall watch stops a conversion process that goes silent (stallwatch.py).  This is the second
+            # line: a run whose event log has not grown at all for twice that limit -- its main process hangs, in a
+            # phase the first watch does not cover -- is stopped and reported, instead of staying "running" for ever.
+            run_limit = stallwatch.RUN_FACTOR * stallwatch.limit_s(env)
+            quiet, tick = 0.0, time.monotonic()
             while proc.poll() is None:
+                before = offset
                 drain()
+                now_t = time.monotonic()
+                quiet = 0.0 if offset != before else quiet + min(now_t - tick, 5.0)   # capped: a sleeping laptop is not a stall
+                tick = now_t
+                if run_limit > 0 and quiet >= run_limit and not self.cancel_flag:
+                    log.error("run %s wrote nothing for %d min: stopping it", jid, round(quiet / 60))
+                    self._cancel("failed", f"stalled: the run reported nothing for {round(quiet / 60)} minutes and was "
+                                 "stopped. Start it again: documents and pages already done are kept "
+                                 "(RAG_SEARCH_STALL_TIMEOUT sets the limit).", wait=False)
                 time.sleep(0.25)
             drain()
             rc = proc.returncode

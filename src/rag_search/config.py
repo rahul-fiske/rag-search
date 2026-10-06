@@ -8,7 +8,8 @@ Example ``config.json`` (every key is optional):
       "indexer": {"idle_exit_seconds": 0, "jobs": 0, "auto_publish": true,
                    "chunk_size": 0, "chunk_overlap": 0, "ocr": "", "ocr_engine": "", "ocr_lang": "",
                    "table_mode": "", "pdf_backend": "", "pipeline": "", "routing": "", "vlm": "", "repair": "",
-                   "doc_timeout": 0, "docling_batch": 0},
+                   "ocr_first": "", "residue": "", "escalate_digital": "", "layer_fill": "",
+                   "stall_timeout": 0, "doc_timeout": 0, "docling_batch": 0},
       "models":  {"embedding": "", "reranker": "", "reader": "", "repair": "", "memory_limit_gb": 0,
                    "embed_batch": 0, "max_seq": 0, "dtype": "", "rerank_batch": 0,
                    "rerank_max_len": 0, "device": ""}
@@ -49,7 +50,9 @@ DEFAULTS: dict[str, Any] = {
         "idle_exit_seconds": 0, "jobs": 0, "auto_publish": True,
         "chunk_size": 0, "chunk_overlap": 0,
         "ocr": "", "ocr_engine": "", "ocr_lang": "", "table_mode": "", "pdf_backend": "",
-        "pipeline": "", "routing": "", "vlm": "", "repair": "", "doc_timeout": 0, "docling_batch": 0,
+        "pipeline": "", "routing": "", "vlm": "", "repair": "",
+        "ocr_first": "", "residue": "", "escalate_digital": "", "layer_fill": "", "stall_timeout": 0,
+        "doc_timeout": 0, "docling_batch": 0,
     },
     # "" = the built-in default model; change with `rag-search models set` or the dashboard.
     # memory_limit_gb: 0 = no limit of your own (models are then judged against the RAM installed)

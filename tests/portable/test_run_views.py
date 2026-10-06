@@ -133,5 +133,66 @@ class LaneCountTests(unittest.TestCase):
         self.assertEqual(live["engines"], {"docling": 1})
 
 
+class LogReaderTests(unittest.TestCase):
+    """The same events through the reader of the real log file (which picks the lines it parses)."""
+
+    def test_plan_and_step_events_reach_the_view_and_a_quiet_worker_shows(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "job.events.jsonl"
+            t = 1000.0
+            lines = [ev(ts=t, event="phase", phase="convert", status="start", pid=1, total=2),
+                     ev(ts=t + 1, event="work", pid=11, phase="convert", file="c/deed.pdf", status="start"),
+                     ev(ts=t + 2, event="plan", pid=11, file="c/deed.pdf", pages=5, branches={"digital": 3, "raster": 2}),
+                     ev(ts=t + 3, event="page", pid=11, file="c/deed.pdf", page=1, of=5, kind="digital", outcome="pass", cache="", runway="a"),
+                     ev(ts=t + 4, event="step", pid=11, file="c/deed.pdf", page=4, what="document reader")]
+            f.write_text("\n".join(lines) + "\n")
+            st = runview._read_new(f)
+            live = runview.live_view(st, running=True)
+            self.assertEqual(live["active"]["branches"], {"digital": 3, "raster": 2})     # the plan event was read
+            self.assertEqual(live["active"]["unprofiled"], 0)
+            lane = [x for x in runview._proc_lanes(st, True, t + 904) if x["pid"] == 11][0]
+            self.assertEqual(lane["step"], {"page": 4, "what": "document reader", "since": t + 4})
+            self.assertEqual(lane["quiet_s"], 900.0)
+            self.assertEqual(lane["state"], "working")
+            self.assertEqual([x["state"] for x in runview._proc_lanes(st, False, t + 904)], ["done"])
+
+    def test_an_interrupted_document_is_not_counted_until_its_new_process_finishes_it(self):
+        st = runview._fresh()
+        for line in (ev(ts=1, event="work", pid=11, phase="convert", file="c/a.pdf", status="start"),
+                     ev(ts=2, event="work", pid=11, phase="convert", file="c/a.pdf", status="done", outcome="interrupted"),
+                     ev(ts=3, event="work", pid=12, phase="convert", file="c/a.pdf", status="start"),
+                     ev(ts=4, event="work", pid=12, phase="convert", file="c/a.pdf", status="done", outcome="prepared")):
+            runview._feed(st, line)
+        self.assertEqual(st["phases"]["convert"]["done"], 1)
+        self.assertEqual(st["phases"]["convert"]["outcomes"], {"prepared": 1})
+        self.assertEqual([x["state"] for x in runview._proc_lanes(st, True, 10)], ["gone", "idle"])
+
+
+class DocumentListTests(unittest.TestCase):
+    def test_two_documents_with_the_same_file_name_are_two_documents(self):
+        import tempfile
+        from pathlib import Path
+
+        from rag_search import jobs
+        from rag_search.paths import get_paths
+
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = get_paths(Path(tmp))
+            paths.jobs.mkdir(parents=True, exist_ok=True)
+            jid = "20260101-000000-abcd"
+            lines = [ev(ts=1, event="doc", collection="c", source="statement.pdf", path="2023/statement.pdf", status="converted"),
+                     ev(ts=2, event="doc", collection="c", source="statement.pdf", path="2024/statement.pdf", status="error", message="x"),
+                     ev(ts=3, event="doc", collection="c", source="statement.pdf", path="2023/statement.pdf", status="indexed"),
+                     ev(ts=4, event="doc", collection="c", source="old.pdf", status="indexed")]      # a log from before paths
+            jobs.events_file(paths, jid).write_text("\n".join(lines) + "\n")
+            d = jobs.documents(paths, jid, limit=10)
+            self.assertEqual(d["total"], 3)
+            self.assertEqual(d["by_status"], {"indexed": 2, "error": 1})
+            self.assertEqual(jobs.documents(paths, jid, limit=10, q="2024")["matched"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

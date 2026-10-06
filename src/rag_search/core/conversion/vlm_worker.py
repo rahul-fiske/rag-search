@@ -57,13 +57,15 @@ class MlxBackend:
         if repetition_penalty:
             kw["repetition_penalty"] = float(repetition_penalty)
         parts: list[str] = []
-        n, stopped = 0, ""
+        n, stopped, checked = 0, "", 0
         for chunk in self._stream(self.model, self.processor, formatted, [image_path], **kw):
             parts.append(str(getattr(chunk, "text", "") or ""))
             n = int(getattr(chunk, "generation_tokens", 0) or (n + 1))
-            if n % LOOP_CHECK_EVERY == 0 and degenerate.looping("".join(parts)):
-                stopped = "loop"
-                break
+            if n - checked >= LOOP_CHECK_EVERY:            # not "n % 64 == 0": a chunk may carry several tokens
+                checked = n
+                if degenerate.looping("".join(parts)):
+                    stopped = "loop"
+                    break
         return {"md": "".join(parts), "tokens": n, "stopped": stopped}
 
     def close(self) -> None:

@@ -160,6 +160,16 @@ reader, lane c style); pages whose text layer is a scanner's hidden OCR layer (5
 compared only when read; documents converted before 0.9.24 have no `route` in their traces (the dashboard works the
 lanes out from the branches).
 
+### 0.9.25: review of the wiring
+
+`architecture-review-0.9.25.md` records a review of 0.9.24. For the lanes it changed: the document reader reads one page
+per call (stored, gated and reported page by page); every reader call is announced with a `step` event; an OCR text the
+reader could not replace is kept without a second OCR read; a text page read as an image is not judged by the dpi of a
+picture on it; a repair that could not run is tried again on the next run; the lane switches are settings
+(`indexer.ocr_first`, `indexer.residue`, `indexer.escalate_digital`, `indexer.layer_fill`), so a Playground experiment can
+switch a lane on for itself. Its first recommendation stands before any cheap lane is switched on by default: a set of
+pages whose text a person has checked.
+
 ## 2. Philosophy
 
 **When sure, read with docling (with or without OCR). When in doubt, read with the VLM.** Refined:

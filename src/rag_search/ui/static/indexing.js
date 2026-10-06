@@ -82,7 +82,8 @@
     if (!n) return null;
     if (!n.file) return h('span', null, '· ', STEPS.find(s => s.key === n.phase)?.title || n.phase, ' …');
     return h('span', null, '· now: ', h('b', { class: 'mono' }, n.file), n.since ? ` for ${since(n.since)}` : '',
-      n.stage ? ` · stage ${n.stage}` : '', n.progress && n.progress.of ? ` · page ${n.progress.done} of ${n.progress.of}` : '',
+      n.stage ? ` · stage ${n.stage}` : '', n.progress && n.progress.of ? ` · ${n.progress.done} of ${n.progress.of} pages done` : '',
+      n.step && n.step.what ? ` · now ${n.step.page ? 'page ' + n.step.page + ': ' : ''}${n.step.what}${n.step.since ? ' for ' + since(n.step.since) : ''}` : '',
       n.workers > 1 ? ` (+${n.workers - 1} more in parallel)` : '');
   }
 
@@ -209,7 +210,7 @@
     const conv = d.conversion;
     return h('tr', { class: conv && conv.trace ? 'clickable' : '', title: conv && conv.trace ? 'Click for the page-by-page record' : '', on: conv && conv.trace ? { click: () => CV.openSummary(conv) } : {} },
       h('td', null, d.status === 'indexed' ? chip('indexed', 'ok') : d.status === 'converted' ? chip('converted', 'accent') : d.status === 'skipped' ? chip('unchanged') : d.status === 'no_text' ? chip('skipped · no text', 'warn') : d.status === 'unsupported' ? chip('skipped · unsupported format', 'warn') : chip('failed', 'bad')),
-      h('td', null, h('span', { class: 'muted' }, d.collection + '/'), d.source, d.status === 'error' && d.message ? h('div', { class: 'small', style: { color: 'var(--bad)' } }, d.message) : d.status === 'no_text' ? h('div', { class: 'small muted' }, d.message || 'no text to index') : d.status === 'unsupported' ? h('div', { class: 'small muted' }, 'extension: ' + (d.extension || '(none)')) : null),
+      h('td', null, h('span', { class: 'muted' }, d.collection + '/'), d.path || d.source, d.status === 'error' && d.message ? h('div', { class: 'small', style: { color: 'var(--bad)' } }, d.message) : d.status === 'no_text' ? h('div', { class: 'small muted' }, d.message || 'no text to index') : d.status === 'unsupported' ? h('div', { class: 'small muted' }, 'extension: ' + (d.extension || '(none)')) : null),
       h('td', { style: { minWidth: '120px' } }, conv && conv.pages ? h('div', null, CV.strip(conv), h('div', { class: 'small muted' }, `${num(conv.pages)} p.` + (conv.outcomes && (conv.outcomes.low || conv.outcomes.error) ? ' · ' + [conv.outcomes.low ? conv.outcomes.low + ' low' : '', conv.outcomes.error ? conv.outcomes.error + ' error' : ''].filter(Boolean).join(', ') : ''))) : ''),
       h('td', { class: 'num' }, d.chunks !== undefined ? num(d.chunks) : ''),
       h('td', { style: { minWidth: '160px' } }, seg, d.status === 'indexed' ? h('div', { class: 'small muted' }, `${PL.label('convert')} ${dur(d.convert_s)} · ${PL.label('chunk')} ${dur(d.chunk_s)} · ${PL.label('embed')} ${dur(d.embed_s)}`, conv && CV.costText(conv.cost) ? ' · ' + CV.costText(conv.cost) : '') : d.status === 'converted' ? h('div', { class: 'small muted' }, `${PL.label('convert')} ${dur(d.convert_s)} · ${PL.label('chunk')} ${dur(d.chunk_s)} · waiting for ${PL.label('embed')}`) : null),
@@ -403,7 +404,7 @@
     return h('div', { class: 'card', style: { marginTop: '16px' } },
       h('div', { class: 'card-head' }, h('h2', null, 'Workers'),
         h('div', { class: 'spacer' }, h('span', { class: 'muted small' }, 'one line per process · the phase, the document and the pipeline stage it is in · CPU outlined, GPU dark'))),
-      CV.lanes(live.lanes));
+      CV.lanes(live.lanes, live.stall_limit_s));
   }
 
   // ---------- Sources: one per collection (registered folders, imports) ----------

@@ -71,8 +71,9 @@ INDEXING: tuple[Stage, ...] = (
           "in seconds"),
     Stage("3", "convert", "Convert", DOCUMENT, BOTH,
           "turn the file into page-marked Markdown, page by page, through the steps below; several documents are "
-          "converted side by side when the machine has the memory for it",
-          settings=("indexer.jobs",)),
+          "converted side by side when the machine has the memory for it; a conversion process that goes silent is "
+          "stopped and its document reported, so one stuck document never holds the run",
+          settings=("indexer.jobs", "indexer.stall_timeout")),
     Stage("3.1", "profile", "Profile", DOCUMENT, CPU,
           "look at every page once: text layer, scan or photo, pictures, ink, resolution, script"),
     Stage("3.2", "read", "Read", DOCUMENT, BOTH,
@@ -82,11 +83,11 @@ INDEXING: tuple[Stage, ...] = (
           "other scan, photo and image; a page a cheaper lane doubts goes on to 3.2d",
           settings=("indexer.routing", "indexer.ocr", "indexer.ocr_engine", "indexer.ocr_lang",
                     "indexer.table_mode", "indexer.pdf_backend", "indexer.pipeline", "indexer.vlm",
+                    "indexer.ocr_first", "indexer.residue", "indexer.escalate_digital", "indexer.layer_fill",
                     "models.reader", "models.memory_limit_gb", "indexer.docling_batch",
                     "indexer.doc_timeout"),
           env_only=("RAG_SEARCH_THREADS", "RAG_SEARCH_VLM_PAGE_TIMEOUT", "RAG_SEARCH_VLM_FREE_GB",
-                    "RAG_SEARCH_VLM_BACKEND", "RAG_SEARCH_TESSERACT", "RAG_SEARCH_TESSERACT_LANG",
-                    "RAG_SEARCH_OCR_FIRST", "RAG_SEARCH_RESIDUE", "RAG_SEARCH_ESCALATE_DIGITAL", "RAG_SEARCH_LAYER_FILL")),
+                    "RAG_SEARCH_VLM_BACKEND", "RAG_SEARCH_TESSERACT", "RAG_SEARCH_TESSERACT_LANG")),
     Stage("3.3", "gate", "Gate", DOCUMENT, CPU,
           "deterministic checks on every page: coverage, script, tables, resolution, running balances and totals, runaway output; "
           "for a page read by OCR also the amount and plausibility of the text; for a page whose pictures the reader was to read, "

@@ -172,6 +172,7 @@ class Worker:
         self.lines: "queue.Queue[str | None]" = queue.Queue()
         self.ready: dict[str, Any] = {}
         self.seq = 0
+        self.limit = 0.0                 # the time limit of the request in progress, for the message
         self.stderr_tail: list[str] = []
 
     # reading the child's stdout on a thread gives every wait a timeout
@@ -222,7 +223,7 @@ class Worker:
             left = end - time.monotonic()
             if left <= 0:
                 self.kill()
-                raise ReaderTimeout(f"timed out after {round(timeout)} s {what}")
+                raise ReaderTimeout(f"timed out {what} (limit {round(self.limit or timeout)} s)")
             try:
                 line = self.lines.get(timeout=min(left, 1.0))
             except queue.Empty:
@@ -249,6 +250,7 @@ class Worker:
         if not self.alive():
             raise ReaderCrashed("the reader process is not running")
         self.seq += 1
+        self.limit = timeout
         req = {"op": "read", "id": self.seq, "image": str(image), "prompt": prompt, "max_tokens": max_tokens}
         if repetition_penalty:
             req["repetition_penalty"] = float(repetition_penalty)
@@ -259,8 +261,9 @@ class Worker:
         except (OSError, ValueError) as exc:
             self.kill()
             raise ReaderCrashed(f"the reader process is gone: {exc}") from exc
+        end = time.monotonic() + timeout                   # one limit for the page, whatever else the child prints
         while True:
-            msg = self._next(timeout, "reading a page")
+            msg = self._next(max(0.0, end - time.monotonic()), "reading a page")
             if msg.get("id") == self.seq:
                 break
         if not msg.get("ok"):

@@ -47,9 +47,18 @@ READ_BY: dict[str, tuple[str, str, str]] = {
                          "vlm hands whole pages to docling's own vision pipeline and turns page routing off"),
     "indexer.vlm": ("rag_search.core.conversion.vlm", "mode",
                     "auto: scans, large pictures and image files are read by the document reader when it can run"),
-    "models.reader": ("rag_search.models", "reader_choice", "the vision model behind 3.2b and 3.2c"),
+    "models.reader": ("rag_search.models", "reader_choice", "the vision model behind lanes 3.2c and 3.2d"),
     "models.memory_limit_gb": ("rag_search.models", "memory_limit_gb",
                                "how much memory the models may count on when the Models tab judges what fits"),
+    "indexer.ocr_first": ("rag_search.core.conversion.routed", "ocr_first_mode", "lane b: a clean scan is read by OCR first"),
+    "indexer.residue": ("rag_search.core.conversion.routed", "residue_mode",
+                        "lane c: regions of ink outside the text layer are read by the document reader"),
+    "indexer.escalate_digital": ("rag_search.core.conversion.routed", "escalate_digital_mode",
+                                 "a text page that lost text goes on to the document reader (lane d)"),
+    "indexer.layer_fill": ("rag_search.core.conversion.routed", "layer_fill_mode",
+                           "lane a: a text page is compared with the PDF's own text layer and filled from it"),
+    "indexer.stall_timeout": ("rag_search.core.stallwatch", "limit_s",
+                              "how long a conversion process may be silent before it is stopped"),
     "indexer.docling_batch": ("rag_search.core.docling_convert", "_apply_batch_sizes", "docling's page batch"),
     "indexer.doc_timeout": ("rag_search.core.docling_convert", "_run", "one document's conversion time limit"),
     "indexer.jobs": ("rag_search.config", "effective_jobs", "documents converted side by side"),
@@ -136,6 +145,13 @@ def _value(setting: str, t: spec.Tunable | None, cfg: Mapping[str, Any], env: Ma
         if key == "repair":
             from .core.conversion.repair import mode as repair_mode
             return repair_mode(env)
+        if key in ("ocr_first", "residue", "escalate_digital", "layer_fill"):
+            from .core.conversion import routed
+            return {"ocr_first": routed.ocr_first_mode, "residue": routed.residue_mode,
+                    "escalate_digital": routed.escalate_digital_mode, "layer_fill": routed.layer_fill_mode}[key](env)
+        if key == "stall_timeout":
+            from .core import stallwatch
+            return int(stallwatch.limit_s(env))
         if key == "chunk_size":
             return int(scfg.get("chunk_size") or DEFAULT_CHUNK_SIZE)
         if key == "chunk_overlap":

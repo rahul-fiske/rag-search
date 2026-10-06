@@ -25,6 +25,7 @@ import threading
 import time
 from typing import Any
 
+from ... import stages
 from ...jobs import JOB_ID_RE, all_records, events_file, read_record
 from ...paths import Paths
 
@@ -93,6 +94,11 @@ def _feed_work(st: dict[str, Any], ev: dict[str, Any]) -> None:
         if phase == "embed" and ev.get("outcome") == "indexed":
             ph["chunks_done"] = ph.get("chunks_done", 0) + int(proc["open"].get("chunks") or 0)
         proc["open"] = None
+    if ev.get("outcome") == "interrupted":       # its process ended with another's: the document goes to a new process,
+        proc["gone"] = True                      # and is counted when that one finishes it
+        return
+    if ev.get("outcome") == "stalled":
+        proc["gone"] = True
     proc["docs"][phase] = proc["docs"].get(phase, 0) + 1
     ph["done"] += 1
     out = str(ev.get("outcome") or "done")
@@ -107,6 +113,7 @@ def _feed_stage_of_proc(st: dict[str, Any], ev: dict[str, Any]) -> None:
         proc["open"]["stage"] = str(ev.get("stage") or "")
         proc["open"]["stage_id"] = str(ev.get("id") or "")
         proc["open"]["stage_done"] = ev.get("status") == "done"
+        proc["last"] = max(proc["last"], float(ev.get("ts") or 0))
 
 
 def _feed(st: dict[str, Any], line: str) -> None:
@@ -126,11 +133,22 @@ def _feed(st: dict[str, Any], line: str) -> None:
         if proc and proc["open"] and proc["open"]["file"] == str(ev.get("file", "")):
             proc["open"]["plan"] = {str(k): int(v) for k, v in (ev.get("branches") or {}).items()}
         return
+    if kind == "step" and "pid" in ev:           # what the process is about to read: shown next to it while it reads
+        proc = st["procs"].get(int(ev["pid"]))
+        if proc and proc["open"] and proc["open"]["file"] == str(ev.get("file", "")):
+            what = str(ev.get("what") or "")
+            proc["open"]["step"] = {"page": ev.get("page"), "what": what, "since": float(ev.get("ts") or 0)}
+            # a reader call means the document is in 3.2 Read (or 3.4 Repair), whatever stage last reported "done"
+            key = "repair" if what.startswith("repair") else "read"
+            proc["open"]["stage"], proc["open"]["stage_id"] = key, stages.id_of(key)
+            proc["last"] = float(ev.get("ts") or 0)
+        return
     if kind == "page" and "pid" in ev:
         proc = st["procs"].get(int(ev["pid"]))
         if proc and proc["open"] and proc["open"]["file"] == str(ev.get("file", "")):
             prog = proc["open"]["progress"] or {"done": 0, "of": 0}
             proc["open"]["progress"] = {"done": prog["done"] + 1, "of": int(ev.get("of") or prog["of"])}
+            proc["last"] = float(ev.get("ts") or 0)
     if kind == "stage" and "pid" in ev:
         _feed_stage_of_proc(st, ev)
     if ev.get("event") == "page" and "pid" in ev:
@@ -257,7 +275,7 @@ def _read_new(path: Any) -> dict[str, Any]:
                 st["offset"] += end + 1
                 for line in data[:end].decode("utf-8", "replace").split("\n"):
                     if '"stage"' in line or '"event": "page"' in line or '"event": "work"' in line \
-                            or '"event": "phase"' in line:
+                            or '"event": "phase"' in line or '"event": "plan"' in line or '"event": "step"' in line:
                         _feed(st, line)
         return st
 
@@ -298,13 +316,19 @@ def _proc_lanes(st: dict[str, Any], running: bool, now: float) -> list[dict[str,
         phase = (o or {}).get("phase") or p["phase"]
         out.append({
             "name": name,
-            "kind": "gpu" if phase == "embed" else "cpu", "pid": p["pid"],
-            "state": "working" if o else "idle", "phase": phase if o else "",
+            "kind": "gpu" if (phase == "embed" or (not o and "embed" in p["docs"])) else "cpu", "pid": p["pid"],
+            # idle = between two documents of a run that is going on; done = the run is over; gone = the process was
+            # stopped (stalled) or ended with the pool
+            "state": "working" if o else ("gone" if p.get("gone") else "idle" if running else "done"),
+            "phase": phase if o else "",
             "stage": (o or {}).get("stage_id", "") if o else "", "stage_name": (o or {}).get("stage", "") if o else "",
             "file": o["file"] if o else "", "since": o["since"] if o else None,
             "busy_pct": round(min(100.0, 100.0 * busy / span)), "busy_s": round(busy, 1),
             "docs": sum(p["docs"].values()), "docs_by_phase": dict(p["docs"]),
-            "progress": o.get("progress") if o else None})
+            "progress": o.get("progress") if o else None,
+            "step": o.get("step") if o else None,                       # the reader call in progress: page, reader, since
+            "quiet_s": round(max(0.0, now - p["last"]), 1) if o else None,   # seconds since this process last said anything
+            "gone": bool(p.get("gone"))})
     return out
 
 
@@ -368,7 +392,17 @@ def now_view(st: dict[str, Any], lanes: list[dict[str, Any]], rec: dict[str, Any
     first = min(pick, key=lambda x: x["since"] or 0)
     return {"phase": first["phase"], "file": first["file"], "since": first["since"], "stage": first["stage"],
             "stage_name": first["stage_name"], "progress": first["progress"], "worker": first["name"],
-            "workers": len(pick)}
+            "step": first.get("step"), "quiet_s": first.get("quiet_s"), "workers": len(pick)}
+
+
+def _stall_limit() -> float:
+    """Seconds of silence after which the run stops a conversion process (0 = never), for the dashboard's warning."""
+    try:
+        from .. import stallwatch
+
+        return stallwatch.limit_s()
+    except Exception:  # noqa: BLE001 - a figure for a hint only
+        return 0.0
 
 
 def run_view(paths: Paths, job_id: str = "") -> dict[str, Any]:
@@ -385,5 +419,5 @@ def run_view(paths: Paths, job_id: str = "") -> dict[str, Any]:
             "now": now_view(st, lanes, rec, running), "phases": phases_view(st, rec, running),
             "phase": prog.get("phase", ""), "done": prog.get("done"), "total": prog.get("total"),
             "totals": totals, "lanes": lanes,
-            "live": live_view(st, running),
+            "live": live_view(st, running), "stall_limit_s": _stall_limit(),
             "started_at": rec.get("started_at"), "finished_at": rec.get("finished_at")}

@@ -168,6 +168,19 @@ class IndexerDaemonTests(IndexerCase):
         self.assertFalse(self.call("cancel")["cancelled"])  # nothing left to cancel
         self.assertFalse(client.alive_lock_held(self.paths, "search"))  # no reload happened
 
+    def test_a_run_that_reports_nothing_for_twice_the_stall_limit_is_stopped_and_says_so(self):
+        from unittest import mock
+
+        self.docs(1)
+        self.slow("30")                                    # the embedder sleeps: the event log stays silent
+        with mock.patch("rag_search.core.stallwatch.limit_s", return_value=0.6):
+            self.start_daemon()
+            self.call("start")
+            job = self.wait_idle(timeout=30)
+        self.assertEqual(job["status"], "failed")
+        self.assertIn("stalled: the run reported nothing", job["error"])
+        self.assertIsNone(self.paths.current_gen())        # nothing was published
+
     def test_work_resumes_after_cancel_because_finished_docs_are_skipped(self):
         self.docs(4)
         self.slow("1.0")

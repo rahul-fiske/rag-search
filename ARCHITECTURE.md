@@ -268,9 +268,9 @@ the document reader for every other scan and image; a page a cheaper lane doubts
 |---|---|---|---|---|---|
 | 1 | Discover | CPU | run | list the files of every collection (registered folders, imports); formats the pipeline cannot read are skipped and counted | – |
 | 2 | Fingerprint | CPU | document | SHA-256 of the file plus the chunk, model and conversion settings; unchanged documents are skipped in seconds | – |
-| 3 | Convert | CPU+GPU | document | turn the file into page-marked Markdown, page by page, through the steps below; several documents are converted side by side when the machine has the memory for it | `indexer.jobs` |
+| 3 | Convert | CPU+GPU | document | turn the file into page-marked Markdown, page by page, through the steps below; several documents are converted side by side when the machine has the memory for it; a conversion process that goes silent is stopped and its document reported, so one stuck document never holds the run | `indexer.jobs`, `indexer.stall_timeout` |
 | 3.1 | Profile | CPU | document | look at every page once: text layer, scan or photo, pictures, ink, resolution, script | – |
-| 3.2 | Read | CPU+GPU | document | each page goes down the lane it needs: 3.2a docling on the text layer (and Office files), 3.2b OCR for a clean scan (docling's OCR, or Tesseract for a skewed page and image files), 3.2c docling on the text layer plus the document reader on its pictures and regions, 3.2d the document reader (a vision model) for every other scan, photo and image; a page a cheaper lane doubts goes on to 3.2d | `indexer.routing`, `indexer.ocr`, `indexer.ocr_engine`, `indexer.ocr_lang`, `indexer.table_mode`, `indexer.pdf_backend`, `indexer.pipeline`, `indexer.vlm`, `models.reader`, `models.memory_limit_gb`, `indexer.docling_batch`, `indexer.doc_timeout`; env `RAG_SEARCH_THREADS`, env `RAG_SEARCH_VLM_PAGE_TIMEOUT`, env `RAG_SEARCH_VLM_FREE_GB`, env `RAG_SEARCH_VLM_BACKEND`, env `RAG_SEARCH_TESSERACT`, env `RAG_SEARCH_TESSERACT_LANG`, env `RAG_SEARCH_OCR_FIRST`, env `RAG_SEARCH_RESIDUE`, env `RAG_SEARCH_ESCALATE_DIGITAL`, env `RAG_SEARCH_LAYER_FILL` |
+| 3.2 | Read | CPU+GPU | document | each page goes down the lane it needs: 3.2a docling on the text layer (and Office files), 3.2b OCR for a clean scan (docling's OCR, or Tesseract for a skewed page and image files), 3.2c docling on the text layer plus the document reader on its pictures and regions, 3.2d the document reader (a vision model) for every other scan, photo and image; a page a cheaper lane doubts goes on to 3.2d | `indexer.routing`, `indexer.ocr`, `indexer.ocr_engine`, `indexer.ocr_lang`, `indexer.table_mode`, `indexer.pdf_backend`, `indexer.pipeline`, `indexer.vlm`, `indexer.ocr_first`, `indexer.residue`, `indexer.escalate_digital`, `indexer.layer_fill`, `models.reader`, `models.memory_limit_gb`, `indexer.docling_batch`, `indexer.doc_timeout`; env `RAG_SEARCH_THREADS`, env `RAG_SEARCH_VLM_PAGE_TIMEOUT`, env `RAG_SEARCH_VLM_FREE_GB`, env `RAG_SEARCH_VLM_BACKEND`, env `RAG_SEARCH_TESSERACT`, env `RAG_SEARCH_TESSERACT_LANG` |
 | 3.3 | Gate | CPU | document | deterministic checks on every page: coverage, script, tables, resolution, running balances and totals, runaway output | – |
 | 3.4 | Repair (optional) | GPU | document | a table cell that breaks the arithmetic is cut out, read again and replaced only when a second, independent reader and the arithmetic agree | `indexer.repair`, `models.repair`; env `RAG_SEARCH_REPAIR_SECOND` |
 | 3.5 | Reconcile | CPU | document | a table that runs across a page break is joined (the continuation gets the header) and checked across the break | – |
@@ -322,7 +322,8 @@ Settings, Architecture and Playground tabs and `rag-search playground settings` 
         │  case-insensitive disk is not mistaken for a deletion)
         ▼
   1  DISCOVER is the plan and scan above (it runs once per run); the boxes below are 2-7.
-┌─ PHASE 1 · per document · parallel (`indexer.jobs` processes) · no ML model loaded ───────────┐
+┌─ PHASE 1 · per document · parallel (`indexer.jobs` processes) · watched: a process that goes ─┐
+│  silent is stopped, its document reported, the others go on (stallwatch.py, section 7)       │
 │                                                                                               │
 │  2  FINGERPRINT: SHA-256 of the source file                                                   │
 │     fresh?  same source SHA + chunk size/overlap + CHUNKER/TOKENIZER version + index format   │
@@ -331,9 +332,12 @@ Settings, Architecture and Playground tabs and `rag-search playground settings` 
 │     picture cover, script, dpi per page -> a branch + reason per page (5.1.1); skipped when   │
 │     the Markdown and its trace are current                                                    │
 │  3  CONVERT -> markup/<coll>/<doc>.md  (3.2 Read, 3.3 Gate, 3.4 Repair, 3.5 Reconcile)        │
-│       docling: layout + TableFormer (accurate) + OCR. Default: force = every page is OCRed,   │
-│       pypdfium2 backend; smart = force only if the text layer looks unreliable, else auto;    │
-│       converter kept per process, threads shared, RAG_SEARCH_DOC_TIMEOUT per document;        │
+│       PDFs and image files page by page, one lane per page (5.1.1): a text layer -> docling   │
+│       without forced OCR; a scan -> the document reader (or OCR first for a clean one, or     │
+│       docling OCR when there is no reader); pictures on a text page -> the document reader.   │
+│       Office / HTML files whole, by docling (layout + TableFormer; pypdfium2 backend).        │
+│       converter kept per process, threads shared, RAG_SEARCH_DOC_TIMEOUT per docling call;    │
+│       every reader call is announced (`step` event) and every page reported when it is done;  │
 │       <!-- page N --> marks                                                                   │
 │       (formats without pages become page 1; .md/.txt are copied as they are;                  │
 │        an .md is reused when its .md.sha256 sidecar has the same source SHA + settings)       │
@@ -390,8 +394,9 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   pictures), `raster` / `unknown` pages (scans, garbled text layers, unprofiled pages) to the **document
   VLM** (5.1.3; branch `raster`) or, when it is off, not installed, short of memory or fails on the page,
   to docling with full-page OCR (branch `fallback`, the reason is in the page's `note`), blank pages (no
-  text, no ink) are not read at all. Pages are read in runs of consecutive
-  pages of one kind via docling's `page_range` (at most 20 pages per call); the OCR setting only decides
+  text, no ink) are not read at all. docling reads pages in runs of consecutive
+  pages of one kind via its `page_range` (at most 20 pages per call); the document reader reads **one page per
+  call**, so each of its pages is stored, gated and reported the moment it is read. The OCR setting only decides
   whether OCR is on or off. Image files are read page by page by the document VLM (5.1.3); Office/HTML
   files and Markdown are converted whole as before,
   and so is any PDF whose profile failed, when `RAG_SEARCH_DOCLING_PYTHON` is set, or with
@@ -408,8 +413,8 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
 * **Page cache** (`pagecache.py`, `indexer_workspace/page_cache/<hh>/<key>.json`): the Markdown and facts
   of one page, keyed by hash of (page content hash, reader id + mode, the full conversion profile string);
   any change of page, tool or setting is a different key, so a hit is always valid. One file per page,
-  written atomically after each run of pages: a cancelled or crashed run loses at most one run of
-  pages, a changed document re-reads only its changed pages, and two documents that contain the same
+  written atomically after each docling run of pages and after every page of the document reader: a cancelled or
+  crashed run loses at most one docling run (seconds) or one reader page, a changed document re-reads only its changed pages, and two documents that contain the same
   page share the work. Cached pages are branch `cached` (`was` keeps the original branch). After every
   run entries that no stored trace refers to (`page.key`) and that are older than six hours are
   deleted; `rag-search index cache [--clear]`, `api.page_cache`, `GET /api/conversion/page-cache` and
@@ -434,8 +439,8 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   | Lane | Reads | When | Gate checks that catch its failures | Default |
   |---|---|---|---|---|
   | **a** text layer | docling on the text layer (OCR only for embedded bitmaps) | the page has a text layer and nothing the layer does not explain | `coverage` against the PDF's own text layer (`layer.py`, below), `script`, tables, arithmetic | always on |
-  | **b** OCR | docling's full-page OCR for a straight PDF page; Tesseract (after straightening the page) for a skewed page (2-8 degrees) and for every image file | a scan whose page image says clean print (`router.decide_scan`) | `expected_size`, `plausibility`, `column_types`, plus the common checks | **off**: `RAG_SEARCH_OCR_FIRST=auto` |
-  | **c** text layer + pictures | docling on the text layer, and the document reader on each large picture (profile `big_pics`) and, with the switch, on each *residue* region | a text page with large pictures; with `RAG_SEARCH_RESIDUE=auto` also one with regions of ink the text layer does not explain | `residue_read`: every picture or region asked of the reader was read | pictures **on**, regions **off** |
+  | **b** OCR | docling's full-page OCR for a straight PDF page; Tesseract (after straightening the page) for a skewed page (2-8 degrees) and for every image file | a scan whose page image says clean print (`router.decide_scan`) | `expected_size`, `plausibility`, `column_types`, plus the common checks | **off**: `indexer.ocr_first` = `auto` (`RAG_SEARCH_OCR_FIRST`) |
+  | **c** text layer + pictures | docling on the text layer, and the document reader on each large picture (profile `big_pics`) and, with the switch, on each *residue* region | a text page with large pictures; with `RAG_SEARCH_RESIDUE=auto` also one with regions of ink the text layer does not explain | `residue_read`: every picture or region asked of the reader was read | pictures **on**; regions **off**: `indexer.residue` = `auto` (`RAG_SEARCH_RESIDUE`) |
   | **d** document reader | a vision model on the whole page image (guarded, then repaired, 5.1.3-5.1.4); Tesseract as the last resort for a runaway | every other scan, photo and image, a page whose text layer is garbled, and every page a cheaper lane doubts | `degenerate`, table arithmetic, repair | always on |
 
   *Router* (`router.py`): `decide` (the page's kind: text layer, scan, image, Office, text) is as before;
@@ -452,9 +457,15 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   `low_resolution` and `docling_grade`, or no real text) gets one more cheap try, **Tesseract** on the straightened
   page, unless the doubt is about structure (`table_shape`, `column_types`, `totals`, `running_balance`: plain text would
   lose it); only if that is doubted too does the document reader read the page, and the OCR text is kept for when the
-  reader fails. With `RAG_SEARCH_ESCALATE_DIGITAL=auto` a text page (lane a or c) that still has lost text or garbled text
-  after the text-layer fill is read as an image by the document reader (d); when the reader cannot take over, the
-  text-layer result is kept and flagged. Both are off by default. The page cache keys follow the reader (`docling:scan`,
+  reader fails. With `indexer.escalate_digital` = `auto` (`RAG_SEARCH_ESCALATE_DIGITAL`) a text page (lane a or c) that still has lost
+  text or garbled text after the text-layer fill is read as an image by the document reader (d); when the reader
+  cannot take over, the text-layer result is kept and flagged. Both are off by default. The lane switches and the
+  text-layer fill are ordinary settings (`indexer.ocr_first`, `indexer.residue`, `indexer.escalate_digital`,
+  `indexer.layer_fill`): the Settings tab, `rag-search config set` and a Playground experiment's own configuration
+  set them, an environment variable of the daemon wins as for every tunable. An OCR text the reader could not replace
+  (it failed on the page) is kept as it is -- the page is not read by docling's OCR a second time -- and stays
+  flagged. A page that has a text layer and is read as an image (a garbled layer, or handed on by lane a or c) is
+  drawn from vectors, so the gate does not judge it by the resolution of a picture on it (`gate_profile`). The page cache keys follow the reader (`docling:scan`,
   `tesseract:scan`, `<vlm>:scan`, `docling:digital+<vlm>[+res1]`), a cached document-reader result is used before a
   cached OCR one, and a cached OCR result the gate now doubts goes on. The lane switches that are *on* are part of the
   document's conversion profile (`|ocrfirst=auto`, `|residue=auto`, `|updigital=auto`), so switching one on
@@ -498,7 +509,10 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   `page` event per finished page in the job's event log (`file`, `page`, `of`, `branch`, `kind`, `outcome`,
   `cache`, `read_s`, `chars`, failed `gate` checks, `runway` (the lane that finished the page), `moved` (the lane that
   handed it on) and `engine`), written by the pool processes themselves like
-  `stage` events, and one `plan` event per document once its pages are profiled (or known from its stored trace):
+  `stage` events, one `step` event before every reader call (`{file, page, what}`: "document reader", "docling, pages
+  1-20", "repair", "tesseract" ...; a call can take minutes, and this is what the Workers card shows as "now" and
+  what the stall watch takes as a sign of life), and one `plan` event per document once its pages are profiled (or
+  known from its stored trace):
   `{pages, branches}`, what kinds of pages it has, any format (an Office file is one page of kind `office`).
   A page's **kind** (`trace.page_kind`) is what it is -- `digital`, `raster`, `image`, `office`, ... -- and its
   `branch` is how this run got it: a page reused from the page cache has the branch `cached` and keeps its kind
@@ -529,12 +543,19 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   Embed, Merge start / end, with their totals: files, documents, chunks, model, collections), `work` (a
   process starts / ends one unit of work -- a document in Convert (`indexer.prepare_document`, framed in a
   `try/finally`, so a failed document closes its work too) or Embed, a collection in Merge -- with its
-  outcome), `stage` (the numbered stage reached inside that work) and `page`. Publish is a phase of the
+  outcome; the run itself closes the work of a process it stopped (`stalled`) or that ended with the pool
+  (`interrupted`: not counted, the document goes to a new process)), `stage` (the numbered stage reached inside that
+  work), `step` (the reader call about to start) and `page`. A finished document is a `doc` event with its
+  `collection`, file name (`source`) and `path` inside the collection; the run's document list and its counts are keyed
+  by collection and path (by file name alone two `statement.pdf` in two folders were one row, and the tiles counted
+  1,945 of 2,059 documents). Publish is a phase of the
   job record (`progress.phase = "publish"`, then `publish`, `publish_s`, `search_reload`). Workers are
   generic processes, not docling's: `worker N` is a conversion-pool process, `main process` embeds and merges
   (with `jobs=1` it does everything), and a lane shows the phase, document (its path inside the collection,
-  the one spelling used everywhere), pipeline stage and page progress of the work it holds, plus its documents
-  per phase. `runview.run_view` returns one snapshot -- `now` (the one active work of the current phase), `phases`
+  the one spelling used everywhere), pipeline stage, pages done, the reader call in progress (`step`: page, reader,
+  since when), how long the process has been quiet (`quiet_s`; the dashboard warns from ten minutes and says when the
+  stall watch will stop it) and its state (`working`, `idle` between documents, `done` after the run, `gone` when it
+  was stopped), plus its documents per phase. `runview.run_view` returns one snapshot -- `now` (the one active work of the current phase), `phases`
   (status, counts, timing and per-phase figures: chunks per second for Embed, collections for Merge, generation
   and reload for Publish), `lanes`, `live` (pages), `totals` -- read from a remembered file offset, so a
   dashboard tick costs only the new lines. The Indexing tab's *Current run* card takes its "now:" from `now`
@@ -698,7 +719,9 @@ read,expected}]}` (`status`: `fixed`, `unchanged`, `disagree`, `not_a_number`, `
 `not_editable`, `error`), `time_s.repair`, and the tokens / GPU seconds of the cell reads are added to the page's.
 The repaired Markdown replaces the cached page (the cache entry carries `repair.tag` = method version, repair
 model, second reader), so a page is not tried again with the same models, a failed attempt included; another
-repair model or second reader tries again. Without a second reader (not a Mac, ocrmac missing, `off`) cells are
+repair model or second reader tries again. An attempt that could not run at all -- no memory free just then, the
+reader crashed (`complete: false`) -- is not remembered as an attempt: the tag is left empty and the next run
+tries again (a page that timed out is remembered: it would time out again). Without a second reader (not a Mac, ocrmac missing, `off`) cells are
 not repaired and the page's note says why; sources are never touched. `indexer.repair` (`auto` | `off`,
 `RAG_SEARCH_REPAIR`, `--repair`) switches the step off.
 
@@ -853,9 +876,13 @@ processes, runs without downloading models.
   scored as P("yes")). Outputs are checked for NaN/inf, and `RAG_SEARCH_DTYPE` forces the precision. Both
   rerankers honour `RAG_SEARCH_RERANK_BATCH` / `RAG_SEARCH_RERANK_MAX_LEN` (`spec.py`: `rerank_batch`,
   `rerank_max_len`).
-* Loading is **offline first** (`embedding._load_model`): a model whose complete copy is in the Hugging Face
-  cache is loaded with `local_files_only=True` -- no round trip to huggingface.co, so a machine with blocked or
-  no internet starts as quickly as any other; if that fails (an older library, an incomplete cache) the normal
+* Loading is **offline** when it can be (`embedding._load_model`, `embedding.offline`): a model whose complete
+  copy is in the Hugging Face cache is loaded with `local_files_only=True` *and* with the libraries in offline mode
+  (`HF_HUB_OFFLINE`, `TRANSFORMERS_OFFLINE`, set for the load in the environment and in the already-imported
+  settings, and put back afterwards). `local_files_only` alone was not enough: transformers starts a background
+  check for a converted copy of the weights on the Hub, four requests naming the model at every daemon start and
+  every embed phase (seen in the logs until 0.9.24). With both, no request leaves the machine, and one with blocked
+  or no internet starts as quickly as any other; `HF_HUB_DISABLE_TELEMETRY=1` is set as well; if that fails (an older library, an incomplete cache) the normal
   load runs, and a failed download of a model that is not cached is explained with
   `model_tasks.explain_download_error`. On PyTorch < 2.6 the transformers `torch.load` safety check is relaxed
   for trusted `BAAI/*` checkpoints **only while that one model loads** (`trusted_load`) and restored afterwards
@@ -1119,7 +1146,9 @@ shown as a pill next to each tunable and next to each group on the Settings tab:
 | indexer daemon crashes mid-run | worker keeps running until the next daemon start, which kills it and marks the run `interrupted`; rerun is cheap |
 | worker killed by a signal (e.g. out of memory) | run `failed`, error names the signal (`SIGKILL`) |
 | a document that cannot be indexed and has not changed (password-protected PDF, no text at all) | reported with its reason every run, converted only once (`outcome.json`, see Freshness) |
-| one document too slow (`RAG_SEARCH_DOC_TIMEOUT`) | that document is an error, the run continues (`partial`), retried next run |
+| one document too slow (`RAG_SEARCH_DOC_TIMEOUT`) | that document is an error, the run continues (`partial`), retried next run. The limit is docling's, per call: a whole document, or one run of up to 20 pages of a routed PDF; the document reader has its own limit per page (`RAG_SEARCH_VLM_PAGE_TIMEOUT`) |
+| a conversion process hangs (a call into native code that never returns: an Apple Vision request, a render of a file a cloud app never delivers) | **stall watch** (`core/stallwatch.py`, 0.9.25): every conversion process says what it does in the event log (`work`, `stage`, `step`, `page`); one with a document open that writes nothing for `indexer.stall_timeout` (default 1 hour, never less than the document timeout plus 15 minutes; `RAG_SEARCH_STALL_TIMEOUT=0` = off) is killed, its document is an error ("stalled: no progress for 60 min on page 12 (document reader) ...", retried next run, pages already read are in the page cache) and the run goes on. Time is counted in observed poll intervals, so a laptop that slept has not stalled. With `jobs=1` (and in the Playground) documents are converted in the run's own process, which can only be ended: the run fails with that message. The indexer daemon is the second line: a run whose event log does not grow at all for twice the limit is stopped and marked `failed` |
+| a conversion process ends abruptly (killed by the system for memory, a crash in native code, stopped by the stall watch) | Python marks the whole pool broken and fails every waiting document; `indexer._convert_in_pool` keeps the finished documents, puts the rest in a **new pool**, and leaves out only a document that was open in a process that died twice (`STRIKES`), named as the likely cause; at most 8 new pools per run. Before 0.9.25 every document still waiting was reported "worker failed" |
 | a conversion process cannot exit (docling abandons its OCR / layout threads after a document timeout; one stuck in a native call, e.g. an Apple Vision request, is joined forever by the interpreter) | the pool is closed without waiting (`indexer._shutdown_pool`): every result is already collected, so a process still alive 20 s later is terminated and the run goes on to embedding. The worker and `python -m rag_search.cli` children (Playground runs) end with `worker.leave` (`os._exit` after flushing), so a stuck thread cannot keep a finished run "active" |
 | worker crashes | run `failed`, nothing published, workspace stays consistent (documents are complete only when `index.meta.json` exists) |
 | the folder a daemon was started from is deleted (e.g. `install.sh` run inside a release folder that is rebuilt later) | no effect since 0.9.13: long-lived processes start in the data folder. Before, every document of the next run failed (`FileNotFoundError` from `os.getcwd()`, "partially initialized module 'torch'") until the daemons were restarted |

@@ -379,8 +379,10 @@ class Repairer:
 
         t0 = time.perf_counter()
         self._tokens, self._gpu = 0, 0.0
+        # complete: the repair had its chance.  False when it could not run for a reason that may pass (no memory just
+        # now, the reader crashed): the page is then tried again on a later run instead of being remembered as tried.
         out: dict[str, Any] = {"md": md, "cells": [], "fixed": 0, "tried": 0, "model": self.reader.model,
-                               "second": getattr(self.second, "id", ""), "tier": "", "note": ""}
+                               "second": getattr(self.second, "id", ""), "tier": "", "note": "", "complete": True}
         tmp = self.reader._tmp_dir()
         try:
             if not violations:
@@ -435,9 +437,11 @@ class Repairer:
                         out["note"] = (out["note"] + "; " if out["note"] else "") + \
                             "page read again by the repair model: still suspect or less complete, kept the first reading"
                 except vlm.ReaderError as exc:
+                    out["complete"] = exc.reason == "timeout"     # a page that takes too long will again; the rest may pass
                     out["note"] = (out["note"] + "; " if out["note"] else "") + \
                         f"page not read again ({exc.reason}: {str(exc)[:100]})"
                 except Exception as exc:  # noqa: BLE001 - an optional step never fails the page
+                    out["complete"] = False
                     out["note"] = (out["note"] + "; " if out["note"] else "") + \
                         f"page not read again ({type(exc).__name__}: {str(exc)[:100]})"
         finally:

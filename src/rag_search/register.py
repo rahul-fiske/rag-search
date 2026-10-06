@@ -218,6 +218,17 @@ def unregister_desktop() -> str:
 
 # ── Claude Code ──────────────────────────────────────────────────────────────
 
+def _claude(cmd: list[str]) -> subprocess.CompletedProcess:
+    """Run the ``claude`` CLI without a terminal to wait on and with a time limit (it is another program: it may ask
+    a question, or hang).  A timeout is an ordinary failure, with a message."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=90)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(cmd, 124, "", "the claude command did not answer within 90 seconds")
+    except OSError as exc:
+        return subprocess.CompletedProcess(cmd, 127, "", str(exc))
+
+
 def register_code(home: str | None = None, tool_prefix: str = "") -> str:
     cmd, args = adapter_command("claude", tool_prefix)
     env_args = ["-e", f"RAG_SEARCH_HOME={Path(home).expanduser().absolute()}"] if home else []
@@ -225,9 +236,8 @@ def register_code(home: str | None = None, tool_prefix: str = "") -> str:
     if not shutil.which("claude"):
         return "Claude Code CLI ('claude') not found on PATH. To register later run:\n  " \
                + " ".join(full)
-    subprocess.run(["claude", "mcp", "remove", "--scope", "user", SERVER_NAME],
-                   capture_output=True, text=True)
-    proc = subprocess.run(full, capture_output=True, text=True)
+    _claude(["claude", "mcp", "remove", "--scope", "user", SERVER_NAME])
+    proc = _claude(full)
     if proc.returncode != 0:
         return (f"! Claude Code registration failed: {(proc.stderr or proc.stdout).strip()}\n"
                 f"  (any previous '{SERVER_NAME}' entry was removed first)  Retry with:\n  "
@@ -238,8 +248,7 @@ def register_code(home: str | None = None, tool_prefix: str = "") -> str:
 def unregister_code() -> str:
     if not shutil.which("claude"):
         return "Claude Code CLI not found; nothing to do."
-    proc = subprocess.run(["claude", "mcp", "remove", "--scope", "user", SERVER_NAME],
-                          capture_output=True, text=True)
+    proc = _claude(["claude", "mcp", "remove", "--scope", "user", SERVER_NAME])
     return "Claude Code: " + ((proc.stdout or proc.stderr).strip() or "removed")
 
 

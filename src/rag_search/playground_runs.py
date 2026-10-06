@@ -206,7 +206,7 @@ def view(base: Paths, name: str, jid: str = "", *, docs: int = 100) -> dict[str,
     by_file = {d["file"]: d for d in tl["docs"]}
     doc_list = documents(exp, rec["id"], docs)
     for item in doc_list["items"]:
-        rel = f"{item.get('collection', '')}/{item.get('source', '')}".strip("/")
+        rel = f"{item.get('collection', '')}/{item.get('path') or item.get('source', '')}".strip("/")
         item["timeline"] = by_file.pop(rel, None) or by_file.pop(str(item.get("source", "")), None)
     # documents that have stage events but no finished `doc` event yet: still being worked on
     in_flight = list(by_file.values())

@@ -273,6 +273,7 @@
         h('span', { class: 'muted small' }, ` · page${it.pages.length > 1 ? 's' : ''} ${it.pages.join(', ')}`))))) : null;
     return h('div', null,
       CV.bands(c.branches),
+      c.runways && Object.keys(c.runways).length ? h('div', { style: { marginTop: '8px' } }, h('div', { class: 'small muted', style: { marginBottom: '4px' } }, 'by the lane whose reader finished the page'), CV.runwayBar(c.runways, c.moves)) : null,
       h('div', { style: { marginTop: '6px' } }, CV.outcomeChips(c.outcomes)),
       kv([
         ['Documents', num(c.documents)],

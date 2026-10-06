@@ -100,6 +100,8 @@ PDF_BACKENDS = ("pypdfium2", "docling-parse", "default")
 PIPELINE_MODES = ("standard", "vlm")
 ROUTING_MODES = ("pages", "document")
 VLM_MODES = ("auto", "off")
+LANE_MODES = ("off", "auto")
+LAYER_FILL_MODES = ("fill", "report", "off")
 DTYPES = ("float16", "bfloat16", "float32")
 DEVICES = ("cpu", "cuda", "mps")
 
@@ -180,10 +182,14 @@ TUNABLES: tuple[Tunable, ...] = (
             "the cost of redundant text (more chunks, more embedding time) per document.",
             NEXT_RUN, "--chunk-overlap", default_label=f"{DEFAULT_CHUNK_OVERLAP}"),
     Tunable("indexer", "ocr", "choice", "", "OCR mode",
-            "How PDFs are read: force = OCR every page (best for scans/odd fonts, slower); "
-            "smart = force only for pages whose own text layer looks unreliable; auto = OCR only "
-            "embedded images; off = trust only the PDF's own text. Blank = force.",
-            "The biggest lever on PDF conversion speed vs. text quality; changing it only affects "
+            "With page routing (the default) only on or off matters: any value but off lets docling use OCR where a "
+            "page needs it (embedded bitmaps on a text page, the whole page of a scan the document reader does not "
+            "read); off never uses OCR. The four values apply as written only when a file is converted whole "
+            "(routing = document, Office files, or when page routing fails for a document): force = OCR every page; "
+            "smart = force only for pages whose own text layer looks unreliable; auto = OCR only embedded images; "
+            "off = trust only the PDF's own text. Blank = force.",
+            "With page routing a text page is never forced through OCR, whatever this says. For whole-document "
+            "conversion it is the biggest lever on speed against text quality; changing it only affects "
             "documents converted after the change (use --force-md / rebuild to redo existing ones).",
             NEXT_RUN, "--ocr", OCR_MODES, "RAG_SEARCH_OCR", default_label="force", choice_help={
                 "force": "OCR every page, ignoring the PDF's own text layer -- best for scans or "
@@ -268,8 +274,9 @@ TUNABLES: tuple[Tunable, ...] = (
                        "(Models tab), the gate and repair are not used.",
             }),
     Tunable("indexer", "routing", "choice", "", "PDF routing",
-            "pages = each PDF page takes the path that suits it (pages with a text layer are read "
-            "without forced OCR, scanned pages with full-page OCR); document = the whole file is "
+            "pages = each page of a PDF or image file goes down the lane that suits it (a text layer is read by "
+            "docling without forced OCR, a scan by the document reader or, for a clean one with OCR first on, by "
+            "OCR; pictures on a text page by the document reader); document = the whole file is "
             "converted in one docling call, as before routing existed. Blank = pages.",
             "pages avoids the OCR damage forced OCR does to pages that already have clean text, and "
             "records what each page took in the conversion trace; if routing fails for a document it "
@@ -277,8 +284,8 @@ TUNABLES: tuple[Tunable, ...] = (
             "your documents. With pages, the OCR setting only decides whether OCR is on or off.",
             NEXT_RUN, "--routing", ROUTING_MODES, "RAG_SEARCH_ROUTING",
             default_label="pages", choice_help={
-                "pages": "Per-page routing: text-layer pages without forced OCR, scanned pages with "
-                         "full-page OCR, a page cache so nothing is read twice (the default).",
+                "pages": "Per-page routing: text-layer pages without forced OCR, scanned pages by the document reader "
+                         "(docling OCR when it cannot run), a page cache so nothing is read twice (the default).",
                 "document": "One docling call for the whole file, with the OCR setting applied to "
                             "every page (the behaviour before routing).",
             }),
@@ -309,6 +316,64 @@ TUNABLES: tuple[Tunable, ...] = (
                 "auto": "Repair suspect cells when the readers can run (the default).",
                 "off": "Never re-read cells: suspect pages are only flagged.",
             }),
+    Tunable("indexer", "ocr_first", "choice", "", "Lane b: OCR first for clean scans",
+            "auto = a scanned page whose image says clean print (resolution, contrast, sharpness, skew, speckle, no "
+            "ruled table) is read by an OCR engine first -- docling's, or Tesseract for a skewed page and for image "
+            "files -- and goes on to the document reader only when the gate doubts the text; off = the document "
+            "reader reads every scan. Blank = off.",
+            "OCR takes about a second a page where the document reader takes most of a minute, but OCR can lose "
+            "part of a page without any check noticing. On 38 real scans the router sent 3 pages to OCR (none "
+            "wrong), and the OCR gate alone would have kept 17 pages that were worse than the reader's text: the "
+            "router is strict on purpose, so expect few pages to take this lane. Needs the document reader. "
+            "Switching it on converts the documents again (the page cache is reused).",
+            NEXT_RUN, "--ocr-first", LANE_MODES, "RAG_SEARCH_OCR_FIRST",
+            default_label="off", choice_help={
+                "off": "The document reader reads every scanned page (the default).",
+                "auto": "Clean scans are read by OCR first and checked; a doubted page goes on to the document reader.",
+            }),
+    Tunable("indexer", "residue", "choice", "", "Lane c: regions the text layer does not explain",
+            "auto = a page with a text layer is also searched for regions of ink that the text layer does not hold "
+            "(a stamp, a signature, a drawing, at least 4 % of the page) and the document reader reads them; off = "
+            "only large embedded pictures are read (always). Blank = off.",
+            "About one text page in ten has such a region (measured on 99 pages), and each costs a reader call; "
+            "whether those regions hold text worth finding is not measured yet. A region the reader cannot read "
+            "leaves the page low-confidence. Needs the document reader. Switching it on converts the documents again.",
+            NEXT_RUN, "--residue", LANE_MODES, "RAG_SEARCH_RESIDUE",
+            default_label="off", choice_help={
+                "off": "Only large embedded pictures of a text page are read by the document reader (the default).",
+                "auto": "Regions of ink outside the text layer are read by the document reader too.",
+            }),
+    Tunable("indexer", "escalate_digital", "choice", "", "Text pages that lost text go to the reader",
+            "auto = a page with a text layer whose result still has lost or garbled text after the text-layer fill "
+            "is read as an image by the document reader; off = it is kept and flagged low-confidence. Blank = off.",
+            "On the first full run about 370 of 16,842 text pages were flagged for coverage or script; the reader "
+            "would take hours for them. When the reader cannot take over, the text-layer result is kept. "
+            "Needs the document reader. Switching it on converts the documents again.",
+            NEXT_RUN, "--escalate-digital", LANE_MODES, "RAG_SEARCH_ESCALATE_DIGITAL",
+            default_label="off", choice_help={
+                "off": "Such a page is kept and flagged (the default).",
+                "auto": "Such a page is read again as an image by the document reader.",
+            }),
+    Tunable("indexer", "layer_fill", "choice", "", "Text-layer fill",
+            "fill = a text page is compared with the PDF's own text layer and the lines the conversion left out "
+            "(table cells, notes, labels) are appended; report = compared and recorded only; off = not compared. "
+            "Blank = fill.",
+            "The fill is deterministic and takes milliseconds; on the first full run 16 % of text pages had lost "
+            "text that it restores. report is for measuring without changing any page.",
+            NEXT_RUN, "--layer-fill", LAYER_FILL_MODES, "RAG_SEARCH_LAYER_FILL",
+            default_label="fill", choice_help={
+                "fill": "Missing lines are appended from the text layer (the default).",
+                "report": "The comparison is recorded in the page trace; no page is changed.",
+                "off": "Pages are not compared with their text layer.",
+            }),
+    Tunable("indexer", "stall_timeout", "int", 0, "Stall limit (seconds)",
+            "A conversion process that reports nothing for this long while it has a document open is stopped; the "
+            "document is reported as failed (stalled) and the run goes on with the others. 0 in this config means "
+            "\"use the built-in default (3600s = 1 hour)\"; never less than the per-document timeout plus 15 minutes.",
+            "A reader call into native code that never returns has no time limit of its own and would hold a run "
+            "for ever. Too short stops a legitimately slow page; the pages already read are kept either way. "
+            "Set the environment variable RAG_SEARCH_STALL_TIMEOUT=0 to switch the watch off.",
+            NEXT_RUN, "--stall-timeout", (), "RAG_SEARCH_STALL_TIMEOUT", default_label="3600s (1 hour)"),
     Tunable("indexer", "doc_timeout", "int", 0, "Per-document timeout (seconds)",
             "Longest one document may take to convert before it is reported as failed and skipped "
             "(retried next run). 0 = no limit; 0 in this config means \"use the built-in default "

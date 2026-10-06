@@ -185,6 +185,8 @@ const CV = (function () {
         + (a.unprofiled ? ` · ${num(a.unprofiled)} not profiled yet` : '')) : null,
       a.pages ? bands(a.branches) : null,
       docs.length ? h('div', { style: { marginTop: '6px' } }, docs) : null,
+      l.runways && Object.keys(l.runways).length ? h('div', { style: { marginTop: '8px' } },
+        h('div', { class: 'small muted', style: { marginBottom: '4px' } }, 'pages finished in this run, by the lane whose reader finished them'), runwayBar(l.runways, l.moves)) : null,
       l.pages ? h('div', { class: 'small muted', style: { marginTop: '8px' } },
         `This run so far: ${num(l.pages)} pages finished · ${num(read)} read now`
         + (l.cached ? ` · ${num(l.cached)} reused from the page cache` : '')
@@ -192,17 +194,29 @@ const CV = (function () {
         + (l.tokens ? ` · document reader: ${num(l.tokens)} tokens in ${dur(l.gpu_s || 0)}` + (l.tokens_per_s ? ` (${num(l.tokens_per_s)} tokens/s)` : '') : '')) : null);
   }
 
-  function lanes(list) {
+  /* One line per process: the document it has, how far it is, the reader call in progress (page, reader, for how long),
+     and a warning when it has said nothing for a long time (the run stops such a process at *stallLimit* seconds). */
+  function lanes(list, stallLimit) {
     if (!list || !list.length) return null;
+    const idle = { idle: 'between documents', done: 'finished', gone: 'stopped' };
+    const quiet = l => {
+      if (l.state !== 'working' || !l.quiet_s || l.quiet_s < 600) return null;
+      const lim = stallLimit || 0, near = lim && l.quiet_s > 0.75 * lim;
+      return h('span', { class: 'chip ' + (near ? 'bad' : 'warn'), title: 'time since this process last reported anything (a page, a reader call, a stage)' },
+        `quiet for ${dur(l.quiet_s)}` + (lim ? ` · stopped as stalled at ${dur(lim)}` : ''));
+    };
     return h('div', { class: 'cv-lanes' }, list.map(l => h('div', { class: 'cv-lane ' + l.state },
       h('span', { class: 'cv-lane-name' }, hw(l.kind), l.name),
       h('span', { class: 'cv-lane-state' }, l.state === 'working'
         ? h('span', null, l.phase ? h('span', { class: 'chip' }, l.phase) : null, ' ', h('b', { class: 'mono' }, l.file || '…'),
+          l.since ? ' for ' + since(l.since) : '',
           l.stage ? ` · stage ${l.stage}${l.stage_name ? ' ' + (PL.name ? PL.name(l.stage_name) : l.stage_name) : ''}` : '',
-          l.progress && l.progress.of ? ` · page ${l.progress.done} of ${l.progress.of}` : '', l.since ? ' for ' + since(l.since) : '')
-        : h('span', { class: 'muted' }, 'idle')),
-      h('span', { class: 'bar cv-lane-bar', title: `busy ${l.busy_pct}% of the time since it started` }, h('i', { style: { width: l.busy_pct + '%' } })),
-      h('span', { class: 'muted small nowrap' }, `${l.busy_pct}% busy · ` + (l.docs_by_phase && Object.keys(l.docs_by_phase).length ? Object.entries(l.docs_by_phase).map(([k, n]) => `${num(n)} ${k}`).join(', ') : `${num(l.docs)} docs`)))));
+          l.progress && l.progress.of ? ` · ${l.progress.done} of ${l.progress.of} pages done` : '',
+          l.step && l.step.what ? h('span', { title: 'the reader call in progress' }, ' · now ' + (l.step.page ? `page ${l.step.page}: ` : '') + l.step.what + (l.step.since ? ' for ' + since(l.step.since) : '')) : null,
+          ' ', quiet(l))
+        : h('span', { class: 'muted' }, idle[l.state] || l.state)),
+      h('span', { class: 'bar cv-lane-bar', title: `at work ${l.busy_pct}% of the time since it started` }, h('i', { style: { width: l.busy_pct + '%' } })),
+      h('span', { class: 'muted small nowrap' }, `at work ${l.busy_pct}% of the time · ` + (l.docs_by_phase && Object.keys(l.docs_by_phase).length ? Object.entries(l.docs_by_phase).map(([k, n]) => `${num(n)} ${k}`).join(', ') : `${num(l.docs)} docs`)))));
   }
 
   function tiles(t) {
@@ -212,7 +226,7 @@ const CV = (function () {
     return [
       statCard(num(t.pages), 'pages converted'),
       t.pages_per_min ? statCard(num(t.pages_per_min), 'pages read per minute (reused pages not counted)') : null,
-      statCard(dur(tot), PL.label('convert').toLowerCase() + ' time' + (time.profile ? ` (${PL.label('profile')} ${dur(time.profile)})` : '')),
+      statCard(dur(tot), 'conversion time, added up over the documents (stage ' + PL.label('convert') + (time.profile ? `; ${PL.label('profile')} ${dur(time.profile)}` : '') + '); several are converted side by side, so the run took less'),
       t.cost && t.cost.cpu_s ? statCard(dur(t.cost.cpu_s), 'CPU time' + (t.cost.peak_mb ? ` · peak ${bytes(t.cost.peak_mb * 1048576)}` : '')) : null,
       t.cached_pages ? statCard(num(t.cached_pages), 'pages from the page cache (not read again)') : null,
       t.step_s && t.step_s.read ? statCard(dur(t.step_s.read), PL.label('read') + ' pages' + (t.step_s.gate ? ` · ${PL.label('gate')} ${dur(t.step_s.gate)}` : '')) : null,

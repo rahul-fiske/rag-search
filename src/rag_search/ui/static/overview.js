@@ -178,6 +178,7 @@
       h('div', { class: 'card-head' }, h('h2', null, 'How the last run read its pages'),
         h('div', { class: 'spacer' }, h('a', { href: '#/indexing' }, 'Details'))),
       CV.bands(totals.branches),
+      totals.runways && Object.keys(totals.runways).length ? h('div', { style: { marginTop: '8px' } }, h('div', { class: 'small muted', style: { marginBottom: '4px' } }, 'by the lane whose reader finished the page'), CV.runwayBar(totals.runways, totals.moves)) : null,
       h('div', { class: 'row', style: { marginTop: '8px', gap: '6px' } }, CV.outcomeChips(totals.outcomes)),
       h('div', { class: 'grid g4', style: { marginTop: '12px' } }, CV.tiles(totals).slice(0, 4)));
   }

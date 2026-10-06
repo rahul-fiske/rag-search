@@ -144,7 +144,7 @@ def run_checks(paths: Paths) -> list[tuple[str, str, str]]:
             engines.append("tesseract")
         detail = (f"mode {cs['ocr']}, engine {cs['engine']}; installed: "
                   f"{', '.join(engines) or 'none found'}; threads {cs['threads'] or 'docling default'}, "
-                  f"time limit {int(cs['timeout']) or 'none'}{'s' if cs['timeout'] else ''} per document")
+                  f"time limit {int(cs['timeout']) or 'none'}{'s' if cs['timeout'] else ''} per docling call")
         slow = False
         if platform.system() == "Darwin" and "ocrmac (Apple Vision)" not in engines and cs["ocr"] != "off":
             detail += ("; Apple's on-device OCR is not installed, so scanned PDFs and photographed "
@@ -154,7 +154,10 @@ def run_checks(paths: Paths) -> list[tuple[str, str, str]]:
                        "from>`")
             slow = True
         out.append(_line(WARN if slow else OK, "OCR",
-                         detail + ("; force reads every page as an image, the slowest setting "
+                         detail + ("; with page routing a text page is not put through OCR whatever the mode says: "
+                                   "the mode applies as written only to files converted whole"
+                                   if cs.get("routing") == "pages" and cs["ocr"] != "off" else
+                                   "; force reads every page as an image, the slowest setting "
                                    "(RAG_SEARCH_OCR=smart skips it for clean PDFs)" if cs["ocr"] == "force" else "")))
     except Exception as exc:  # noqa: BLE001
         out.append(_line(WARN, "OCR", f"{type(exc).__name__}: {exc}"))

@@ -339,6 +339,108 @@ class ImageLaneTests(TempHome):
         self.assertEqual(res["records"][0]["route"]["final"], "d")
 
 
+@unittest.skipUnless(HAVE_PDF, "needs pypdfium2 and Pillow")
+class ReviewFixTests(TempHome):
+    """What the review of 0.9.24 found: pages reported one by one, no second OCR read, steps, a fair resolution check."""
+
+    def scans(self, n=3):
+        from PIL import Image, ImageDraw
+
+        pages = []
+        for i in range(n):
+            im = Image.new("RGB", (1240, 1754), "white")
+            d = ImageDraw.Draw(im)
+            for y in range(150, 1600, 40):
+                d.rectangle((120, y, 1000 - 30 * i, y + 14), fill="black")
+            pages.append(im)
+        pdf = self.tmp / "s.pdf"
+        pages[0].save(pdf, "PDF", resolution=150.0, save_all=True, append_images=pages[1:])
+        prof = profiler.profile_file(pdf)
+        for pg in prof["pages"]:
+            pg["ink"] = 0.1
+        return pdf, prof
+
+    def test_the_document_reader_reads_and_reports_one_page_at_a_time(self):
+        pdf, prof = self.scans(3)
+        v, order, steps = StubVlm(), [], []
+        res = routed.convert_pdf(pdf, self.tmp / "o.md", prof, cache=pagecache.PageCache(self.paths.workspace),
+                                 reader=FakeReader(), scan_reader=v, on_page=lambda rec, total: order.append(("page", rec["page"])),
+                                 on_step=lambda page, what: (steps.append((page, what)), order.append(("step", page))))
+        self.assertEqual(v.calls, [(1, 1), (2, 2), (3, 3)])                       # not one call for the run of three
+        self.assertEqual(order, [("step", 1), ("page", 1), ("step", 2), ("page", 2), ("step", 3), ("page", 3)])
+        self.assertEqual(steps[0], (1, "document reader"))
+        self.assertEqual(len(res["records"]), 3)
+
+    def test_when_the_reader_dies_the_other_pages_are_not_asked_of_it(self):
+        pdf, prof = self.scans(3)
+
+        class Dying(StubVlm):
+            def read(self, src, first, last, mode):
+                self.calls.append((first, last))
+                self.dead = "the reader process stopped too often in this run"
+                return {"pages": {}, "stats": {}, "failed": {first: "crashed: gone"}}
+
+            def usable(self):
+                return not self.dead
+
+        v, r = Dying(), FakeReader()
+        res = routed.convert_pdf(pdf, self.tmp / "o.md", prof, cache=None, reader=r, scan_reader=v)
+        self.assertEqual(v.calls, [(1, 1)])
+        self.assertEqual([x["branch"] for x in res["records"]], ["fallback"] * 3)   # docling's OCR read them
+        self.assertEqual(r.calls, [(1, 3, "scan")])
+
+    def test_ocr_text_that_the_reader_could_not_replace_is_kept_without_reading_the_page_again(self):
+        pdf, prof = self.scans(1)
+        os.environ["RAG_SEARCH_OCR_FIRST"] = "auto"
+        self.addCleanup(os.environ.pop, "RAG_SEARCH_OCR_FIRST", None)
+        r, v = FakeReader(bad={1: GIBBERISH}), StubVlm(fail=True)
+        with (mock.patch("rag_search.core.conversion.router.decide_scan", return_value=("b", ["clean print"])),
+              mock.patch("rag_search.core.conversion.scanfacts.pages_facts", side_effect=lambda s, pages: {n: dict(CLEAN) for n in pages}),
+              mock.patch("rag_search.core.conversion.tesseract.why_not", return_value="not used by tier A")):
+            res = routed.convert_pdf(pdf, self.tmp / "o.md", prof, cache=None, reader=r, scan_reader=v)
+        rec = res["records"][0]
+        self.assertEqual(r.calls, [(1, 1, "scan")])                               # once, not again after the reader failed
+        self.assertEqual((rec["route"]["final"], rec["route"]["engine"], rec["outcome"]), ("b", "docling", "low"))
+        self.assertIn("docling OCR's text kept", rec["note"])
+
+    def test_a_page_drawn_from_vectors_is_not_judged_by_the_resolution_of_a_logo_on_it(self):
+        e = {"mode": "scan", "profile": {"chars": 900, "image_cover": 0.05, "dpi": 72, "text_ok": False}}
+        c = routed._Converter.__new__(routed._Converter)
+        self.assertNotIn("dpi", c.gate_profile(e))
+        scan = {"mode": "scan", "profile": {"chars": 0, "image_cover": 1.0, "dpi": 72}}
+        self.assertEqual(c.gate_profile(scan)["dpi"], 72)                         # a real scan is judged by its own resolution
+        g = gate.check_page(GOOD, branch_kind="scan", profile=c.gate_profile(e))
+        self.assertNotIn("low_resolution", gate.failed(g))
+
+    def test_a_repair_that_could_not_run_is_tried_again_next_time(self):
+        pdf, prof = self.scans(1)
+
+        class Rep:
+            tag, reread = "r|model|-", True
+            reader = type("R", (), {"model": "m"})()
+            runs = 0
+
+            def usable(self):
+                return True
+
+            def run(self, src, n, is_image, md, violations, page_ok=None):
+                Rep.runs += 1
+                return {"md": md, "cells": [], "fixed": 0, "tried": 0, "tier": "", "tokens": 0, "gpu_s": 0.0, "seconds": 0.1,
+                        "model": "m", "second": "", "note": "page not read again (unavailable: no memory)", "complete": Rep.runs > 1}
+
+        table = "| a | b | c |\n|---|---|---|\n| 1 | 2 |\n| 3 | 4 | 5 | 6 |\n"
+
+        class TableVlm(StubVlm):
+            def read(self, src, first, last, mode):
+                self.calls.append((first, last))
+                return {"pages": {n: table + GOOD for n in range(first, last + 1)}, "stats": {n: {"read_s": 1.0} for n in range(first, last + 1)}, "failed": {}}
+
+        cache = pagecache.PageCache(self.paths.workspace)
+        for _ in range(3):
+            routed.convert_pdf(pdf, self.tmp / "o.md", prof, cache=cache, reader=FakeReader(), scan_reader=TableVlm(), repairer=Rep())
+        self.assertEqual(Rep.runs, 2)                 # run 1 could not (not remembered), run 2 did, run 3 knows it was tried
+
+
 if __name__ == "__main__":
     unittest.main()
 

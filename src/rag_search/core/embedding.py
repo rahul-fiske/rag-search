@@ -38,6 +38,7 @@ Progress = Callable[[int, int], None]
 def prepare_environment() -> None:
     """Set torch-related env defaults; call before the first torch import."""
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+    os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")       # nothing about this installation leaves the computer
     os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 
@@ -181,6 +182,43 @@ def trusted_load(model_name: str) -> Iterator[bool]:
             restore_torch_load_check()
 
 
+@contextlib.contextmanager
+def offline(on: bool) -> Iterator[None]:
+    """While a model that is complete in the local cache is loaded, the Hugging Face libraries are told to stay
+    offline.  ``local_files_only`` alone is not enough: transformers starts a background check for a converted copy of
+    the weights on the Hub (requests naming the model) unless it is in offline mode.  Search and indexing are meant to
+    use no network at all, so the mode is switched on for the load -- in the environment and in the libraries'
+    already-imported settings -- and put back afterwards (downloads, asked for on the Models tab, need it off)."""
+    if not on:
+        yield
+        return
+    names = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
+    saved_env = {k: os.environ.get(k) for k in names}
+    saved_attr: list[tuple[Any, str, Any]] = []
+    for k in names:
+        os.environ[k] = "1"
+    for mod_name, attr in (("huggingface_hub.constants", "HF_HUB_OFFLINE"), ("transformers.utils.hub", "_is_offline_mode")):
+        mod = sys.modules.get(mod_name)
+        if mod is None and mod_name.startswith("huggingface_hub"):
+            with contextlib.suppress(Exception):
+                mod = importlib.import_module(mod_name)
+        if mod is not None and hasattr(mod, attr):
+            saved_attr.append((mod, attr, getattr(mod, attr)))
+            with contextlib.suppress(Exception):
+                setattr(mod, attr, True)
+    try:
+        yield
+    finally:
+        for mod, attr, value in saved_attr:
+            with contextlib.suppress(Exception):
+                setattr(mod, attr, value)
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 def _load_model(name: str, factory: Callable[..., Any], **kw: Any) -> Any:
     """Load a Hugging Face model, offline first.
 
@@ -197,7 +235,8 @@ def _load_model(name: str, factory: Callable[..., Any], **kw: Any) -> Any:
     with _LOAD_LOCK, trusted_load(name):
         if cached:
             try:
-                return factory(local_files_only=True, **kw)
+                with offline(True):
+                    return factory(local_files_only=True, **kw)
             except TypeError:
                 pass                       # this library version has no local_files_only
             except Exception as exc:  # noqa: BLE001 - try the normal way below

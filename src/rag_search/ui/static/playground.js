@@ -196,7 +196,7 @@
   /* what each stage has done so far, counted from the documents' stage events and pages */
   function documentsOf(d) {
     const items = ((d.documents && d.documents.items) || []).slice().reverse().map(i => ({
-      file: (i.collection ? i.collection + '/' : '') + i.source, status: i.status, message: i.message, item: i, tl: i.timeline }));
+      file: (i.collection ? i.collection + '/' : '') + (i.path || i.source), status: i.status, message: i.message, item: i, tl: i.timeline }));
     const flying = (d.in_flight || []).map(t => ({ file: t.file, status: 'working', tl: t }));
     return [...flying, ...items];
   }
@@ -347,7 +347,7 @@
           isRunning && d.run && d.run.now && d.run.now.file ? h('span', null, '· now: ', h('b', { class: 'mono' }, d.run.now.file), d.run.now.since ? ` for ${since(d.run.now.since)}` : '', d.run.now.stage ? ` · stage ${d.run.now.stage}` : '') : null));
       if (isRunning && d.run) {
         body.push(CV.live(d.run.live) ? h('div', { style: { marginTop: '12px' } }, h('h4', null, 'Pages in active files'), CV.live(d.run.live)) : null,
-          CV.lanes(d.run.lanes) ? h('div', { style: { marginTop: '12px' } }, h('h4', null, 'Workers'), CV.lanes(d.run.lanes)) : null);
+          CV.lanes(d.run.lanes) ? h('div', { style: { marginTop: '12px' } }, h('h4', null, 'Workers'), CV.lanes(d.run.lanes, d.run.stall_limit_s)) : null);
       }
       if (!isRunning && sum.indexed !== undefined) {
         const ps = sum.phase_s || {};
@@ -358,7 +358,8 @@
           ps.merge != null ? statCard(dur(ps.merge), `${PL.label('merge')} time`) : null,
           ...(sum.conversion && sum.conversion.pages ? CV.tiles(sum.conversion).slice(0, 2) : [])));
         if (sum.conversion && (sum.conversion.ok_branches || sum.conversion.branches) && CV.bands(sum.conversion.ok_branches || sum.conversion.branches))
-          body.push(h('div', { style: { marginTop: '10px' } }, h('h4', null, 'Pages in successfully converted files'), CV.bands(sum.conversion.ok_branches || sum.conversion.branches)));
+          body.push(h('div', { style: { marginTop: '10px' } }, h('h4', null, 'Pages in successfully converted files'), CV.bands(sum.conversion.ok_branches || sum.conversion.branches),
+            sum.conversion.ok_runways && Object.keys(sum.conversion.ok_runways).length ? h('div', { style: { marginTop: '8px' } }, h('div', { class: 'small muted', style: { marginBottom: '4px' } }, 'by the lane whose reader finished the page'), CV.runwayBar(sum.conversion.ok_runways, sum.conversion.moves)) : null));
       }
       body.push(h('h4', { style: { margin: '14px 0 6px' } }, 'Documents'), documentRows(docs));
     }

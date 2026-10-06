@@ -20,6 +20,7 @@ import logging
 import multiprocessing as mp
 import os
 import shutil
+import signal
 import subprocess
 import time
 from collections.abc import Callable, Iterable
@@ -56,7 +57,7 @@ from ..paths import (
     sha256_file,
     write_json_atomic,
 )
-from . import chunker
+from . import chunker, stallwatch
 from .bm25 import TOKENIZER_VERSION
 from .conversion import (
     applevision,
@@ -288,7 +289,8 @@ def work_event(path: str | os.PathLike | None, rel: str, phase: str, status: str
     if not path:
         return
     try:
-        line = json.dumps({"ts": round(time.time(), 3), "event": "work", "pid": os.getpid(), "phase": phase,
+        pid = int(fields.pop("of_pid", 0) or os.getpid())          # of_pid: written for a process that cannot any more
+        line = json.dumps({"ts": round(time.time(), 3), "event": "work", "pid": pid, "phase": phase,
                            "file": rel, "status": status, **fields}, ensure_ascii=False)
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(line + "\n")
@@ -304,6 +306,21 @@ def plan_event(path: str | os.PathLike | None, rel: str, branches: dict[str, int
     try:
         line = json.dumps({"ts": round(time.time(), 3), "event": "plan", "file": rel, "pid": os.getpid(),
                            "pages": sum(branches.values()), "branches": branches}, ensure_ascii=False)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except (OSError, ValueError, TypeError):
+        pass
+
+
+def step_event(path: str | os.PathLike | None, rel: str, page: int, what: str) -> None:
+    """Append "this process is about to read page N with this reader" (a reader call can take minutes).  The
+    dashboard shows it next to the worker, and the stall watch (``stallwatch.py``) takes it as a sign of life.
+    Never raises."""
+    if not path:
+        return
+    try:
+        line = json.dumps({"ts": round(time.time(), 3), "event": "step", "file": rel, "pid": os.getpid(),
+                           "page": page, "what": what}, ensure_ascii=False)
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(line + "\n")
     except (OSError, ValueError, TypeError):
@@ -349,12 +366,13 @@ def convert_source_routed(src: Path, md_path: Path, profile: dict[str, Any], *, 
         sidecar.unlink()
     cache = pagecache.PageCache(cache_root)
     on_page = lambda rec, total: page_event(stage_log, rel_name, rec, total)       # noqa: E731
+    on_step = lambda page, what: step_event(stage_log, rel_name, page, what)       # noqa: E731
     if profile.get("kind") == "image":
         res = routed.convert_image(src, md_path, profile, cache=cache, scan_reader=vlm.shared(),
-                                   ocr=ocr, on_page=on_page, repairer=repair.build())
+                                   ocr=ocr, on_page=on_page, repairer=repair.build(), on_step=on_step)
     else:
         res = routed.convert_pdf(src, md_path, profile, cache=cache, scan_reader=vlm.shared(), ocr=ocr,
-                                 on_page=on_page, repairer=repair.build())
+                                 on_page=on_page, repairer=repair.build(), on_step=on_step)
     info.update({"page_records": res["records"], "pages": res["pages"], "routed": {
         "cache": res["cache"], "runs": res["runs"]}})
     sidecar.write_text(f"{src_sha}\n{convert_profile(ocr)}\n", encoding="utf-8")
@@ -627,6 +645,8 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
             if not route_note and not reused_md:
                 route_note = _why_not_routed(kind, profile, task.get("ocr"))
                 route_note = f"not read page by page: {route_note}" if route_note else ""
+            if not reused_md:
+                step_event(slog, rel_name, 0, "docling, whole document" if kind != "text" else "copy")
             try:
                 how = convert_source(src, md_path, force=task["force_md"], src_sha=sha,
                                      ocr=task.get("ocr"), info=info)
@@ -1139,6 +1159,103 @@ def _shutdown_pool(pool: cf.ProcessPoolExecutor, grace: float = POOL_EXIT_GRACE_
     return len(left)
 
 
+MAX_POOL_RESTARTS = 8                # a pool whose processes keep ending abruptly is given up after this many new pools
+STRIKES = 2                          # a document that was open during this many abrupt ends is not tried again in the run
+
+
+def _convert_in_pool(tasks: list[dict[str, Any]], workers: int, collect: Callable[[dict[str, Any]], None], *,
+                     watch: Any = None, stalled: dict[str, str] | None = None, rel_src: dict[str, str] | None = None,
+                     stage_log: Any = None) -> None:
+    """Phase 1 in a pool of conversion processes that survives the end of one of them.
+
+    When a pool process ends abruptly -- stopped by the stall watch, killed by the system for memory, a crash in native
+    code -- Python marks the whole pool broken and fails every document still waiting.  Here those documents are not
+    lost: the documents that finished are kept, the one the stall watch stopped is reported as stalled, a document that
+    was open during two abrupt ends is reported as the likely cause, and the rest go to a new pool."""
+    from concurrent.futures.process import BrokenProcessPool
+
+    stalled = stalled if stalled is not None else {}
+    rel_src = rel_src or {}
+    src_rel = {v: k for k, v in rel_src.items()}
+    remaining = list(tasks)
+    strikes: dict[str, int] = {}
+    restarts = 0
+    while remaining:
+        finished: set[str] = set()
+        broke = False
+        dead: set[int] = set()
+        try:
+            pool = cf.ProcessPoolExecutor(max_workers=max(1, min(workers, len(remaining))), mp_context=mp.get_context("spawn"))
+            futs = {pool.submit(prepare_document, t): t for t in remaining}
+        except Exception as exc:  # noqa: BLE001 - no pool on this machine: one document at a time, in this process
+            log.warning("process pool could not be started (%s); continuing serially", exc)
+            for t in remaining:
+                collect(prepare_document(t))
+            return
+        try:
+            for fut in cf.as_completed(futs):
+                t = futs[fut]
+                try:
+                    res = fut.result()
+                except BrokenProcessPool:
+                    broke = True                       # every waiting document ends this way: sorted out below
+                    continue
+                except Exception as exc:  # noqa: BLE001 - this document's worker failed
+                    res = {"status": "error", "src": t["src"], "message": f"worker failed: {exc}"}
+                finished.add(t["src"])
+                collect(res)
+        except Exception as exc:  # noqa: BLE001 - the pool itself failed
+            log.warning("process pool failed (%s)", exc)
+            broke = True
+        finally:
+            if broke:                                  # which process ended by itself?  The pool then ends the others (SIGTERM)
+                time.sleep(0.3)
+                for pid, proc in dict(getattr(pool, "_processes", None) or {}).items():
+                    if proc.exitcode not in (None, 0, -signal.SIGTERM):
+                        dead.add(int(pid))
+            _shutdown_pool(pool)
+        remaining = [t for t in remaining if t["src"] not in finished]
+        if not remaining:
+            return
+        if not broke:                                  # (not reached: every submitted document ends one way or the other)
+            for t in remaining:
+                collect({"status": "error", "src": t["src"], "message": "worker failed: no result"})
+            return
+        restarts += 1
+        flying = watch.in_flight() if watch is not None else {}
+        # the documents that may have ended the pool: those open in a process that ended by itself; when that cannot
+        # be told, every document that was open (or, without an event log, every document left)
+        culprits = {pid: f for pid, f in flying.items() if pid in dead} or flying
+        open_srcs = {rel_src[f] for f in culprits.values() if f in rel_src} if watch is not None else {t["src"] for t in remaining}
+        for pid, f in flying.items():                  # their processes are gone: close their work in the log
+            work_event(stage_log, f, "convert", "done", outcome="interrupted", of_pid=pid)
+        if watch is not None:
+            watch.forget_all()
+        keep = []
+        for t in remaining:
+            src = t["src"]
+            if src_rel.get(src, "") in stalled:
+                collect({"status": "error", "src": src, "message": stalled.pop(src_rel[src])})
+                continue
+            if src in open_srcs:
+                strikes[src] = strikes.get(src, 0) + 1
+                if strikes[src] >= STRIKES:
+                    collect({"status": "error", "src": src, "message":
+                             "the conversion process ended abruptly twice while it had this document open (out of memory, "
+                             "or a crash in a library): the document was left out of this run and the run went on"})
+                    continue
+            keep.append(t)
+        remaining = keep
+        if remaining and restarts > MAX_POOL_RESTARTS:
+            for t in remaining:
+                collect({"status": "error", "src": t["src"], "message":
+                         "worker failed: the conversion processes kept ending abruptly; not converted in this run"})
+            return
+        if remaining:
+            log.warning("a conversion process ended abruptly; %d document(s) go to a new pool (restart %d)",
+                        len(remaining), restarts)
+
+
 def run_index(
     paths: Paths,
     sources: list[Path],
@@ -1198,10 +1315,13 @@ def run_index(
     def doc_event(src: Path, status: str, **fields: Any) -> None:
         """One event per finished document (also written to the job's event log)."""
         try:
-            coll = mirror_rel(src, roots).parts[0]
+            rel = mirror_rel(src, roots)
+            coll, inside = rel.parts[0], "/".join(rel.parts[1:])
         except ValueError:
-            coll = ""
-        _sink({"doc": {"collection": coll, "source": src.name, "status": status, **fields}})
+            coll, inside = "", ""
+        # path: where the document is inside its collection.  The file name alone does not identify it: two folders
+        # of one collection may each hold a "statement.pdf", and a list keyed by name would show (and count) one
+        _sink({"doc": {"collection": coll, "source": src.name, "path": inside or src.name, "status": status, **fields}})
 
     model = model if model is not None else model_name()
     ocr = None    # OCR, table and pipeline settings come from RAG_SEARCH_* (see docling_convert)
@@ -1227,7 +1347,7 @@ def run_index(
             orphans_removed.append(name)
         for r in removed:
             parts = r.split("/", 1)
-            _sink({"doc": {"collection": parts[0], "source": parts[-1], "status": "removed"}})
+            _sink({"doc": {"collection": parts[0], "source": parts[-1].rsplit("/", 1)[-1], "path": parts[-1], "status": "removed"}})
         rebuild = rebuild or wipe
         force_md = force_md or wipe
 
@@ -1292,29 +1412,42 @@ def run_index(
         emit({"phase": "convert", "done": 0, "total": total, "message": f"{total} file(s)"})
         _sink({"phase_event": {"phase": "convert", "status": "start", "total": total,
                                "workers": min(jobs, total) if total else 0}})
-        if jobs > 1 and total > 1:
-            try:
-                pool = cf.ProcessPoolExecutor(max_workers=min(jobs, total),
-                                              mp_context=mp.get_context("spawn"))
-                try:
-                    futs = {pool.submit(prepare_document, t): t for t in tasks}
-                    for fut in cf.as_completed(futs):
-                        try:
-                            _collect(fut.result())
-                        except Exception as exc:  # noqa: BLE001 - worker died
-                            _collect({"status": "error", "src": futs[fut]["src"],
-                                      "message": f"worker failed: {exc}"})
-                finally:
-                    _shutdown_pool(pool)
-            except Exception as exc:  # noqa: BLE001 - pool broke; do the rest serially
-                log.warning("process pool failed (%s); continuing serially", exc)
-                finished = {r["src"] for r in prepared} | {e["src"] for e in errors} | {n["src"] for n in no_text}
+        # the stall watch: a conversion process that writes nothing to the event log for too long is stopped
+        watch: stallwatch.StallWatch | None = None
+        stalled: dict[str, str] = {}                  # document (path inside its collection) -> what happened
+        rel_src: dict[str, str] = {}
+        for t in tasks:
+            with contextlib.suppress(ValueError):
+                rel_src[mirror_rel(Path(t["src"]), roots).as_posix()] = t["src"]
+        limit = stallwatch.limit_s() if stage_log else 0.0
+
+        def _on_stall(st: dict[str, Any]) -> None:
+            msg = stallwatch.describe(st)
+            log.error("%s: %s", st.get("file"), msg)
+            if st["pid"] == os.getpid():              # documents are converted in this process: only ending it helps
+                with contextlib.suppress(OSError), open(str(stage_log), "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({"ts": round(time.time(), 3), "event": "error",
+                                         "error": f"{st.get('file')}: {msg.replace('and the run went on', 'and the run ended')}"},
+                                        ensure_ascii=False) + "\n")
+                logging.shutdown()
+                os._exit(1)
+            stalled[str(st.get("file", ""))] = msg
+            work_event(stage_log, str(st.get("file", "")), "convert", "done", outcome="stalled", of_pid=st["pid"])
+            with contextlib.suppress(OSError):
+                os.kill(int(st["pid"]), signal.SIGKILL)
+
+        if stage_log:                                 # with a limit of 0 it stops nothing, and still knows what is open
+            watch = stallwatch.StallWatch(Path(str(stage_log)), limit).start(_on_stall)
+        try:
+            if jobs > 1 and total > 1:
+                _convert_in_pool(tasks, min(jobs, total), _collect, watch=watch, stalled=stalled, rel_src=rel_src,
+                                 stage_log=stage_log)
+            else:
                 for t in tasks:
-                    if t["src"] not in finished:
-                        _collect(prepare_document(t))
-        else:
-            for t in tasks:
-                _collect(prepare_document(t))
+                    _collect(prepare_document(t))
+        finally:
+            if watch is not None:
+                watch.stop()
 
         phase_s["convert"] = round(time.perf_counter() - t_phase, 1)
         _sink({"phase_event": {"phase": "convert", "status": "done", "total": total, "seconds": phase_s["convert"]}})
