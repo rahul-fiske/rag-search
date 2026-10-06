@@ -37,6 +37,24 @@ class RegistryTests(unittest.TestCase):
             owners = stages.owners_of(key)
             self.assertEqual(len(owners), 1, f"{key} is owned by {[o.id for o in owners]}")
 
+    def test_a_stage_with_parts_puts_every_setting_and_variable_in_exactly_one_part(self):
+        seen = 0
+        for s in stages.ALL:
+            if not s.groups:
+                continue
+            seen += 1
+            listed = [x for g in s.groups for x in g.settings]
+            self.assertEqual(sorted(listed), sorted(s.settings), s.id)             # all of them, none twice
+            envs = [x for g in s.groups for x in g.env_only]
+            self.assertEqual(sorted(envs), sorted(s.env_only), s.id)
+            self.assertEqual(len({g.id for g in s.groups}), len(s.groups))
+            self.assertTrue(all(g.id.startswith(s.id) and g.name and g.what for g in s.groups))
+        self.assertGreaterEqual(seen, 1)
+        read = stages.BY_ID["3.2"]
+        self.assertEqual([g.id for g in read.groups], ["3.2", "3.2a", "3.2b", "3.2c", "3.2d"])   # the router, then the lanes
+        d = [x for x in stages.describe() if x["id"] == "3.2"][0]
+        self.assertEqual([g["id"] for g in d["groups"]], ["3.2", "3.2a", "3.2b", "3.2c", "3.2d"])
+
     def test_every_listed_setting_exists(self):
         known = {f"{t.section}.{t.key}" for t in spec.TUNABLES} | set(stages.CONFIG_KEYS)
         for s in stages.ALL:

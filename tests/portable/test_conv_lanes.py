@@ -412,6 +412,31 @@ class ReviewFixTests(TempHome):
         g = gate.check_page(GOOD, branch_kind="scan", profile=c.gate_profile(e))
         self.assertNotIn("low_resolution", gate.failed(g))
 
+    def test_a_page_the_repair_model_read_again_gets_the_one_table_format_too(self):
+        pdf, prof = self.scans(1)
+        html = "<table><tr><td>Date</td><td>Amount</td></tr><tr><td>1 May</td><td>10.00</td></tr><tr><td>2 May</td><td>20.00</td></tr></table>"
+        bad = "| a | b | c |\n|---|---|---|\n| 1 | 2 |\n| 3 | 4 | 5 | 6 |\n"
+
+        class Rep:
+            tag, reread = "r|model|-", True
+            reader = type("R", (), {"model": "m"})()
+
+            def usable(self):
+                return True
+
+            def run(self, src, n, is_image, md, violations, page_ok=None):
+                return {"md": html + "\n\n" + GOOD, "cells": [], "fixed": 0, "tried": 0, "tier": "page", "tokens": 0, "gpu_s": 0.0,
+                        "seconds": 0.1, "model": "m", "second": "", "note": "page read again", "complete": True}
+
+        class TableVlm(StubVlm):
+            def read(self, src, first, last, mode):
+                return {"pages": {first: bad + GOOD}, "stats": {first: {"read_s": 1.0}}, "failed": {}}
+
+        routed.convert_pdf(pdf, self.tmp / "o.md", prof, cache=None, reader=FakeReader(), scan_reader=TableVlm(), repairer=Rep())
+        text = (self.tmp / "o.md").read_text()
+        self.assertNotIn("<table", text)
+        self.assertIn("| 1 May | 10.00 |", text)
+
     def test_a_repair_that_could_not_run_is_tried_again_next_time(self):
         pdf, prof = self.scans(1)
 

@@ -383,6 +383,9 @@ class _Converter:
                 self.step(n, "repair")
                 rep = self._repair(n, e, r, g, kind, conf)
                 repair_s = rep["seconds"]
+                # the repair model writes HTML tables too: the page it replaced gets the one table format as well
+                r["md"], _n = tables.normalize_html_tables(r["md"])
+                r["md"], _j = tables.join_split_pipe_tables(r["md"])
                 g = gate.check_page(r["md"], branch_kind=kind, profile=gprof, confidence=conf, ocr=ocr)
         if kind == "scan" and not e["blank"] and "degenerate" in gate.failed(g):
             self.step(n, "tesseract")

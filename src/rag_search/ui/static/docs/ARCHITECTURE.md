@@ -252,11 +252,18 @@ One numbered list of stages describes a document's way into the index and a quer
 numbers are the same everywhere: the progress events of a run (`stage` events carry `id`), the indexer's
 log lines ("3 Convert started", "2 Fingerprint unchanged: skipped"), `rag-search index` output, the
 Architecture tab's diagram, the Indexing tab ("Settings in effect, by pipeline stage"), the Settings tab
-(its fields are grouped by the stage that reads them), the page traces, the Playground and this document.
+(one card per stage; the steps 3.1-3.5 are cards inside 3 Convert, and 3.2 Read has one card for the router and one
+for each lane), the page traces, the Playground and this document.
 `stages.py` (stdlib only) is the registry: each `Stage` has its number, key, name, scope, where it runs, a
 one-line description, the settings it owns (`section.key` of `config.json`, the keys the Settings tab edits)
-and its environment-only variables. `tests/test_stages.py` checks that every tunable belongs to exactly one
-stage, that every environment variable listed is really read, and that the browser's copy of the keys
+and its environment-only variables. A stage whose settings belong to several parts lists them as `groups`
+(`stages.Group`: id, name, what it does and what else its settings reach): 3.2 Read has `3.2` (the router: routing,
+pipeline), `3.2a` (docling: table mode, PDF backend, batch, timeout, text-layer fill, hand-over to the reader), `3.2b`
+(OCR first, OCR mode, engine, languages; the Tesseract variables), `3.2c` (residue regions) and `3.2d` (document
+reader switch, model, memory limit; its page timeout and backend variables). `/api/pipeline` carries the groups, and
+the Settings tab, the Indexing tab's "Settings in effect" and a Playground experiment's settings all draw one block
+per group, so it is plain which setting acts on which lane. `tests/test_stages.py` checks that every tunable belongs
+to exactly one stage, that every setting and variable of a grouped stage is in exactly one group, that every environment variable listed is really read, and that the browser's copy of the keys
 (`ui/static/pipeline.js`) equals the registry. Conversion is not a side branch: 3 Convert is a stage like
 the others, with its steps 3.1-3.5 numbered inside it.
 
@@ -630,6 +637,8 @@ EXIF orientation applied; HEIC with `pillow-heif`) and large pictures on text pa
   leaves out the header's last (empty) column; any other difference in the number of cells is a shifted row.
   The conversion profile of a document carries `post=<POST_VERSION>` (not the page cache's key), so a change
   to this kind of post-processing re-converts documents from the page cache and reads no page again.
+  (`POST_VERSION` is 4 since 0.9.26: a page the repair model read again kept its HTML tables until then, about 92
+  pages of the first full run; the bump converts every document again from the page cache and embeds it again once.)
 * **Fallback, always per page.** Whatever the VLM cannot read goes to docling with full-page OCR: branch
   `fallback`, and the page's `note` says why (`crashed: ...`, `timeout: ...`, `unavailable: only 1.5 GB of
   memory is free ...`). Image files have no page fallback: the reader raises and the indexer converts the file

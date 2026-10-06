@@ -495,9 +495,25 @@
     refs.promoteBtn = h('button', { class: 'btn small', on: { click: promote } }, 'Promote to production');
     // one tunablesForm per stage that owns docling tunables (the same widget as the Settings tab), loaded from this experiment
     const byStage = {};
-    for (const t of doclingTunables || []) (byStage[stageOfTunable(t)] = byStage[stageOfTunable(t)] || []).push(t);
-    refs.doclingForms = Object.entries(byStage).map(([id, ts]) => { const f = tunablesForm(ts); f.load(cfg); f.stage = id; return f; });
+    // a stage whose settings belong to several parts (the router and the lanes of 3.2) gets one form per part
+    const partOf = t => {
+      const sid = stageOfTunable(t);
+      const g = (stageMeta(sid).groups || []).find(x => x.settings.includes('indexer.' + t.key));
+      return g ? 'part:' + g.id : sid;
+    };
+    for (const t of doclingTunables || []) (byStage[partOf(t)] = byStage[partOf(t)] || []).push(t);
+    refs.doclingForms = Object.entries(byStage).map(([id, ts]) => {
+      const g = id.startsWith('part:') ? (stageMeta('3.2').groups || []).find(x => 'part:' + x.id === id) : null;
+      if (g) ts.sort((a, b) => g.settings.indexOf('indexer.' + a.key) - g.settings.indexOf('indexer.' + b.key));
+      const f = tunablesForm(ts); f.load(cfg); f.stage = id; return f;
+    });
     const formOf = id => (refs.doclingForms.find(f => f.stage === id) || {}).root;
+    const laneCards = (extraFor) => (stageMeta('3.2').groups || []).map(g => {
+      const lane = /^[\d.]+([a-d])$/.exec(g.id), form = formOf('part:' + g.id), extra = extraFor[g.id] || null;
+      return form || extra ? h('div', { class: 'set-group' + (lane ? ' rw-' + lane[1] : '') },
+        h('div', { class: 'stage-head sub' }, h('b', { class: 'stage-id' }, g.id), h('b', null, g.name), PL.hw(g.where)),
+        h('p', { class: 'small muted', style: { margin: '2px 0 8px' } }, g.what), extra, form || null) : null;
+    });
 
     refs.sQ = h('input', { type: 'search', style: { flex: '1 1 260px' }, on: { keydown: e => { if (e.key === 'Enter') runSearch(); } } });
     refs.sGo = h('button', { class: 'btn primary small', on: { click: runSearch } }, 'Search');
@@ -543,12 +559,13 @@
         h('div', { class: 'card-head' }, h('h4', null, 'Settings of this experiment, by pipeline stage'), h('span', { class: 'muted small' }, 'pinned to this experiment only; a blank field means the built-in default'),
           h('button', { class: 'btn small', style: { marginLeft: 'auto' }, on: { click: saveConfig } }, 'Save settings')),
         stageSection('3.2', 'Read',
-          h('div', { class: 'row', style: { gap: '16px', flexWrap: 'wrap', marginBottom: '8px' } }, h('label', { class: 'field' }, 'Document reader model (3.2c, 3.2d)', refs.cReader)),
+          h('div', { class: 'set-groups' }, laneCards({ '3.2d':
+            h('div', { class: 'row', style: { gap: '16px', flexWrap: 'wrap', marginBottom: '8px' } }, h('label', { class: 'field' }, 'Document reader model (lanes c and d)', refs.cReader)) })),
           formOf('3.2')),
         stageSection('3.4', 'Repair',
           h('div', { class: 'row', style: { gap: '16px', flexWrap: 'wrap', marginBottom: '8px' } }, h('label', { class: 'field' }, 'Repair model', refs.cRepair)),
           formOf('3.4')),
-        ...Object.keys(byStage).filter(id => !['3.2', '3.4'].includes(id)).map(id => stageSection(id, stageMeta(id).name, formOf(id))),
+        ...Object.keys(byStage).filter(id => !['3.2', '3.4'].includes(id) && !id.startsWith('part:')).map(id => stageSection(id, stageMeta(id).name, formOf(id))),
         stageSection('4', 'Chunk', h('div', { class: 'row', style: { gap: '16px' } }, h('label', { class: 'field' }, 'Chunk size (tokens, estimated)', refs.cChunkSize), h('label', { class: 'field' }, 'Chunk overlap', refs.cChunkOverlap))),
         stageSection('5', 'Embed', h('div', { class: 'row', style: { gap: '16px' } }, h('label', { class: 'field' }, 'Embedding model', refs.cEmb))),
         stageSection('S2', 'Search defaults',

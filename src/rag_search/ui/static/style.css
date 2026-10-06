@@ -343,6 +343,23 @@ svg.dg { display: block; width: 100%; height: auto; min-width: 820px; font-famil
 .bench-better { color: var(--cv-repaired); font-weight: 600; } .bench-worse { color: var(--cv-low); font-weight: 600; }
 
 /* the numbered pipeline (pipeline.js) */
+/* Settings tab: one card per stage; sub-stages are cards inside their stage; the parts of a stage (the lanes of 3.2) too */
+.set-pipeline > .card-head { margin-bottom: 10px; }
+.set-card { background: var(--panel); border: 1px solid var(--line-2); border-radius: 10px; padding: 12px 14px; margin-top: 12px; }
+.set-card:first-child { margin-top: 0; }
+.set-card.bare { padding: 8px 14px; background: transparent; border-style: dashed; }
+.set-card.bare p { margin: 2px 0 0 !important; }
+.set-card.sub { background: var(--panel-2); border-color: var(--line); margin-top: 10px; }
+.set-kids { margin-top: 12px; padding-left: 14px; border-left: 3px solid var(--accent-soft); }
+.set-kids-head { margin-bottom: 2px; }
+.set-groups { display: grid; gap: 10px; }
+.set-group { background: var(--panel); border: 1px solid var(--line-2); border-left: 5px solid var(--line-2); border-radius: 8px; padding: 10px 12px; }
+.set-group.rw-a { border-left-color: var(--rw-a); } .set-group.rw-b { border-left-color: var(--rw-b); }
+.set-group.rw-c { border-left-color: var(--rw-c); } .set-group.rw-d { border-left-color: var(--rw-d); }
+.set-group.rw-a .stage-id { background: var(--rw-a); color: #fff; } .set-group.rw-b .stage-id { background: var(--rw-b); color: #fff; }
+.set-group.rw-c .stage-id { background: var(--rw-c); color: #fff; } .set-group.rw-d .stage-id { background: var(--rw-d); color: #fff; }
+.set-env { margin: 10px 0 0; }
+.stage-part { margin: 6px 0 8px; padding-left: 10px; border-left: 3px solid var(--line); }
 .stage { padding: 10px 0 12px; border-top: 1px solid var(--line); }
 .stage:first-child { border-top: 0; padding-top: 0; }
 .stage.sub { margin-left: 22px; padding-left: 14px; border-left: 3px solid var(--line); border-top: 0; padding-top: 4px; }

@@ -38,6 +38,18 @@ CPU, GPU, BOTH = "cpu", "gpu", "cpu+gpu"
 
 
 @dataclass(frozen=True)
+class Group:
+    """A part of a stage that has settings of its own -- a lane of 3.2 -- so that the Settings tab can show which
+    setting belongs to which part.  Every setting and environment variable of the stage is in exactly one group."""
+    id: str                              # "3.2a"
+    name: str                            # "Lane a · text layer"
+    what: str                            # what this part does, and what else its settings reach
+    settings: tuple[str, ...] = ()
+    env_only: tuple[str, ...] = ()
+    where: str = ""                      # CPU | GPU | BOTH | ""
+
+
+@dataclass(frozen=True)
 class Stage:
     id: str                              # "3.4": referenced everywhere
     key: str                             # short machine name: events, trace, API
@@ -50,6 +62,7 @@ class Stage:
     also_used_by: dict[str, tuple[str, ...]] = field(default_factory=dict)   # setting -> other stage ids
     optional: bool = False               # the stage can be switched off / may not run
     constants: tuple[tuple[str, Any], ...] = ()   # fixed numbers worth showing (not configurable)
+    groups: tuple[Group, ...] = ()       # the stage's settings arranged by the part that uses them (optional)
 
     @property
     def parent(self) -> str:
@@ -87,7 +100,35 @@ INDEXING: tuple[Stage, ...] = (
                     "models.reader", "models.memory_limit_gb", "indexer.docling_batch",
                     "indexer.doc_timeout"),
           env_only=("RAG_SEARCH_THREADS", "RAG_SEARCH_VLM_PAGE_TIMEOUT", "RAG_SEARCH_VLM_FREE_GB",
-                    "RAG_SEARCH_VLM_BACKEND", "RAG_SEARCH_TESSERACT", "RAG_SEARCH_TESSERACT_LANG")),
+                    "RAG_SEARCH_VLM_BACKEND", "RAG_SEARCH_TESSERACT", "RAG_SEARCH_TESSERACT_LANG"),
+          groups=(
+              Group("3.2", "Router: which lane a page takes",
+                    "decides, page by page, which of the four lanes below reads a page; with routing set to document, "
+                    "or the experimental vlm pipeline, there are no lanes and docling converts the file whole",
+                    settings=("indexer.routing", "indexer.pipeline"), where=CPU),
+              Group("3.2a", "Lane a · text layer",
+                    "docling reads a page that has a text layer, and Office and HTML files; the page is then compared "
+                    "with the PDF's own text layer. The docling settings here also apply wherever else docling reads: "
+                    "the OCR of lane b, the text of a lane c page, and a file converted whole",
+                    settings=("indexer.table_mode", "indexer.pdf_backend", "indexer.docling_batch", "indexer.doc_timeout",
+                              "indexer.layer_fill", "indexer.escalate_digital"),
+                    env_only=("RAG_SEARCH_THREADS",), where=CPU),
+              Group("3.2b", "Lane b · OCR",
+                    "an OCR engine reads a clean scan first (off by default), and reads every scan when the document "
+                    "reader of lane d cannot run. The engine and languages are docling's OCR; Tesseract reads skewed "
+                    "pages and image files in this lane and is the last resort of lane d",
+                    settings=("indexer.ocr_first", "indexer.ocr", "indexer.ocr_engine", "indexer.ocr_lang"),
+                    env_only=("RAG_SEARCH_TESSERACT", "RAG_SEARCH_TESSERACT_LANG"), where=CPU),
+              Group("3.2c", "Lane c · text layer + pictures",
+                    "docling reads the text layer and the document reader of lane d reads the large pictures on the "
+                    "page (always) and, with the switch here, the regions of ink the text layer does not explain",
+                    settings=("indexer.residue",), where=BOTH),
+              Group("3.2d", "Lane d · document reader",
+                    "a vision model reads the whole page image: every scan, photo and image file that lane b does not "
+                    "take, and every page a cheaper lane doubts. The same model reads the pictures of lane c",
+                    settings=("indexer.vlm", "models.reader", "models.memory_limit_gb"),
+                    env_only=("RAG_SEARCH_VLM_PAGE_TIMEOUT", "RAG_SEARCH_VLM_FREE_GB", "RAG_SEARCH_VLM_BACKEND"), where=GPU),
+          )),
     Stage("3.3", "gate", "Gate", DOCUMENT, CPU,
           "deterministic checks on every page: coverage, script, tables, resolution, running balances and totals, runaway output; "
           "for a page read by OCR also the amount and plausibility of the text; for a page whose pictures the reader was to read, "
@@ -203,5 +244,7 @@ def describe() -> list[dict[str, Any]]:
                     "what": s.what, "settings": list(s.settings), "env_only": list(s.env_only),
                     "also_used_by": {k: list(v) for k, v in s.also_used_by.items()},
                     "optional": s.optional, "parent": s.parent,
-                    "constants": [{"label": a, "value": b} for a, b in s.constants]})
+                    "constants": [{"label": a, "value": b} for a, b in s.constants],
+                    "groups": [{"id": g.id, "name": g.name, "what": g.what, "where": g.where,
+                                "settings": list(g.settings), "env_only": list(g.env_only)} for g in s.groups]})
     return out

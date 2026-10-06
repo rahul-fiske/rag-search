@@ -240,7 +240,10 @@ def resolve(cfg: Mapping[str, Any], base_env: Mapping[str, str] | None = None) -
         out_stages.append({"id": s.id, "key": s.key, "name": s.name, "scope": s.scope, "where": s.where,
                            "what": s.what, "optional": s.optional, "parent": s.parent,
                            "constants": [{"label": a, "value": b} for a, b in s.constants],
-                           "settings": items, "env_only": envs})
+                           "settings": items, "env_only": envs,
+                           # the same settings arranged by the part of the stage that uses them (ids and names)
+                           "groups": [{"id": g.id, "name": g.name, "what": g.what, "where": g.where,
+                                       "settings": list(g.settings), "env_only": list(g.env_only)} for g in s.groups]})
     return {"stages": out_stages, "overrides": amb, "errors": [conv_err] if conv_err else []}
 
 

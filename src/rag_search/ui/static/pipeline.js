@@ -72,12 +72,18 @@ const PL = (function () {
 
   /* a stage and what it uses; `extra` is appended inside (the Settings tab puts the editable fields there) */
   function stageBlock(s, extra, only, quiet) {
-    const rows = (s.settings || []).filter(r => !only || only(r)).map(r => settingRow(r, quiet));
+    const shown = (s.settings || []).filter(r => !only || only(r));
+    const rows = shown.map(r => settingRow(r, quiet));
     const envs = (s.env_only || []).filter(e => e.set);
+    // a stage whose settings belong to several parts (the router and the lanes of 3.2): one small table per part
+    const parts = (s.groups || []).map(g => ({ g, rows: g.settings.map(id => shown.find(r => r.id === id)).filter(Boolean) })).filter(p => p.rows.length);
+    const table = rs => h('div', { class: 'table-wrap' }, h('table', { class: 'plain' }, h('tbody', null, rs)));
     return h('div', { class: 'stage' + (s.parent ? ' sub' : ''), id: 'stage-' + s.id },
       stageHead(s, !!s.parent),
       h('p', { class: 'small muted', style: { margin: '2px 0 6px' } }, s.what),
-      rows.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'plain' }, h('tbody', null, rows))) : null,
+      parts.length ? parts.map(p => h('div', { class: 'stage-part', title: p.g.what },
+        h('div', { class: 'small' }, h('b', { class: 'mono' }, p.g.id), ' ', h('b', null, p.g.name)), table(p.rows.map(r => settingRow(r, quiet)))))
+        : rows.length ? table(rows) : null,
       envs.length ? h('p', { class: 'small', style: { margin: '4px 0' } }, 'Environment variables set for this daemon: ', envs.flatMap((e, i) => [i ? ' · ' : '', h('code', { title: e.value }, e.name + '=' + e.value)])) : null,
       !rows.length && !extra && !(s.settings || []).length && !(s.constants || []).length ? h('p', { class: 'small muted', style: { margin: 0 } }, 'Nothing to configure here.') : null,
       (s.constants || []).length ? h('p', { class: 'small muted', style: { margin: '4px 0 0' } }, 'Fixed, not configurable: ', s.constants.map(c => `${c.label} ${c.value}`).join(' · ')) : null,
