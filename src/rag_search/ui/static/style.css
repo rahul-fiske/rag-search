@@ -313,6 +313,8 @@ svg.dg { display: block; width: 100%; height: auto; min-width: 820px; font-famil
 .cv-rw-n { white-space: nowrap; min-width: 110px; text-align: right; }
 .cv-rw-hand { color: var(--warn); font-size: 11.5px; }
 .cv-rw-eng { padding-left: 4px; }
+.cv-rw-legend { display: grid; gap: 2px; padding: 2px 4px; }
+.cv-dot.o-ok { background: var(--ok); } .cv-dot.o-fix { background: var(--cv-repaired); } .cv-dot.o-bad { background: var(--bad); } .cv-dot.o-warn { background: var(--warn); }
 @media (max-width: 960px) { .cv-pipe { grid-template-columns: 1fr; } .cv-pipe > .cv-arrow { transform: rotate(90deg); } }
 .cv-flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; margin-top: 12px; }
 .cv-arrow { align-self: center; color: var(--faint); }
@@ -407,3 +409,5 @@ table.plain tr:hover td { background: var(--panel-2); }
 @media (max-width: 760px) { .ov-arrow { flex-direction: row; min-width: 100%; justify-content: center; gap: 6px; } .ov-arrow i { transform: rotate(90deg); } }
 .step.clickable { cursor: pointer; }
 .step.picked { outline: 2px solid var(--accent); outline-offset: 1px; }
+details.fold { margin-top: 16px; } details.fold > summary { cursor: pointer; font-weight: 600; padding: 8px 2px; color: var(--muted); }
+details.fold[open] > summary { margin-bottom: 8px; }

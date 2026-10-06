@@ -1133,9 +1133,9 @@ below reads this one list instead of re-describing or re-validating the same kno
 * **`core/playground.py`** validates a `chunk_size`/`stages` override with the same
   `spec.parse_stages()`, and `promote_to_production()` (§5.4) validates what it writes back with
   `spec.validate_section()` -- one registry, one set of rules, whichever surface changes a value.
-* **`ui/info.py`**'s `config_storage()` feeds the Architecture tab's "Where the tunables are
-  stored" card: which keys live in which `config.json` section, the three-way precedence (built-in
-  default → `config.json` → environment variable), and which component reads each section and when.
+* **`ui/info.py`**'s `config_storage()` (which keys live in which `config.json` section, the precedence built-in
+  default → `config.json` → environment variable, who reads each section) stays in `/api/architecture`; the
+  Architecture tab no longer shows it as a card since 0.9.27 (the Settings tab shows every value and its source).
 
 "When does a change take effect" is one of three tiers (`spec.IMMEDIATE`/`NEXT_RUN`/`RESTART`),
 shown as a pill next to each tunable and next to each group on the Settings tab:

@@ -74,9 +74,9 @@ const CV = (function () {
   const RUNWAYS = {
     a: { name: 'Text layer', tool: 'docling reads the text layer and the tables', hw: ['cpu'],
       tip: 'Lane 3.2a: a page with a text layer is read by docling without forced OCR. Its text is then compared with the PDF\'s own text layer, and what docling left out is added.' },
-    b: { name: 'OCR', tool: 'docling OCR · Tesseract (skewed pages, image files)', hw: ['cpu'], env: 'RAG_SEARCH_OCR_FIRST',
+    b: { name: 'OCR', tool: 'docling OCR · Tesseract (skewed pages, image files)', hw: ['cpu'], env: 'RAG_SEARCH_OCR_FIRST', setting: 'indexer.ocr_first',
       tip: 'Lane 3.2b: a clean scan is read by an OCR engine (docling\'s, or Tesseract for a skewed page and for image files) and checked by the gate. A page the gate doubts goes on to lane d.' },
-    c: { name: 'Text layer + pictures', tool: 'docling + document reader on pictures', hw: ['cpu', 'gpu'], env: 'RAG_SEARCH_RESIDUE',
+    c: { name: 'Text layer + pictures', tool: 'docling + document reader on pictures', hw: ['cpu', 'gpu'], env: 'RAG_SEARCH_RESIDUE', setting: 'indexer.residue',
       tip: 'Lane 3.2c: docling reads the text layer and the document reader reads the large pictures (and, with RAG_SEARCH_RESIDUE=auto, the regions of ink the text layer does not explain). What it finds that the page does not already say is added.' },
     d: { name: 'Document reader', tool: 'vision model · repair · Tesseract as last resort', hw: ['gpu'],
       tip: 'Lane 3.2d: a vision-language model reads the whole page image. Suspect table cells are re-read by the repair model; Tesseract is the last resort when a reader runs away.' },
@@ -85,18 +85,18 @@ const CV = (function () {
   const OUTCOME_CLS = { pass: 'ok', repaired: 'fix', low: 'bad', no_text: 'warn', error: 'bad' };
 
   /* the value a lane switch has in the daemon's environment (from the numbered pipeline), or '' when it is not known */
-  function switchValue(name) {
+  function switchValue(setting) {
     const st = ((PL.last && PL.last()) || {}).stages || [];
     const s = st.find(x => x.id === '3.2');
-    const e = s && (s.env_only || []).find(x => x.name === name);
-    return e ? String(e.value || '') : '';
+    const r = s && (s.settings || []).find(x => x.id === setting);
+    return r ? String(r.value || '') : '';
   }
   function switchChip(k) {
     const env = RUNWAYS[k].env;
     if (!env) return h('span', { class: 'chip', title: 'always on' }, 'always on');
-    const v = switchValue(env).toLowerCase(), on = v === 'auto';
+    const v = switchValue(RUNWAYS[k].setting).toLowerCase(), on = v === 'auto';
     const text = k === 'c' ? (on ? 'pictures + regions' : 'large pictures') : (on ? 'on' : 'off');
-    return h('span', { class: 'chip ' + (on || k === 'c' ? 'ok' : ''), title: `${env}=${v || (k === 'c' || k === 'b' ? 'off' : '')}${on ? '' : ' (default)'}` }, text);
+    return h('span', { class: 'chip ' + (on || k === 'c' ? 'ok' : ''), title: `the setting ${RUNWAYS[k].setting} (${env}) is ${v || 'off'}: what the next run uses; a run that is going on keeps what it started with` }, text);
   }
   const sumOf = o => Object.values(o || {}).reduce((a, b) => a + b, 0);
 
@@ -109,10 +109,10 @@ const CV = (function () {
         h('span', { class: 'cv-rw-hw' }, d.hw.map(hw)), switchChip(k)),
       h('div', { class: 'cv-rw-tool' }, d.tool),
       h('div', { class: 'cv-rw-row' },
-        h('span', { class: 'cv-rw-meter', title: `${num(n)} of ${num(total)} pages ended in this lane` }, h('i', { style: { width: pct + '%' } })),
+        h('span', { class: 'cv-rw-meter', title: `Share of pages: ${num(n)} of the ${num(total)} pages converted so far ended in this lane` }, h('i', { style: { width: pct + '%' } })),
         h('span', { class: 'cv-rw-n' }, n ? `${num(n)} pages · ${pct}%` : 'no pages')),
       outN ? h('div', { class: 'cv-rw-row' },
-        h('span', { class: 'cv-rw-out', title: Object.entries(out).map(([o, v]) => `${o.replace('_', ' ')} ${num(v)}`).join(' · ') },
+        h('span', { class: 'cv-rw-out', title: 'How the pages this lane finished in this run fared: ' + Object.entries(out).map(([o, v]) => `${o.replace('_', ' ')} ${num(v)}`).join(' · ') },
           Object.keys(out).filter(o => out[o]).map(o => h('i', { class: 'o-' + (OUTCOME_CLS[o] || 'ok'), style: { flexGrow: String(out[o]) } }))),
         h('span', { class: 'cv-rw-n small muted' }, `${num(out.low || 0)} low · ${num(out.repaired || 0)} repaired (this run)`)) : null,
       handed ? h('div', { class: 'cv-rw-hand' }, `↳ ${num(handed)} page${handed === 1 ? '' : 's'} handed on to the document reader`) : null);
@@ -144,6 +144,11 @@ const CV = (function () {
           'The router picks the cheapest lane that is sure enough: a text layer goes to a (or c when it has large pictures); a clean scan to b when OCR first is on; everything else to d. A page the gate doubts after a cheap lane is handed on to d.')),
       h('span', { class: 'cv-arrow', 'aria-hidden': 'true' }, '→'),
       h('div', { class: 'cv-rws' }, RW_ORDER.map(k => laneCard(k, rw, total, mv, lo)),
+        h('div', { class: 'small muted cv-rw-legend' },
+          h('span', null, h('b', null, 'Upper bar'), ': the share of all pages converted so far that ended in this lane (in the lane\'s colour).'),
+          h('span', null, h('b', null, 'Lower bar'), ': how the pages this lane finished in this run fared: ',
+            h('i', { class: 'cv-dot o-ok' }), ' passed ', h('i', { class: 'cv-dot o-fix' }), ' passed after repair ',
+            h('i', { class: 'cv-dot o-bad' }), ' low confidence (kept, flagged) ', h('i', { class: 'cv-dot o-warn' }), ' no text on the page')),
         eng ? h('div', { class: 'small muted cv-rw-eng' }, `Lane b engines this run: ${eng}`) : null,
         approx ? h('div', { class: 'small muted cv-rw-eng' }, 'This run did not record lanes; the counts are worked out from how the pages were read (cached pages count by what they were).') : null),
       h('span', { class: 'cv-arrow', 'aria-hidden': 'true' }, '→'),

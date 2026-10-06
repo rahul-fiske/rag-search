@@ -4,7 +4,7 @@
 (function () {
   let A = null, refs = {}, section = 'system', docLoaded = false;
   const SECTIONS = [['system', 'System overview'], ['indexing', 'Indexing pipeline'], ['format', 'Index files'], ['search', 'Search pipeline'],
-    ['models', 'Models'], ['daemons', 'Daemons & clients'], ['doc', 'Full document']];
+    ['daemons', 'Daemons & clients'], ['doc', 'Full document']];
 
   const node = (title, text, opts) => {
     opts = opts || {};
@@ -110,7 +110,7 @@
     const E = (...a) => dedge('idx', ...a);
     const rw = t.runways || {}, rwn = Object.values(rw).reduce((x, y) => x + y, 0);
     const mv = Object.entries(t.moves || {}).filter(([k]) => k.endsWith('>d')).reduce((x, [, y]) => x + y, 0);
-    const envOf = name => { const e = (stageOf('3.2').env_only || []).find(x => x.name === name); return e ? String(e.value || '') : ''; };
+    const envOf = name => { const key = { RAG_SEARCH_LAYER_FILL: 'indexer.layer_fill', RAG_SEARCH_OCR_FIRST: 'indexer.ocr_first', RAG_SEARCH_RESIDUE: 'indexer.residue' }[name]; const r = (stageOf('3.2').settings || []).find(x => x.id === key); return r ? String(r.value || '') : ''; };
     const lane = (k, y, title, l1, l2, hwk) => [
       dbox(420, y, 340, 70, title, [l1, l2], k === 'd' ? 'hl' : (rw[k] ? 'hl' : null)), hwchip(718, y + 6, hwk)];
     return dsvg('idx', 1180, 700,
@@ -171,94 +171,38 @@
       sv('text', { x: 20, y: 292, class: 's' }, 'grep is a separate path: a regular-expression scan of the converted Markdown, no models, answers even while they load.'));
   }
 
-  /* Where the pipeline tunables (Settings tab, `rag-search config
-     set`) actually persist -- one file, one section per daemon, environment variables as the
-     final override layer.  Data comes straight from spec.TUNABLES via /api/architecture's
-     config_storage, so this never drifts from what config.py/spec.py actually do; the
-     what-it-means/impact text for each tunable lives on the Settings/Models tabs, not here. */
-  function configStorageCard() {
-    const cs = A.config_storage; if (!cs) return null;
-    const sectionRows = Object.entries(cs.sections).map(([section, keys]) =>
-      [code(section), h('span', null, keys.flatMap((k, i) => i ? [', ', code(k.key)] : [code(k.key)]))]);
-    return card('Where the tunables are stored', cs.file,
-      p('Every pipeline tunable -- the ', h('a', { href: '#/settings' }, 'Settings'), ' tab (arranged by pipeline stage), or ',
-        code('rag-search config set'), ' -- lives in this one JSON file, one section per daemon:'),
-      table(['config.json section', 'tunables stored there'], sectionRows),
-      h('h4', { style: { marginTop: '14px' } }, 'What wins when a tunable is set in more than one place'),
-      h('ol', { class: 'tight' }, cs.precedence.map(x => h('li', null, x))),
-      h('h4', { style: { marginTop: '14px' } }, 'Who reads each section, and when'),
-      table(['Section', 'Read by'], Object.entries(cs.who_reads_it).map(([k, v]) => [code(k), v])));
-  }
-
-  /* Where a collection's documents come from: registered locations and imports. */
-  function sourcesCard() {
-    const S = A.sources || { locations: [], imported: [] };
-    const rows = [
-      ...S.locations.map(l => [code(l.collection), code(l.folder), 'registered location']),
-      ...S.imported.map(n => [code(n), '–', 'imported bundle: ready-made index, no source documents here'])];
-    return card('Where documents come from', 'the worker reads these, never writes them',
-      table(['Collection', 'Folder', 'Kind'], rows),
-      p({ class: 'small muted' }, 'Add a location, import or export a bundle, or delete a collection on the ',
-        h('a', { href: '#/collections' }, 'Collections'), ' tab. Delete removes only the workspace (converted Markdown and index); a collection whose documents are still in place is built again on the next indexing run.'));
-  }
-
   /* ---------- 1. system overview ---------- */
   function sysView() {
     return [
       card('How the pieces fit', 'the dots on the daemons are live',
         figure(systemDiagram(), 'Reads and writes never meet: indexing writes only to indexer_workspace/, searches read only the published serving/ generation, and “publish” is the one step that moves data from one side to the other. Source folders are only ever read.')),
-      sourcesCard(),
       card('Design rules that shape everything else', null, h('ul', { class: 'tight' },
         h('li', null, 'Front-ends never load a model. Only the search daemon (queries) and the worker (indexing) do.'),
         h('li', null, 'Only the indexer writes indexes; only ', code('publish'), ' makes them visible; searches always see one consistent generation.'),
         h('li', null, 'Source documents are never changed or deleted. Deleting a collection removes only its converted Markdown and index from the workspace.'),
         h('li', null, 'Everything is local: no network calls at run time. Models are downloaded only when you ask (Models tab, or rag-search models / setup) and then come from the local cache.'),
-        h('li', null, 'Restricting a collection changes what a client can list, search or grep immediately; a restricted collection looks like a missing one.'))),
-      configStorageCard()];
-  }
-
-  /* The stage reference: one row per stage, from the registry (stages.py) with the values in effect. */
-  function stageReferenceCard(pipeline, title, sub) {
-    const list = ((A.stages) || []).filter(s => (pipeline === 'search') === s.id.startsWith('S'));
-    return card(title, sub, h('div', { class: 'table-wrap' }, h('table', null,
-      h('thead', null, h('tr', null, ['#', 'Stage', 'Runs', 'What it does', 'Settings it uses (value in effect)'].map(t => h('th', null, t)))),
-      h('tbody', null, list.map(s => h('tr', { id: 'arch-' + s.id, class: s.parent ? 'sub-row' : '' },
-        h('td', { class: 'nowrap' }, h('b', { class: 'stage-id' }, s.id)),
-        h('td', { class: 'nowrap' }, s.parent ? '\u00a0\u00a0' + s.name : h('b', null, s.name), s.optional ? h('span', { class: 'muted small' }, ' (optional)') : null),
-        h('td', { class: 'nowrap small' }, PL.hw(s.where), h('div', { class: 'muted' }, PL.SCOPE[s.scope] || '')),
-        h('td', { class: 'small', style: { whiteSpace: 'normal', minWidth: '260px' } }, s.what),
-        h('td', { class: 'small', style: { whiteSpace: 'normal' } }, (s.settings || []).length ? s.settings.map(r => h('div', null, r.label + ': ', h('b', { class: 'mono' }, PL.valueText(r)), ' ', PL.sourceChip(r))) : h('span', { class: 'muted' }, (s.constants || []).length ? 'fixed: ' + s.constants.map(c => `${c.label} ${c.value}`).join(' · ') : '–'))))))));
+        h('li', null, 'Restricting a collection changes what a client can list, search or grep immediately; a restricted collection looks like a missing one.')),
+        p({ class: 'small muted' }, 'Where the documents come from is on the ', h('a', { href: '#/collections' }, 'Collections'), ' tab; every setting, its value in effect and where it is stored on the ',
+          h('a', { href: '#/settings' }, 'Settings'), ' tab; the models on the ', h('a', { href: '#/models' }, 'Models'), ' tab.'))];
   }
 
   /* ---------- 2. indexing ---------- */
   function idxView() {
-    const c = A.chunking, conv = A.models.conversion;
-    const convText = conv.error ? conv.error : Object.entries(conv).filter(([k]) => k !== 'tool').map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ');
+    const c = A.chunking;
     return [
       card('The indexing pipeline, one numbered list', 'the same numbers are used in the Indexing tab, Settings, page traces and logs',
-        figure(pipelineDiagram(), 'Each document is handled on its own: fingerprinted, then converted (3.1–3.5) and chunked only if something changed. Conversion is a stage of the pipeline like any other: its steps have numbers, settings, events and timings of their own. The embedding model is loaded once per run for all new chunks. index.meta.json is written last, so a half-written document is never mistaken for a finished one, and nothing becomes searchable until publish.')),
-      stageReferenceCard('indexing', 'Indexing stage reference', 'what each stage does, where it runs, which settings it owns and the value in effect now'),
-      h('div', { class: 'split' },
-        card('Chunking in detail', null, h('ul', { class: 'tight' },
-          h('li', null, 'Split at the page markers first, so a chunk never straddles two pages.'),
-          h('li', null, 'Blocks are paragraphs; code fences and tables are kept whole where they fit.'),
-          h('li', null, 'Oversized blocks are split: tables by rows (header row repeated in each piece), prose by sentences, then words.'),
-          h('li', null, `Greedy packing to about ${c.size} estimated tokens with about ${c.overlap} tokens of overlap between neighbours.`),
-          h('li', null, 'Size estimate: ', code(c.estimator), ' (no tokenizer needed).'),
-          h('li', null, 'Each chunk records page, nearest heading, file, collection and source path.'))),
-        card('Keyword index (BM25)', 'built in memory, not stored', h('ul', { class: 'tight' },
-          h('li', null, 'The search daemon builds it when it loads a collection, from the chunk text in nodes.json.'),
-          h('li', null, 'Tokens are lower-cased words. Compound tokens such as ', code('svm-name'), ', ', code('9.16.1'), ' or ', code('a/b'), ' are kept whole and also split into parts, so exact identifiers and their pieces both match.'),
-          h('li', null, `Okapi BM25, k1 = ${A.keyword.k1}, b = ${A.keyword.b}. A tokenizer change (${A.keyword.tokenizer}) re-indexes.`)))),
+        figure(pipelineDiagram(), 'Each document is handled on its own: fingerprinted, then converted (3.1–3.5) and chunked only if something changed. The embedding model is loaded once per run for all new chunks. index.meta.json is written last, so a half-written document is never mistaken for a finished one, and nothing becomes searchable until publish.'),
+        h('ul', { class: 'tight' },
+          h('li', null, h('b', null, 'Chunks: '), `split at the page markers, so a chunk never straddles two pages; tables and code are kept whole where they fit; packed to about ${c.size} estimated tokens with about ${c.overlap} of overlap; each records page, nearest heading and source.`),
+          h('li', null, h('b', null, 'Keyword index: '), `built in memory by the search daemon from the chunk text, not stored. Compound tokens such as `, code('9.16.1'), ` are kept whole and also split, so identifiers and their parts both match (BM25, k1 ${A.keyword.k1}, b ${A.keyword.b}).`)),
+        p({ class: 'small muted' }, 'What each stage does and the settings it uses, with the values in effect: the ', h('a', { href: '#/settings' }, 'Settings'), ' tab, one card per stage.')),
       card('When is a document re-indexed?', 'the redone stages are numbered',
         table(['Changes', 'What is redone'], [
           ['the source file (SHA-256)', '3 convert · 4 chunk · 5 embed · 6 write'],
           ['chunk size / overlap, chunker version, tokenizer version, index format', '4 chunk · 5 embed · 6 write (the Markdown is reused)'],
           ['embedding model', '5 embed · 6 write (chunks are reused)'],
-          ['conversion settings (OCR, tables, routing, document reader or repair switched off)', '3 convert · 4 chunk · 5 embed · 6 write'],
-          ['nothing', '2 fingerprint only: skipped, seconds for a whole collection']])),
-      card('Conversion profile in effect (stage 3)', null, p(convText || '–'),
-        p({ class: 'small muted' }, 'A change here makes documents count as stale, so the next “Index new & changed” run redoes them.'))];
+          ['conversion settings (OCR, tables, routing, a lane switched on, the document reader or repair switched off)', '3 convert · 4 chunk · 5 embed · 6 write (pages come from the page cache)'],
+          ['nothing', '2 fingerprint only: skipped, seconds for a whole collection']]))];
   }
 
   /* ---------- 3. files ---------- */
@@ -287,6 +231,7 @@ serving/                                  what the search daemon reads
         h('li', null, 'Vectors are L2-normalised, so the dot product of two vectors is their cosine similarity.'),
         h('li', null, 'There is no ANN structure (no HNSW/IVF): the whole matrix is held in memory and searched exactly with one matrix-vector product. At this scale that is both exact and fast, and there is nothing to tune or rebuild.'),
         h('li', null, 'The search daemon loads text and vectors into memory once per collection and builds the keyword index from the text; memory use is on the Overview tab.'))),
+      h('details', { class: 'fold' }, h('summary', null, 'The fields of nodes.json, index.meta.json and catalog.json'),
       h('div', { class: 'split' },
         card('nodes.json', 'format ' + ix.format, p(code('{"format": 1, "nodes": [ … ]}'), ' one entry per chunk:'), fieldTable(ix.node_fields),
           h('pre', null, `{ "id": "…", "text": "## Enabling MFA\\n…",
@@ -296,7 +241,7 @@ serving/                                  what the search daemon reads
     "collection": "security", "doc_path": "…", "src_path": "/…/docs/security/…pdf" } }`)),
         card('index.meta.json', 'the completeness marker', fieldTable(ix.meta_fields))),
       card('catalog.json (per generation)', null, fieldTable(ix.catalog_fields),
-        p({ class: 'small muted' }, 'The search daemon compares each collection’s manifest_sha and the model with what it already holds; matching collections are reused from memory and only changed ones are loaded.'))];
+        p({ class: 'small muted' }, 'The search daemon compares each collection’s manifest_sha and the model with what it already holds; matching collections are reused from memory and only changed ones are loaded.')))];
   }
 
   /* ---------- 4. search ---------- */
@@ -329,38 +274,12 @@ serving/                                  what the search daemon reads
     return [
       card('One query, step by step', 'every collection the client may use is searched; all share one candidate pool',
         figure(searchDiagram(), `Keyword search finds exact identifiers, vector search finds paraphrases; fusion needs no score calibration because it uses only ranks. Each branch keeps max(4 × top_k, 20) chunks per collection; at most ${m.reranker.cap} reach the reranker, which reads query and chunk together. Default top_k is ${L.top_k_default}, at most ${L.top_k_max}; snippets are cut to ${L.snippet_chars} characters.`)),
-      stageReferenceCard('search', 'Search stage reference', 'S1–S6: what each stage does, where it runs, which settings it uses and the value in effect now'),
       card('Why fuse ranks instead of scores?', null,
         p('BM25 scores are unbounded and depend on the collection; cosine similarities sit in a narrow band. Adding them needs careful calibration. RRF only uses ', h('i', null, 'positions'), ', so the two lists combine without tuning: a chunk near the top of both lists beats one that is first in only one, and the constant ',
           code('k = ' + f.k), ' keeps a single first place from dominating.'),
         h('div', { class: 'formula' }, `RRF(chunk) = 1/(${f.k} + rank_keyword) + 1/(${f.k} + rank_vector)   (rank starts at 1; a missing list adds 0)`),
-        h('h4', { style: { marginTop: '14px' } }, 'Try it: change the ranks'), rrfCalc()),
-      card('Pool sizes', 'how many candidates each stage works on',
-        table(['top_k', 'per retriever per collection', 'into the reranker'], Object.entries(pools).map(([k, v]) => [k, num(v.per_retriever), num(v.to_reranker)])),
-        p({ class: 'small muted' }, 'per retriever = max(4 × top_k, 20). Into the reranker = min(max(3 × top_k, 15), ' + m.reranker.cap + '). The cross-encoder is too slow to read every chunk, so it only re-orders the survivors of fusion.')),
-      card('Exact-text search: grep', null, p(code('rag_grep'), ' / ', code('rag-search grep'), ' is a separate path: a regular-expression scan of the converted Markdown, run in an isolated child process with a time budget. Use it for exact strings, error codes and IDs; it needs no models and answers even while they load.'))];
-  }
-
-  /* ---------- 5. models ---------- */
-  function modelsView() {
-    const m = A.models, e = m.embedding, r = m.reranker, conv = m.conversion;
-    const d = RS.state.live && RS.state.live.daemons && RS.state.live.daemons.search; const mem = (d && d.memory && d.memory.models_bytes) || {};
-    const memText = Object.keys(mem).length ? Object.entries(mem).map(([k, v]) => `${k} ${bytes(v)}`).join(', ') : 'loaded when the search daemon is running';
-    const models = [
-      ['Embedding', e.name, e.kind, [['Role', 'turns text into a vector so similar meaning = nearby vectors. Used for every chunk at indexing time and for every query.'],
-        ['Dimensions', String(e.dim || 1024) + ', L2-normalised float32'], ['Input length', `up to ${e.max_seq} tokens per chunk (chunks are ~${A.chunking.size})`], ['Batch size', String(e.batch)],
-        ['Search', 'exact cosine (matrix product), no approximate index'], ['Environment', 'the Models tab or rag-search models set; RAG_SEARCH_MODEL overrides; RAG_SEARCH_MAX_SEQ, RAG_SEARCH_EMBED_BATCH']]],
-      ['Reranker', r.name, r.kind, [['Role', 'second opinion on the best candidates: reads query and chunk together, so it catches what the two cheap first-stage scores miss.'],
-        ['Output', 'relevance in [0, 1] (a sigmoid of the logit, or the probability of “yes” for an LLM reranker)'], ['Candidates per query', `max(3 × top_k, 15), at most ${r.cap}`], ['Input length', r.max_len ? `query + chunk up to ${r.max_len} tokens` : 'model default'], ['Batch size', String(r.batch)],
-        ['Status', r.enabled ? 'on' : 'off (RAG_SEARCH_RERANK=0)'], ['Environment', 'the Models tab or rag-search models set; RAG_SEARCH_RERANK_MODEL overrides; RAG_SEARCH_RERANK']]],
-      ['Document conversion', conv.tool, 'layout + table + OCR pipeline (not a search model)', [['Role', 'turns PDFs, Office files, HTML and images into page-annotated Markdown.'],
-        ['Settings', conv.error || Object.entries(conv).filter(([k]) => k !== 'tool').map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ') || 'defaults'],
-        ['Runs in', 'the indexing worker only; the search daemon never loads it']]]];
-    return [
-      card('Models in use', 'read from the running configuration'),
-      ...models.map(([t, name, kind, rows]) => card(t, kind, h('p', null, h('b', null, name)), kv(rows))),
-      card('Memory in the search daemon', null, p(memText)),
-      p({ class: 'small muted' }, 'Models are downloaded once into the local Hugging Face cache; nothing is sent anywhere at run time. Switch them in the Models tab or with rag-search models: a new reranker is used at once; a new embedding model means every document is embedded again (chunks are reused, and search keeps using the old index until the new one is complete).')];
+        h('h4', { style: { marginTop: '14px' } }, 'Try it: change the ranks'), rrfCalc(),
+        p({ class: 'small muted' }, 'Pool sizes: each retriever keeps max(4 × top_k, 20) chunks per collection; min(max(3 × top_k, 15), ' + m.reranker.cap + ') go to the reranker, which is too slow to read every chunk. The settings of S1–S6 are on the ', h('a', { href: '#/settings' }, 'Settings'), ' tab.'))];
   }
 
   /* ---------- 6. daemons ---------- */
@@ -382,32 +301,17 @@ serving/                                  what the search daemon reads
             h('div', { class: 'between' }, 'spawns, tails events, can kill the whole process group'),
             node('Worker', 'python -m rag_search.core.worker <job-id>. Reads jobs/<id>.json, writes indexer_workspace/ and jobs/<id>.events.jsonl.', { tag: 'own process group' })))),
       h('div', { class: 'split' },
-        card('Lifecycle', null, h('ul', { class: 'tight' },
-          h('li', null, 'Both daemons start on demand the first time a client needs them (serialised by a start lock, so no duplicates), or at login via ', code('rag-search service install'), '.'),
-          h('li', null, 'Default idle exit is 0 = never; ', code('idle_exit_seconds'), ' in config.json changes it.'),
+        card('Lifecycle and a search, end to end', null, h('ul', { class: 'tight' },
+          h('li', null, 'Both daemons start on demand the first time a client needs them, or at login via ', code('rag-search service install'), '; by default they never exit by themselves.'),
+          h('li', null, 'A search: the host calls ', code('rag_search'), '; the adapter sends one JSON line with its client name to run/search.sock; the daemon applies the access rules, waits if models are still loading, runs the pipeline on the current generation and replies with hits and timings.'),
           h('li', null, 'If the search daemon is down, list and grep read the published files directly; search needs the daemon (it holds the models).'),
-          h('li', null, 'Index status and cancel never start the indexer just to report “idle”.'),
-          h('li', null, 'Stopping the indexer cancels the active run; finished documents are kept.'))),
+          h('li', null, 'Stopping the indexer cancels the active run; finished documents and pages are kept.'),
+          h('li', null, 'A client’s identity is declared (', code('--profile NAME'), '), not authenticated: a guard against mix-ups. A restricted collection is invisible to other clients, like a missing one.'))),
         card('Indexing job states', null, table(['State', 'Meaning'], [
           [pill('queued', ''), 'accepted, worker not started yet'], [pill('running', 'warn'), 'worker active: convert → chunk → embed → merge'],
           [pill('succeeded', 'ok'), 'everything indexed and published'], [pill('partial', 'warn'), 'some documents failed; the rest is published'],
-          [pill('failed', 'bad'), 'nothing could be published'], [pill('cancelled', ''), 'cancelled by a user'], [pill('interrupted', 'warn'), 'daemon or machine stopped mid-run']]))),
-      card('Wire protocol', 'protocol v1: one request per connection, newline-delimited JSON',
-        h('pre', null, `→ {"v":1, "client":"claude", "action":"search", "query":"…", "top_k":5, "collections":[…], "wait_s":40}
-← {"ok":true, "result":{ … results, timing … }}
-← {"event":"progress", …} … {"event":"end", …}     (streaming actions such as follow)
-← {"ok":false, "code":"warming_up", "error":"…"}`),
-        p({ class: 'small muted' }, 'Error codes: bad_request, protocol_mismatch, warming_up, unavailable, forbidden, model_error, model_mismatch, busy, internal. A daemon rejects clients speaking a newer protocol and tells them to upgrade.')),
-      card('Clients, identity and access', null, h('ul', { class: 'tight' },
-        h('li', null, 'A client’s identity is declared, not authenticated: MCP hosts pass ', code('--profile NAME'), ' (any valid name; “cli”, “unknown” and “all” are reserved). It is a guard against mix-ups, not a security boundary between users on one machine.'),
-        h('li', null, 'By default every collection is open to every client. ', code('rag-search access restrict hr claude'), ' limits “hr” to claude; no names = nobody; ', code('grant'), ' adds a client; ', code('restrict hr all'), ' opens it again.'),
-        h('li', null, 'The MCP tools cannot change access. A restricted collection is invisible to other clients: it is missing from listings and searches for it fail with the same “unknown collection” error as a typo.'),
-        h('li', null, 'A damaged access.json fails closed: every collection name still readable in it stays restricted to nobody, and the problem is reported by doctor and on the Overview tab.'))),
-      card('What happens on a search from Claude Desktop', null, h('ol', { class: 'tight' },
-        h('li', null, 'The host calls the MCP tool ', code('rag_search'), '; the adapter (identity “claude”) runs api.search in a worker thread.'),
-        h('li', null, 'api connects to run/search.sock, starting the daemon if needed, and sends the request with client “claude”.'),
-        h('li', null, 'The daemon applies the access rules, waits if models are still loading, then runs the pipeline on the current generation.'),
-        h('li', null, 'The reply carries hits and timings; the adapter formats them as text with page numbers and headings for the model to cite.')))];
+          [pill('failed', 'bad'), 'nothing could be published (also a run stopped as stalled)'], [pill('cancelled', ''), 'cancelled by a user'], [pill('interrupted', 'warn'), 'daemon or machine stopped mid-run']]))),
+      p({ class: 'small muted' }, 'The wire protocol, the error codes and the access rules in full are in the ', h('a', { href: '#/architecture/doc' }, 'full document'), '.')];
   }
 
   /* ---------- 7. full document ---------- */
@@ -423,7 +327,7 @@ serving/                                  what the search daemon reads
     docLoaded = true;
   }
 
-  const BUILD = { system: sysView, indexing: idxView, format: fmtView, search: searchView, models: modelsView, daemons: daemonsView };
+  const BUILD = { system: sysView, indexing: idxView, format: fmtView, search: searchView, daemons: daemonsView };
 
   function refreshLive() {
     const s = searchStatus(), i = indexerStatus();
@@ -468,6 +372,6 @@ serving/                                  what the search daemon reads
       else for (const b of $$('button[data-s]', refs.nav)) b.classList.toggle('on', b.dataset.s === section);
     },
     update() { if (A && section !== 'doc') refreshLive(); },
-    tick() { if (A && section === 'models') { /* memory figures are static text; re-render only on entry */ } },
+    tick() {},
   };
 })();
