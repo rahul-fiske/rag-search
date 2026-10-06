@@ -95,6 +95,17 @@ Running headers, footers and page numbers are left out of the comparison (doclin
   - sidebars and call-outs;
   - footnotes and table notes;
   - labels inside vector diagrams.
+- **Third run (headers and footers left out by band, soft hyphens and CRLF joined).**
+
+  | outcome | intact | intact, table shape only | uncertain | lost text |
+  |---|---|---|---|---|
+  | low (1,084) | 181 | 380 | 97 | 426 |
+  | pass (15,546) | 11,768 | 0 | 1,566 | 2,212 |
+
+  2,645 of 16,842 pages (16 %) lost text, 2,212 of them passed the gate. What is still missing is content: register
+  and bit-field tables (`word 0`, `reserved`, bit numbers), small tables and call-outs, diagram labels, URLs and dates
+  printed at a page's edge, and the amounts of tax and statement tables. Pages whose text layer is itself noise (an ID document with a hidden OCR layer of garbage) look like loss too and must go to an image reader, not be filled.
+
 - **Consequence for gate v2 (digital pages):**
   - The coverage check becomes the text-layer comparison itself: word and number recall of the layer in the
     output, with running headers and footers left out. This replaces the share of characters, whose 50 % threshold
