@@ -671,6 +671,21 @@ def _cmd_bench_run(a: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_bench_route(a: argparse.Namespace) -> int:
+    from .core.conversion import routeharness
+
+    try:
+        rep = routeharness.run(a.ocr, seeds=a.seeds, levels=[x for x in a.levels.split(",") if x] or None)
+    except (RuntimeError, KeyError, ImportError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_UNAVAILABLE
+    if a.json:
+        _json(rep)
+    else:
+        print(routeharness.markdown(rep), end="")
+    return EXIT_OK
+
+
 def _cmd_bench_list(a: argparse.Namespace) -> int:
     r = api.bench_list(get_paths(), a.set)
     if not r.get("ok"):
@@ -2324,6 +2339,11 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--classes", default="")
     q.add_argument("--limit", type=int, default=0, help="only the first N pages")
     q.add_argument("--drafts", action="store_true", help="include pages that are not verified yet")
+    q = badd("route", "does the runway choice (docling + OCR or the document reader) agree with what OCR achieves, on synthetic scans?",
+             _cmd_bench_route)
+    q.add_argument("--ocr", default="tesseract", choices=["tesseract", "docling"], help="the OCR engine to score (default tesseract)")
+    q.add_argument("--seeds", type=int, default=3, help="pages per damage level (default 3)")
+    q.add_argument("--levels", default="", help="comma-separated damage levels (default: all)")
     q = badd("list", "stored runs", _cmd_bench_list)
     q.add_argument("set", nargs="?", default="")
     q = badd("show", "one run", _cmd_bench_show)

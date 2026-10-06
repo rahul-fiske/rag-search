@@ -426,6 +426,19 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   (`text_ok`, `page_text_ok`): such a layer proves nothing and the page belongs to an image reader.
   `RAG_SEARCH_LAYER_FILL`: `fill` (default), `report` (compare and record `would_add_lines`, change nothing, gate as
   before) or `off`. Measured on the first full run (16,842 pages): 16 % had lost text, 2,212 of those had passed the gate.
+* **OCR first for clean scans** (`routed.py`, `router.decide_scan`, `scanfacts.py`; `RAG_SEARCH_OCR_FIRST=auto`, default
+  `off`): for a scanned PDF page (not an image file) one render at 100 dpi gives page-image facts (contrast, stroke
+  sharpness, skew, speckle, paper texture, text lines, ruled lines, ink share; `scanfacts.py`, numpy + Pillow). The
+  threshold table `router.THRESHOLDS` turns them into runway `b` (docling with full-page OCR, branch `fallback`, cache
+  tag `docling:scan`) or `d` (the document reader), with the reasons; unknown resolution, no OCR engine or no facts
+  mean `d`. A `b` page is checked at once by the gate with `ocr=True`, which adds `expected_size` (characters against
+  the ink share), `plausibility` (words that are not words) and `column_types` (digits with letters in a number column)
+  and returns `escalate`; an escalating page (or one with no real text) is read by the document reader, the OCR
+  text is kept for when that fails. The page record has `route` (`runway`, `reasons`, `final`, `escalated_from`
+  with the checks, `time_s.first_try`). A cached document-reader result is used before a cached OCR one, a cached OCR
+  result the gate now doubts goes on to the document reader. `rag-search bench route [--ocr tesseract|docling]` runs a
+  ladder of synthetic damaged scans (`synth.py`) through facts, router, OCR and gate (`routeharness.py`) and reports
+  saved / caught / false_pass / missed_saving / right; a partial loss (about 60 % of the text read) is the known gap.
 * **Quality gate** (`gate.py`): every page's Markdown is checked -- `coverage` (a digital page: the layer
   comparison above, or with no layer the share of characters of the text layer that survived; a scanned page with
   clear ink came out empty), `script` (garbled text, OCR noise, a script

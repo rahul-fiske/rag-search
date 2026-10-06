@@ -14,6 +14,13 @@ Checks, each returning ``{"name", "ok", "detail"}``:
                      hundreds of times, text that is nothing but repetition, a script that is not on
                      the page (``degenerate.py``)
 
+For a scan read by docling's OCR (runway 3.2b, ``ocr=True``) three more checks decide whether the page may stay or
+goes to the document reader (``escalate`` in the result):
+
+8. ``expected_size`` the amount of text does not fit the page's ink (OCR missed lines, or invented them)
+9. ``plausibility``  the words are not words (no vowels, letters mixed with digits, stray symbols)
+10. ``column_types`` a number column holds cells that are digits with letters among them (``1O5``, ``l2``)
+
 ``verdict`` is ``ok``, ``suspect`` (at least one check failed) or ``empty`` (nothing was read and
 nothing is expected).  ``violations`` are the validators' suspect cells (with a hypothesis each) for
 the repair step.  Everything here is deterministic and cheap: milliseconds per page.
@@ -146,12 +153,87 @@ def _table_shape(md: str) -> dict[str, Any]:
     return _check("table_shape", True)
 
 
+CHARS_PER_INK = 10000.0              # characters per 1.0 of ink share: synthetic pages give 14,500; real print is lighter (mine_traces.py measures it)
+SIZE_LOW, SIZE_HIGH = 0.3, 3.0       # the text found is within this range of what the ink says
+MIN_INK_FOR_SIZE = 0.01
+IMPLAUSIBLE_SHARE = 0.25             # share of word-like tokens that are not plausible words
+MIN_WORDS_FOR_PLAUSIBILITY = 12
+MIXED_CELL_COLUMN = 0.6              # share of numeric cells that makes a column a number column
+
+_VOWELS = set("aeiouyàáâäæãåāèéêëēėęîïíīįìôöòóœøōõûüùúūÿ")
+
+
+def _expected_size(md: str, prof: dict[str, Any]) -> dict[str, Any]:
+    """Characters read against what the page's ink share says to expect.  Only a page with real ink is judged."""
+    ink = prof.get("ink")
+    if not isinstance(ink, (int, float)) or ink < MIN_INK_FOR_SIZE:
+        return _check("expected_size", True)
+    n = _chars(md)
+    want = ink * CHARS_PER_INK
+    if n < SIZE_LOW * want:
+        return _check("expected_size", False, f"{n} characters read where the page's ink suggests about {round(want)}")
+    if n > SIZE_HIGH * want:
+        return _check("expected_size", False, f"{n} characters read where the page's ink suggests about {round(want)} (too much)")
+    return _check("expected_size", True)
+
+
+def _plausible_token(tok: str) -> bool:
+    low = tok.lower()
+    if len(low) <= 2:
+        return True
+    if any(c.isdigit() for c in low) and any(c.isalpha() for c in low):
+        return False
+    letters = [c for c in low if c.isalpha()]
+    if not letters:
+        return True
+    if not any(c in _VOWELS for c in letters) and len(letters) >= 4:
+        return False
+    run = 0
+    for c in letters:
+        run = 0 if c in _VOWELS else run + 1
+        if run >= 5:
+            return False
+    return True
+
+
+def _plausibility(md: str) -> dict[str, Any]:
+    import re
+
+    toks = re.findall(r"[^\W_]+", tables.plain_text(md))
+    words = [t for t in toks if not t.isdigit() and len(t) >= 3]
+    if len(words) < MIN_WORDS_FOR_PLAUSIBILITY:
+        return _check("plausibility", True)
+    bad = sum(1 for t in words if not _plausible_token(t))
+    if bad / len(words) > IMPLAUSIBLE_SHARE:
+        return _check("plausibility", False, f"{round(100 * bad / len(words))} % of the words are not plausible words")
+    return _check("plausibility", True)
+
+
+def _column_types(md: str) -> dict[str, Any]:
+    import re
+
+    for t in tables.find_tables(md):
+        body = t.body
+        if len(body) < 3:
+            continue
+        for j in range(t.width):
+            cells = [r[j].strip() for r in body if j < len(r) and r[j].strip()]
+            if len(cells) < 3:
+                continue
+            numeric = [c for c in cells if re.fullmatch(r"[-+(]?[\d,.\s]+\)?%?", c)]
+            mixed = [c for c in cells if c not in numeric and re.fullmatch(r"[\d,.\s]*[A-Za-z][\w,.\s]*", c)
+                     and any(ch.isdigit() for ch in c) and len(c) <= 12]
+            if len(numeric) / len(cells) >= MIXED_CELL_COLUMN and mixed:
+                return _check("column_types", False, f"a number column holds {mixed[0]!r} among its numbers")
+    return _check("column_types", True)
+
+
 NOTE_ONLY_WHEN_TEXT_INTACT = ("table_shape", "totals", "running_balance", "docling_grade")
 
 
 def check_page(md: str, *, branch_kind: str, profile: dict[str, Any] | None = None,
                confidence: dict[str, Any] | None = None, validate: bool = True,
-               layer: dict[str, Any] | None = None) -> dict[str, Any]:
+               layer: dict[str, Any] | None = None, ocr: bool = False) -> dict[str, Any]:
     """Gate result for one page's Markdown.  *branch_kind* is ``digital`` (a text layer exists),
     ``scan`` (the page was read as an image) or ``other``; *profile* the page's profile record.
 
@@ -169,6 +251,8 @@ def check_page(md: str, *, branch_kind: str, profile: dict[str, Any] | None = No
             return {"verdict": "empty", "checks": []}
     checks = [_coverage(md, branch_kind, prof, layer), _script(md, branch_kind, prof), _grade(confidence),
               _table_shape(md), _resolution(branch_kind, prof), _degenerate(md, branch_kind)]
+    if ocr and branch_kind == "scan":
+        checks += [_expected_size(md, prof), _plausibility(md), _column_types(md)]
     violations: list[dict[str, Any]] = []
     if validate:
         violations = validators.page_violations(md)
@@ -189,6 +273,8 @@ def check_page(md: str, *, branch_kind: str, profile: dict[str, Any] | None = No
         out["notes"] = notes
     if violations:
         out["violations"] = violations[:MAX_VIOLATIONS]
+    if ocr:
+        out["escalate"] = any(c["name"] not in ("low_resolution", "docling_grade") for c in out["checks"])
     return out
 
 

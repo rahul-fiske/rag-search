@@ -37,3 +37,58 @@ def decide(kind: str, page: dict[str, Any] | None = None) -> tuple[str, str]:
         return "digital", (f"text layer ({chars} characters) over a full-page picture: probably a "
                            "scanner's hidden OCR layer; kept as digital until it is compared with a read")
     return "digital", f"good text layer ({chars} characters)"
+
+
+# ── routing v2: which runway reads a page that has no text layer ─────────────────────────────
+
+# Versioned and in one place so the routing harness can sweep them: the page-image facts (scanfacts.py) that make a scan
+# "clean print" -- sure enough for docling's conventional OCR (runway 3.2b) -- and everything else, which is in doubt
+# and goes to the document reader (3.2d).  Wrong guesses cost one cheap OCR pass: the gate sends a failed 3.2b page on.
+THRESHOLDS = {
+    "version": 1,
+    "min_dpi": 150,                  # effective resolution of the page's image
+    "min_contrast": 0.60,            # (p98 - p2) of the paper-normalised grey levels
+    "min_sharp": 1.0,                # strong strokes per unit of ink: a blurred page has almost none
+    "max_skew": 2.0,                 # degrees; docling's OCR does not straighten a page
+    "max_speckle": 0.003,            # isolated dark pixels per ink pixel
+    "max_bg_std": 20.0,              # texture of the paper: a photograph is not flat
+    "min_text_lines": 8,             # regular short lines of ink: prose, not a drawing
+    "max_h_rules": 2, "max_v_rules": 1,      # ruled lines: a table, whose structure OCR alone does not give
+    "min_ink": 0.004, "max_ink": 0.30,
+}
+
+
+def decide_scan(facts: dict[str, Any] | None, profile: dict[str, Any] | None = None,
+                capabilities: dict[str, Any] | None = None) -> tuple[str, list[str]]:
+    """(runway, reasons) for a page without a text layer: ``b`` (docling + OCR) when the page-image *facts* say clean
+    print and an OCR engine is available, otherwise ``d`` (the document reader).  *reasons* names every condition that
+    sent the page to ``d``, or says why ``b`` is likely to work."""
+    t = THRESHOLDS
+    caps = capabilities or {}
+    why: list[str] = []
+    if not caps.get("ocr", True):
+        why.append("no OCR engine available")
+    if not facts:
+        why.append("the page image could not be examined")
+        return "d", why
+    dpi = (profile or {}).get("dpi")
+    if not isinstance(dpi, (int, float)) or dpi <= 0:
+        why.append("resolution unknown")
+    elif dpi < t["min_dpi"]:
+        why.append(f"only {round(dpi)} dpi")
+    checks = (
+        (facts["contrast"] < t["min_contrast"], f"low contrast ({facts['contrast']})"),
+        (facts["sharp"] < t["min_sharp"], f"soft strokes ({facts['sharp']})"),
+        (abs(facts["skew"]) > t["max_skew"], f"skewed {facts['skew']} degrees"),
+        (facts["speckle"] > t["max_speckle"], f"speckled ({facts['speckle']})"),
+        (facts["bg_std"] > t["max_bg_std"], f"textured paper ({facts['bg_std']})"),
+        (facts["text_lines"] < t["min_text_lines"], f"only {facts['text_lines']} text lines"),
+        (facts["h_rules"] > t["max_h_rules"] or facts["v_rules"] > t["max_v_rules"],
+         f"ruled lines ({facts['h_rules']} horizontal, {facts['v_rules']} vertical): a table"),
+        (not t["min_ink"] <= facts["ink"] <= t["max_ink"], f"ink share {round(100 * facts['ink'], 1)} %"),
+    )
+    why += [msg for bad, msg in checks if bad]
+    if why:
+        return "d", why
+    return "b", [f"clean print: {round(dpi)} dpi, contrast {facts['contrast']}, {facts['text_lines']} text lines, "
+                 f"skew {facts['skew']}"]

@@ -93,6 +93,7 @@ def mine(markup: Path, only: str = "") -> dict[str, Any]:
     low_rows: list[dict[str, Any]] = []
     slow_gate: list[tuple[float, str, str, int, str]] = []
     docs = pages = 0
+    density: dict[str, list[float]] = defaultdict(list)
     for coll, doc, data, _f in _read_traces(markup, only):
         docs += 1
         from rag_search.core.conversion.trace import page_kind
@@ -103,6 +104,10 @@ def mine(markup: Path, only: str = "") -> dict[str, Any]:
             outcome = str(p.get("outcome") or "pass")
             by_kind_outcome[kind][outcome] += 1
             failed = _failed(p)
+            ink = (p.get("profile") or {}).get("ink")
+            chars = (p.get("out") or {}).get("chars")
+            if outcome in ("pass", "repaired") and isinstance(ink, (int, float)) and ink >= 0.01 and chars:
+                density[kind].append(chars / ink)
             for c in failed:
                 checks_by_kind[str(c.get("name"))][kind] += 1
             if outcome == "low" and len(failed) == 1:
@@ -135,8 +140,15 @@ def mine(markup: Path, only: str = "") -> dict[str, Any]:
                         "max_s": round(max(vals), 2) if vals else 0.0}
         return out
 
+    def quantiles(vals: list[float]) -> dict[str, Any]:
+        vals = sorted(vals)
+        pick = lambda q: round(vals[min(len(vals) - 1, int(q * len(vals)))])  # noqa: E731
+        return {"pages": len(vals), "p05": pick(0.05), "p25": pick(0.25), "median": pick(0.5), "p75": pick(0.75),
+                "p95": pick(0.95)}
+
     return {
         "documents": docs, "pages": pages,
+        "chars_per_ink": {k: quantiles(v) for k, v in sorted(density.items()) if len(v) >= 5},
         "by_kind_outcome": {k: dict(v) for k, v in sorted(by_kind_outcome.items())},
         "checks_by_kind": {k: dict(v) for k, v in sorted(checks_by_kind.items(), key=lambda kv: -sum(kv[1].values()))},
         "only_reason_low": {k: dict(v) for k, v in sorted(only_reason.items(), key=lambda kv: -sum(kv[1].values()))},
@@ -357,6 +369,11 @@ def write_report(out_dir: Path, rep: dict[str, Any], timing: dict[str, Any], sam
     md += ["## 5. Slowest pages at the gate", "", _table(
         [[r["seconds"], r["kind"], f"{r['collection']}/{r['doc']}", r["page"]] for r in rep["slowest_gate"]],
         ["seconds", "kind", "document", "page"]), ""]
+    if rep.get("chars_per_ink"):
+        md += ["## 5b. Characters per unit of ink on pages that passed (calibrates the gate's `expected_size`; "
+               "the gate assumes about 10,000)", "",
+               _table([[_show(k), v["pages"], v["p05"], v["p25"], v["median"], v["p75"], v["p95"]]
+                       for k, v in rep["chars_per_ink"].items()], ["kind", "pages", "p05", "p25", "median", "p75", "p95"]), ""]
     if timing:
         names = list(next(iter(timing.values()))["checks_ms"])
         md += ["## 6. The gate's checks re-timed on stored pages (milliseconds, mean / max)", "", _table(
