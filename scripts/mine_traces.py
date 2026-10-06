@@ -46,10 +46,11 @@ import shlex
 import statistics
 import sys
 import time
-import unicodedata
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
+
+from rag_search.core.conversion import layer as _layer                      # the comparison the pipeline itself uses
 
 SHOW = {"raster": "scanned", "fallback": "scanned (OCR)", "embedded": "embedded", "digital": "digital",
         "image": "image", "office": "office", "copy": "text", "unknown": "unprofiled", "cached": "cached"}
@@ -199,122 +200,16 @@ def time_gate(markup: Path, only: str, per_kind: int, seed: int) -> dict[str, An
     return out
 
 
-INTACT_WORDS, INTACT_NUMBERS = 0.97, 0.98          # at least this share of the layer is in the Markdown: intact
-LOST = 0.90                                        # below this share of words or numbers: lost text
-MIN_LAYER_TOKENS = 15                              # fewer layer words than this: too short to judge
-
-
-def _tokens(text: str) -> tuple[Counter, Counter]:
-    """(words, numbers) of a text, normalised so that a PDF layer and docling's Markdown compare: NFKC (ligatures),
-    lower case, words broken at a line end joined, Markdown escapes and soft hyphens dropped, numbers without
-    thousands separators."""
-    import re
-
-    t = unicodedata.normalize("NFKC", text or "").replace("\r\n", "\n").replace("\r", "\n")
-    t = re.sub(r"(\w)[-\u00ad\u2010\u2011][ \t]*\n[ \t]*(\w)", r"\1\2", t)   # a word broken at a line end
-    t = t.replace("\u00ad", "").replace("\\", "").lower()
-    nums = Counter(re.sub(r"[,\s]", "", m) for m in re.findall(r"\d[\d,]*(?:\.\d+)?", t))
-    words = Counter(w for w in re.findall(r"[^\W\d_]{2,}", t))
-    return words, nums
-
-
-def _recall(layer: Counter, out: Counter) -> float | None:
-    total = sum(layer.values())
-    if not total:
-        return None
-    return sum(min(n, out.get(k, 0)) for k, n in layer.items()) / total
+INTACT_WORDS, INTACT_NUMBERS, LOST = _layer.INTACT_WORDS, _layer.INTACT_NUMBERS, _layer.LOST
+_tokens, _recall = _layer.tokens, _layer.recall
+_layer_parts, _repeated_bands, _without_bands = _layer.layer_parts, _layer.repeated_bands, _layer.without_bands
+_boilerplate, _clean_layer, _page_number_line = _layer.boilerplate, _layer.clean_layer, _layer.page_number_line
 
 
 def _verdict(w: float | None, n: float | None, layer_words: int, layer_ok: bool, failed: list[str]) -> str:
-    if w is None or layer_words < MIN_LAYER_TOKENS or not layer_ok:
-        return "uncertain"
-    nn = 1.0 if n is None else n
-    if w < LOST or nn < LOST:
-        return "lost text"
-    if w >= INTACT_WORDS and nn >= INTACT_NUMBERS:
-        return "intact, table shape only" if failed and set(failed) <= {"table_shape"} else "intact"
-    return "uncertain"
+    v = _layer.verdict(w, n, layer_words, layer_ok)
+    return "intact, table shape only" if v == "intact" and failed and set(failed) <= {"table_shape"} else v
 
-
-BAND = 0.07                                        # top and bottom share of a page where running headers / footers sit
-
-
-def _layer_parts(pdf: Any, i: int) -> tuple[str, str, str]:
-    """(top band, whole text, bottom band) of a page's text layer; ("", "", "") when the page cannot be read."""
-    try:
-        page = pdf[i]
-        tp = page.get_textpage()
-        try:
-            w, h = page.get_size()
-            top = tp.get_text_bounded(0, h * (1 - BAND), w, h) or ""
-            body = tp.get_text_range() or ""
-            bottom = tp.get_text_bounded(0, 0, w, h * BAND) or ""
-            return top, body, bottom
-        finally:
-            tp.close()
-            page.close()
-    except Exception:  # noqa: BLE001 - a page that cannot be read has no layer here
-        return "", "", ""
-
-
-def _band_key(text: str) -> str:
-    import re
-
-    return re.sub(r"\s+", " ", re.sub(r"\d+", "#", text.lower())).strip()
-
-
-def _without_bands(top: str, body: str, bottom: str, bands: set[str]) -> str:
-    """The page's text without its running header (first occurrence of the top band's text) and footer (last
-    occurrence of the bottom band's text), when those repeat across the document."""
-    out = body
-    if top.strip() and _band_key(top) in bands:
-        out = out.replace(top.strip(), " ", 1)
-    if bottom.strip() and _band_key(bottom) in bands:
-        k = out.rfind(bottom.strip())
-        if k >= 0:
-            out = out[:k] + " " + out[k + len(bottom.strip()):]
-    return out
-
-
-def _repeated_bands(parts: list[tuple[str, str, str]]) -> set[str]:
-    """Top / bottom band texts (digits ignored) that occur on at least 3 pages: running headers and footers."""
-    seen = Counter(k for top, _b, bottom in parts for k in {_band_key(top), _band_key(bottom)} if k)
-    return {k for k, n in seen.items() if n >= 3}
-
-
-def _page_number_line(line: str) -> bool:
-    import re
-
-    return bool(re.fullmatch(r"\W*(page\s*)?\d{1,4}(\s*(of|/)\s*\d{1,4})?\W*", line.strip(), re.I))
-
-
-def _boilerplate(layers: list[str]) -> set[str]:
-    """Running headers and footers of a document: lines among the first and last two of a page (of six lines or more) that repeat (digits
-    ignored) on at least 3 pages (a chapter's running header repeats within its chapter).  docling leaves page headers and footers out of its Markdown on
-    purpose, so they must not count as lost text."""
-    import re
-
-    if len(layers) < 4:
-        return set()
-    seen: Counter = Counter()
-    for text in layers:
-        lines = [x.strip() for x in text.splitlines() if x.strip()]
-        if len(lines) >= 6:                          # a short page (a form) has no room for a running header and a body
-            seen.update({re.sub(r"\d+", "#", x.lower()) for x in lines[:2] + lines[-2:]})
-    return {k for k, n in seen.items() if n >= 3}
-
-
-def _clean_layer(text: str, boiler: set[str]) -> tuple[str, int]:
-    import re
-
-    keep, dropped = [], 0
-    for line in text.splitlines():
-        key = re.sub(r"\d+", "#", line.strip().lower())
-        if line.strip() and (key in boiler or _page_number_line(line)):
-            dropped += 1
-            continue
-        keep.append(line)
-    return "\n".join(keep), dropped
 
 
 def check_sources(paths: Any, only: str, which: str) -> dict[str, Any]:
@@ -346,43 +241,42 @@ def check_sources(paths: Any, only: str, which: str) -> dict[str, Any]:
             continue
         try:
             pages_md = pagemd.split_pages(md_path.read_text(encoding="utf-8", errors="replace"))
-            pdf = pdfium.PdfDocument(str(src))
+            pdf = pdfium.PdfDocument(str(src))               # only to know the file opens
         except Exception as exc:  # noqa: BLE001 - an unreadable file is a row, not a crash
             rows += [{**base, "page": int(p.get("page") or 0), "outcome": p.get("outcome"), "verdict": "no source",
                       "checks": ";".join(str(c.get("name")) for c in _failed(p)), "note": f"{type(exc).__name__}: {exc}"}
                      for p in want]
             continue
         try:
-            parts = [_layer_parts(pdf, i) for i in range(len(pdf))]
-        finally:
-            pdf.close()
-        bands = _repeated_bands(parts)
-        full = [body for _t, body, _b in parts]
-        layers = [_without_bands(top, body, bottom, bands) for top, body, bottom in parts]
-        boiler = _boilerplate(layers)
+            pdf.close()                                 # LayerSource opens the file itself, read-only
+        except Exception:  # noqa: BLE001
+            pass
+        source = _layer.LayerSource(src)
         for p in want:
             n = int(p.get("page") or 0)
             failed = [str(c.get("name")) for c in _failed(p)]
-            raw = full[n - 1] if 0 < n <= len(full) else ""
-            layer, dropped = _clean_layer(layers[n - 1] if 0 < n <= len(layers) else "", boiler)
-            dropped += sum(1 for b in (parts[n - 1][0], parts[n - 1][2]) if b and _band_key(b) in bands) if 0 < n <= len(parts) else 0
+            layer_text = source.page(n) or ""
+            raw = source.raw[n - 1] if 0 < n <= len(source.raw) else ""
             rw, rn = _tokens(raw)
-            lw, ln = _tokens(layer)
-            ow, on = _tokens(tables.plain_text(pages_md.get(n, "")))
+            lw, ln = _tokens(layer_text)
+            md_page = tables.plain_text(pages_md.get(n, ""))
+            ow, on = _tokens(md_page)
             w, num = _recall(lw, ow), _recall(ln, on)
             gone_w, gone_n = lw - ow, ln - on
             verdict = _verdict(w, num, sum(lw.values()), page_text_ok(raw), failed)
             if verdict in ("lost text", "uncertain"):
                 missing_words.update(gone_w)
                 missing_numbers.update(gone_n)
+            add = _layer.missing_lines(layer_text, pages_md.get(n, "")) if verdict != "intact" else []
             rows.append({**base, "page": n, "outcome": p.get("outcome"), "checks": ";".join(failed),
                          "layer_words": sum(lw.values()), "layer_numbers": sum(ln.values()),
                          "word_recall": None if w is None else round(w, 3),
                          "number_recall": None if num is None else round(num, 3),
                          "raw_word_recall": None if _recall(rw, ow) is None else round(_recall(rw, ow), 3),
-                         "header_footer_lines": dropped,
+                         "would_add_lines": len(add), "would_add_chars": sum(len(x) for x in add),
                          "missing": " ".join(k for k, _n in (gone_w + gone_n).most_common(15)),
                          "verdict": verdict})
+        source.close()
     by_check: dict[str, Counter] = defaultdict(Counter)
     by_outcome: dict[str, Counter] = defaultdict(Counter)
     for r in rows:
@@ -409,6 +303,10 @@ def _sources_section(src: dict[str, Any], sample: int, seed: int) -> list[str]:
     out = ["## 7. Text layer against the Markdown (digital and embedded pages, " + src["which"] + ")", "",
            f"{src['pages']} pages compared. `intact`: at least {round(100 * INTACT_WORDS)} % of the layer's words and "
            f"{round(100 * INTACT_NUMBERS)} % of its numbers are in the Markdown. `lost text`: under {round(100 * LOST)} %.", "",
+           (lambda adds: f"Filling from the text layer would add {sum(r['would_add_lines'] for r in adds)} lines "
+                         f"({sum(r['would_add_chars'] for r in adds)} characters) to {len(adds)} pages "
+                         f"({round(sum(r['would_add_chars'] for r in adds) / max(1, len(adds)))} characters per page on average).")(
+               [r for r in src["rows"] if r.get("would_add_lines")]), "",
            "By outcome:", "", _table([[o] + [c.get(v, 0) for v in verdicts] for o, c in src["by_outcome"].items()],
                                      ["outcome"] + verdicts), "",
            "By failed check (a page can count under several):", "",
@@ -475,7 +373,7 @@ def write_report(out_dir: Path, rep: dict[str, Any], timing: dict[str, Any], sam
                                                     indent=2), encoding="utf-8")
     if sources and sources.get("rows"):
         cols = ["collection", "doc", "page", "outcome", "checks", "verdict", "word_recall", "number_recall",
-                "raw_word_recall", "header_footer_lines", "layer_words", "layer_numbers", "missing", "note"]
+                "raw_word_recall", "would_add_lines", "would_add_chars", "layer_words", "layer_numbers", "missing", "note"]
         with open(out_dir / "source_check.csv", "w", newline="", encoding="utf-8") as fh:
             w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
             w.writeheader()

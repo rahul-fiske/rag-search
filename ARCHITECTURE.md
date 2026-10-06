@@ -414,8 +414,21 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   run entries that no stored trace refers to (`page.key`) and that are older than six hours are
   deleted; `rag-search index cache [--clear]`, `api.page_cache`, `GET /api/conversion/page-cache` and
   the System tab show the size.
-* **Quality gate** (`gate.py`): every page's Markdown is checked -- `coverage` (a digital page lost
-  text, or a scanned page with clear ink came out empty), `script` (garbled text, OCR noise, a script
+* **Digital pages against their own text layer** (`layer.py`, 0.9.23). docling leaves out table cells it could not
+  structure, sidebars, footnotes, labels inside vector drawings and a page's running header and footer. The PDF's
+  text layer has all of it. For every digital page the layer (read with pypdfium2, running headers and footers --
+  lines repeated in the top or bottom 7 % of at least three pages -- and lone page numbers left out) is compared with
+  the Markdown: the share of its words and numbers that the Markdown holds (`intact` from 97 % / 98 %, `lost text`
+  below 90 %, in between `uncertain`; a layer of under 15 words is not judged). When text is missing, the layer lines
+  the Markdown does not hold are appended under `<!-- text layer: lines the conversion left out -->` (at most 20,000
+  characters a page; deterministic, milliseconds, no model), and the page record says so (`layer`: verdict, recalls,
+  `added_lines`, `before`). Not applied when the page's layer is a scanner's hidden OCR layer or looks garbled
+  (`text_ok`, `page_text_ok`): such a layer proves nothing and the page belongs to an image reader.
+  `RAG_SEARCH_LAYER_FILL`: `fill` (default), `report` (compare and record `would_add_lines`, change nothing, gate as
+  before) or `off`. Measured on the first full run (16,842 pages): 16 % had lost text, 2,212 of those had passed the gate.
+* **Quality gate** (`gate.py`): every page's Markdown is checked -- `coverage` (a digital page: the layer
+  comparison above, or with no layer the share of characters of the text layer that survived; a scanned page with
+  clear ink came out empty), `script` (garbled text, OCR noise, a script
   that differs from the text layer's), `docling_grade` (poor confidence), `table_shape` (ragged or
   empty tables, a statement whose balance column is mostly empty because its numbers slid into a
   neighbouring column, consecutive rows that repeat each other, one amount repeated in three or more
@@ -424,7 +437,9 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   page read as an image that is a runaway of the reader: one line or phrase repeated hundreds of times, text
   that is nothing but repetition, a script that is not on the page; `degenerate.py`; not applied to a text
   layer) and the table validators (`running_balance`, `totals`) -- and ends `pass`, `low`
-  (a check failed: indexed, flagged) or `no_text`. Failed checks and the validators' suspect cells (with
+  (a check failed: indexed, flagged) or `no_text`. For a digital page whose text is all there (layer verdict `intact`),
+  `table_shape`, `totals`, `running_balance` and `docling_grade` no longer make it low: they are listed under the
+  record's `gate.notes`, because for search the text is what counts. Failed checks and the validators' suspect cells (with
   a hypothesis value each, and the number of the table) are stored in the page record's `gate`. Suspect cells are repaired by `repair.py` (5.1.4).
   (A bug fixed on the way: `_page_text_ok` counted the combining vowel signs of Indic scripts as
   garbage, so every Hindi/Marathi text layer looked broken to the profiler.)

@@ -36,8 +36,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from ..docling_convert import NoTextError, convert_profile, convert_settings, has_real_text
-from . import applevision, degenerate, gate, pagecache, pagemd, profiler, reconcile, tables, tesseract, trace, vlm
+from ..docling_convert import NoTextError, convert_profile, convert_settings, has_real_text, page_text_ok
+from . import applevision, degenerate, gate, layer, pagecache, pagemd, profiler, reconcile, tables, tesseract, trace, vlm
 from .records import PROFILE_KEEP
 
 READ_CHUNK = 20                      # pages per docling call at most
@@ -129,6 +129,13 @@ def _new_text(page_md: str, pic_md: str) -> str:
 NOT_ESCALATED = ("low_resolution", "docling_grade")
 
 
+def layer_fill_mode() -> str:
+    """``RAG_SEARCH_LAYER_FILL``: ``fill`` (default: a digital page that lost text gets the missing lines of its own text
+    layer appended), ``report`` (compare and record only) or ``off``."""
+    v = os.environ.get("RAG_SEARCH_LAYER_FILL", "fill").strip().lower()
+    return v if v in ("fill", "report", "off") else "fill"
+
+
 class _Converter:
     """State of one document's conversion (shared by PDFs and image files)."""
 
@@ -149,6 +156,40 @@ class _Converter:
         self.keys: dict[int, str] = {}
         self.records: dict[int, dict[str, Any]] = {}
         self.hits = self.misses = self.runs = 0
+        self.layer_mode = layer_fill_mode()
+        self.layers = layer.LayerSource(src) if (self.layer_mode != "off" and not self.is_image) else None
+
+    def check_layer(self, n: int, e: dict[str, Any], r: dict[str, Any]) -> dict[str, Any] | None:
+        """A digital page against its own text layer (``layer.py``): the gate's coverage check, and -- unless
+        ``RAG_SEARCH_LAYER_FILL`` says report or off -- the lines docling left out are appended to the page.
+        Returns the comparison to record (and to hand to the gate), or None when there is no layer to use."""
+        prof = e["profile"]
+        if self.layers is None or prof.get("hidden_ocr_layer") or not prof.get("text_ok", True):
+            return None                       # a scanner's hidden layer or a garbled one proves nothing about the page
+        text = self.layers.page(n)
+        if not text or not page_text_ok(text):
+            return None
+        cmp = layer.compare(text, r["md"])
+        if cmp["verdict"] != "intact" and cmp["layer_words"] >= layer.MIN_LAYER_TOKENS:
+            lines = layer.missing_lines(text, r["md"])
+            if self.layer_mode == "fill":
+                new_md, added = layer.fill(r["md"], lines)
+                if added:
+                    r["md"] = new_md
+                    r["stats"] = dict(r.get("stats") or {}, chars=len("".join(new_md.split())))
+                    r["note"] = "; ".join(x for x in (r.get("note"), f"{added} line(s) the conversion left out were added "
+                                                      "from the page's text layer") if x)
+                    after = layer.compare(text, new_md)
+                    if after["verdict"] != "intact" and (after["word_recall"] or 0) >= layer.LOST \
+                            and (after["number_recall"] is None or after["number_recall"] >= layer.LOST):
+                        after["verdict"] = "intact"    # what is left is lines that were mostly there: the page is complete
+                    cmp = {**after, "added_lines": added, "before": cmp["verdict"],
+                           "word_recall_before": cmp["word_recall"]}
+            else:
+                cmp = {**cmp, "would_add_lines": len(lines)}
+        if self.layer_mode != "fill":
+            return {**cmp, "mode": self.layer_mode, "verdict": cmp["verdict"], "report_only": True}
+        return cmp
 
     # -- which reader takes a page, and the cache key that goes with it
     def vlm_ok(self) -> bool:
@@ -182,9 +223,11 @@ class _Converter:
         r["md"], n_joined = tables.join_split_pipe_tables(r["md"])
         if n_joined:
             r["note"] = "; ".join(x for x in (r.get("note"), "a table that the reader cut in two with a blank line was joined") if x)
+        lay = self.check_layer(n, e, r) if (kind == "digital" and not e["blank"]) else None
         t_gate = time.perf_counter()
         conf = r.get("confidence") or (r.get("stats") or {}).get("confidence")
-        g = gate.check_page(r["md"], branch_kind=kind, profile=e["profile"], confidence=conf)
+        g_layer = None if (lay is None or lay.get("report_only")) else lay      # report mode records, the gate keeps its old rule
+        g = gate.check_page(r["md"], branch_kind=kind, profile=e["profile"], confidence=conf, layer=g_layer)
         gate_s = round(time.perf_counter() - t_gate, 4)
         repair_s, rep = 0.0, None
         flagged = [c for c in gate.failed(g) if c not in NOT_ESCALATED]
@@ -229,6 +272,9 @@ class _Converter:
         if repair_s:
             rec["time_s"]["repair"] = round(repair_s, 3)
         rec["cache"] = r["cache"]
+        if lay:
+            rec["layer"] = {k: lay[k] for k in ("verdict", "word_recall", "number_recall", "added_lines", "before",
+                                                "word_recall_before", "would_add_lines", "mode") if k in lay}
         if self.keys.get(n):
             rec["key"] = self.keys[n]
         if g.get("checks"):
@@ -542,13 +588,17 @@ class _Converter:
                 rec["reconcile"] = item
 
     def run(self) -> dict[int, dict[str, Any]]:
-        todo = self.plan_reads()
-        for n in sorted(self.results):                      # cached and blank pages are done already
-            self.finish(n)
-        self.read_digital(todo["digital"])
-        self.read_scan(todo["scan"])
-        self.reconcile()
-        return self.results
+        try:
+            todo = self.plan_reads()
+            for n in sorted(self.results):                  # cached and blank pages are done already
+                self.finish(n)
+            self.read_digital(todo["digital"])
+            self.read_scan(todo["scan"])
+            self.reconcile()
+            return self.results
+        finally:
+            if self.layers is not None:
+                self.layers.close()
 
 
 def no_text_message(src: Path, results: dict[int, dict[str, Any]], reasons: str = "") -> str:

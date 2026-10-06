@@ -50,8 +50,8 @@ IMAGES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 
 # Bump when the conversion code changes what it writes, so that documents are converted again.
 CONVERT_VERSION = "c5"
-POST_VERSION = "2"                  # what is done to a page after it was read (HTML tables written as pipe tables,
-                                    # the loop guard and its gate check): part of a document's conversion profile,
+POST_VERSION = "3"                  # what is done to a page after it was read (HTML tables written as pipe tables,
+                                    # the loop guard and its gate check, the text-layer fill of digital pages): part of a document's conversion profile,
                                     # *not* of a page's cache key, so a change re-converts documents from the page
                                     # cache without reading a page again (only pages that ran away are read again)
 

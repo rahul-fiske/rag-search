@@ -25,6 +25,7 @@ from typing import Any
 
 from ..docling_convert import dominant_script, page_text_ok
 from . import degenerate, tables, validators
+from . import layer as layer_mod
 
 MIN_LAYER_CHARS = 100                # below this the text layer is too short to judge coverage by
 LOST_TEXT_RATIO = 0.5                # a digital page keeps at least this share of its layer's characters
@@ -46,8 +47,14 @@ def _chars(md: str) -> int:
     return len("".join(tables.plain_text(md).split()))
 
 
-def _coverage(md: str, branch_kind: str, prof: dict[str, Any]) -> dict[str, Any]:
+def _coverage(md: str, branch_kind: str, prof: dict[str, Any], layer: dict[str, Any] | None = None) -> dict[str, Any]:
     n = _chars(md)
+    if branch_kind == "digital" and layer and layer.get("layer_words", 0) >= layer_mod.MIN_LAYER_TOKENS:
+        if layer.get("verdict") == "intact":
+            return _check("coverage", True)
+        return _check("coverage", False, f"{round(100 * (layer.get('word_recall') or 0))} % of the words and "
+                      f"{round(100 * (1 if layer.get('number_recall') is None else layer['number_recall']))} % of the numbers of the "
+                      "page's text layer are in the result")
     if branch_kind == "digital":
         layer = int(prof.get("chars") or 0)
         if layer >= MIN_LAYER_CHARS and n < LOST_TEXT_RATIO * layer:
@@ -139,10 +146,19 @@ def _table_shape(md: str) -> dict[str, Any]:
     return _check("table_shape", True)
 
 
+NOTE_ONLY_WHEN_TEXT_INTACT = ("table_shape", "totals", "running_balance", "docling_grade")
+
+
 def check_page(md: str, *, branch_kind: str, profile: dict[str, Any] | None = None,
-               confidence: dict[str, Any] | None = None, validate: bool = True) -> dict[str, Any]:
+               confidence: dict[str, Any] | None = None, validate: bool = True,
+               layer: dict[str, Any] | None = None) -> dict[str, Any]:
     """Gate result for one page's Markdown.  *branch_kind* is ``digital`` (a text layer exists),
-    ``scan`` (the page was read as an image) or ``other``; *profile* the page's profile record."""
+    ``scan`` (the page was read as an image) or ``other``; *profile* the page's profile record.
+
+    *layer* is ``layer.compare`` of the page's own text layer with *md* (digital pages): coverage is then the share
+    of the layer's words and numbers the result holds, not a share of characters.  When that says the text is all
+    there, a layout or arithmetic finding (``table_shape``, ``totals``, ``running_balance``, ``docling_grade``) no
+    longer makes the page low: it is kept as a ``notes`` entry, because for search the text is what counts."""
     prof = profile or {}
     n = _chars(md)
     has_table = bool(tables.find_tables(md))
@@ -151,7 +167,7 @@ def check_page(md: str, *, branch_kind: str, profile: dict[str, Any] | None = No
         ink = prof.get("ink")
         if not wanted and not (branch_kind == "scan" and isinstance(ink, (int, float)) and ink >= INK_PAGE):
             return {"verdict": "empty", "checks": []}
-    checks = [_coverage(md, branch_kind, prof), _script(md, branch_kind, prof), _grade(confidence),
+    checks = [_coverage(md, branch_kind, prof, layer), _script(md, branch_kind, prof), _grade(confidence),
               _table_shape(md), _resolution(branch_kind, prof), _degenerate(md, branch_kind)]
     violations: list[dict[str, Any]] = []
     if validate:
@@ -162,8 +178,15 @@ def check_page(md: str, *, branch_kind: str, profile: dict[str, Any] | None = No
                 checks.append(_check(name, False, vs[0]["why"]))
         if violations and not any(c["name"] in ("running_balance", "totals") for c in checks):
             checks.append(_check("running_balance", False, violations[0].get("why", "")))
+    notes: list[dict[str, Any]] = []
+    if branch_kind == "digital" and layer and layer.get("verdict") == "intact":
+        notes = [c for c in checks if not c["ok"] and c["name"] in NOTE_ONLY_WHEN_TEXT_INTACT]
+        checks = [c for c in checks if c["ok"] or c["name"] not in NOTE_ONLY_WHEN_TEXT_INTACT]
+        violations = []
     out: dict[str, Any] = {"verdict": "ok" if all(c["ok"] for c in checks) else "suspect",
                            "checks": [c for c in checks if not c["ok"]]}
+    if notes:
+        out["notes"] = notes
     if violations:
         out["violations"] = violations[:MAX_VIOLATIONS]
     return out

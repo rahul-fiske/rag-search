@@ -19,6 +19,9 @@ for _p in (str(SRC), str(ROOT)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 SUBPROC_PYTHONPATH = str(SRC) + os.pathsep + str(ROOT)
+# the fake page readers of the tests return text that has nothing to do with the test PDF's own text layer, which the
+# gate would fill in from; the layer tests set this themselves
+os.environ.setdefault("RAG_SEARCH_LAYER_FILL", "off")
 
 from rag_search.paths import Paths, ensure_dirs, get_paths  # noqa: E402
 
