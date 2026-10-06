@@ -235,6 +235,54 @@ def _verdict(w: float | None, n: float | None, layer_words: int, layer_ok: bool,
     return "uncertain"
 
 
+def _layer_text(pdf: Any, i: int) -> str:
+    try:
+        page = pdf[i]
+        tp = page.get_textpage()
+        try:
+            return tp.get_text_range() or ""
+        finally:
+            tp.close()
+            page.close()
+    except Exception:  # noqa: BLE001 - a page that cannot be read has no layer here
+        return ""
+
+
+def _page_number_line(line: str) -> bool:
+    import re
+
+    return bool(re.fullmatch(r"\W*(page\s*)?\d{1,4}(\s*(of|/)\s*\d{1,4})?\W*", line.strip(), re.I))
+
+
+def _boilerplate(layers: list[str]) -> set[str]:
+    """Running headers and footers of a document: lines among the first and last three of a page that repeat (digits
+    ignored) on at least 3 pages and 30 % of them.  docling leaves page headers and footers out of its Markdown on
+    purpose, so they must not count as lost text."""
+    import re
+
+    if len(layers) < 4:
+        return set()
+    seen: Counter = Counter()
+    for text in layers:
+        lines = [x.strip() for x in text.splitlines() if x.strip()]
+        seen.update({re.sub(r"\d+", "#", x.lower()) for x in lines[:3] + lines[-3:]})
+    need = max(3, int(0.3 * len(layers)))
+    return {k for k, n in seen.items() if n >= need}
+
+
+def _clean_layer(text: str, boiler: set[str]) -> tuple[str, int]:
+    import re
+
+    keep, dropped = [], 0
+    for line in text.splitlines():
+        key = re.sub(r"\d+", "#", line.strip().lower())
+        if line.strip() and (key in boiler or _page_number_line(line)):
+            dropped += 1
+            continue
+        keep.append(line)
+    return "\n".join(keep), dropped
+
+
 def check_sources(paths: Any, only: str, which: str) -> dict[str, Any]:
     """Compare the text layer of every digital / embedded page (``which`` = low | all) with its stored Markdown."""
     from rag_search import api
@@ -247,6 +295,8 @@ def check_sources(paths: Any, only: str, which: str) -> dict[str, Any]:
     except ImportError:
         return {"error": "pypdfium2 is not installed in this Python"}
     rows: list[dict[str, Any]] = []
+    missing_words: Counter = Counter()
+    missing_numbers: Counter = Counter()
     for coll, doc, data, f in _read_traces(paths.markup, only):
         want = [p for p in data.get("pages", []) if page_kind(p) in ("digital", "embedded")
                 and (which == "all" or p.get("outcome") == "low")]
@@ -269,27 +319,32 @@ def check_sources(paths: Any, only: str, which: str) -> dict[str, Any]:
                      for p in want]
             continue
         try:
-            for p in want:
-                n = int(p.get("page") or 0)
-                failed = [str(c.get("name")) for c in _failed(p)]
-                try:
-                    page = pdf[n - 1]
-                    tp = page.get_textpage()
-                    layer = tp.get_text_range() or ""
-                    tp.close()
-                    page.close()
-                except Exception:  # noqa: BLE001
-                    layer = ""
-                lw, ln = _tokens(layer)
-                ow, on = _tokens(tables.plain_text(pages_md.get(n, "")))
-                w, num = _recall(lw, ow), _recall(ln, on)
-                rows.append({**base, "page": n, "outcome": p.get("outcome"), "checks": ";".join(failed),
-                             "layer_words": sum(lw.values()), "layer_numbers": sum(ln.values()),
-                             "word_recall": None if w is None else round(w, 3),
-                             "number_recall": None if num is None else round(num, 3),
-                             "verdict": _verdict(w, num, sum(lw.values()), page_text_ok(layer), failed)})
+            layers = [_layer_text(pdf, i) for i in range(len(pdf))]
         finally:
             pdf.close()
+        boiler = _boilerplate(layers)
+        for p in want:
+            n = int(p.get("page") or 0)
+            failed = [str(c.get("name")) for c in _failed(p)]
+            raw = layers[n - 1] if 0 < n <= len(layers) else ""
+            layer, dropped = _clean_layer(raw, boiler)
+            rw, rn = _tokens(raw)
+            lw, ln = _tokens(layer)
+            ow, on = _tokens(tables.plain_text(pages_md.get(n, "")))
+            w, num = _recall(lw, ow), _recall(ln, on)
+            gone_w, gone_n = lw - ow, ln - on
+            verdict = _verdict(w, num, sum(lw.values()), page_text_ok(raw), failed)
+            if verdict in ("lost text", "uncertain"):
+                missing_words.update(gone_w)
+                missing_numbers.update(gone_n)
+            rows.append({**base, "page": n, "outcome": p.get("outcome"), "checks": ";".join(failed),
+                         "layer_words": sum(lw.values()), "layer_numbers": sum(ln.values()),
+                         "word_recall": None if w is None else round(w, 3),
+                         "number_recall": None if num is None else round(num, 3),
+                         "raw_word_recall": None if _recall(rw, ow) is None else round(_recall(rw, ow), 3),
+                         "header_footer_lines": dropped,
+                         "missing": " ".join(k for k, _n in (gone_w + gone_n).most_common(15)),
+                         "verdict": verdict})
     by_check: dict[str, Counter] = defaultdict(Counter)
     by_outcome: dict[str, Counter] = defaultdict(Counter)
     for r in rows:
@@ -298,6 +353,7 @@ def check_sources(paths: Any, only: str, which: str) -> dict[str, Any]:
             if name:
                 by_check[name][r["verdict"]] += 1
     return {"which": which, "pages": len(rows), "rows": rows,
+            "missing_words": dict(missing_words.most_common(60)), "missing_numbers": dict(missing_numbers.most_common(40)),
             "by_check": {k: dict(v) for k, v in sorted(by_check.items(), key=lambda kv: -sum(kv[1].values()))},
             "by_outcome": {k: dict(v) for k, v in sorted(by_outcome.items())}}
 
@@ -319,6 +375,11 @@ def _sources_section(src: dict[str, Any], sample: int, seed: int) -> list[str]:
                                      ["outcome"] + verdicts), "",
            "By failed check (a page can count under several):", "",
            _table([[k] + [c.get(v, 0) for v in verdicts] for k, c in src["by_check"].items()], ["check"] + verdicts), ""]
+    if src.get("missing_words"):
+        out += ["Words most often missing from the Markdown on `lost text` / `uncertain` pages (running headers and "
+                "footers already left out):", "",
+                ", ".join(f"{k} {n}" for k, n in src["missing_words"].items()), "",
+                "Numbers most often missing:", "", ", ".join(f"{k} {n}" for k, n in src["missing_numbers"].items()), ""]
     rng = random.Random(seed)
     for v in ("lost text", "uncertain", "intact, table shape only"):
         pick = [r for r in src["rows"] if r["verdict"] == v]
@@ -329,6 +390,8 @@ def _sources_section(src: dict[str, Any], sample: int, seed: int) -> list[str]:
             rec, text = _commands(r["collection"], r["doc"], r["page"])
             out.append(f"- `{r['collection']}/{r['doc']}` page {r['page']} ({r.get('outcome')}; words "
                        f"{r.get('word_recall')}, numbers {r.get('number_recall')}; {r.get('checks') or 'no check'}): `{text}`")
+            if r.get("missing"):
+                out.append(f"  missing: {r['missing']}")
         out.append("")
     return out
 
@@ -374,7 +437,7 @@ def write_report(out_dir: Path, rep: dict[str, Any], timing: dict[str, Any], sam
                                                     indent=2), encoding="utf-8")
     if sources and sources.get("rows"):
         cols = ["collection", "doc", "page", "outcome", "checks", "verdict", "word_recall", "number_recall",
-                "layer_words", "layer_numbers", "note"]
+                "raw_word_recall", "header_footer_lines", "layer_words", "layer_numbers", "missing", "note"]
         with open(out_dir / "source_check.csv", "w", newline="", encoding="utf-8") as fh:
             w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
             w.writeheader()

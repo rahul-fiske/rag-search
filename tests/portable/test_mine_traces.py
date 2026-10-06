@@ -181,3 +181,13 @@ class SourceCheckTests(TempHome):
         self.assertEqual(m._verdict(0.95, 1.0, 50, True, []), "uncertain")
         self.assertEqual(m._verdict(1.0, 1.0, 5, True, []), "uncertain")            # too short to judge
         self.assertEqual(m._verdict(1.0, 1.0, 50, False, []), "uncertain")          # a garbled layer proves nothing
+
+    def test_running_headers_footers_and_page_numbers_are_not_lost_text(self):
+        m = load()
+        layers = [f"ACME Spec Rev 1.{i}\nBody text of page {i} about ports\nPage {i} of 9\n" for i in range(1, 10)]
+        boiler = m._boilerplate(layers)
+        clean, dropped = m._clean_layer(layers[3], boiler)
+        self.assertEqual((clean.strip(), dropped), ("Body text of page 4 about ports", 2))
+        self.assertEqual(m._boilerplate(layers[:3]), set())                 # too few pages to tell
+        self.assertTrue(m._page_number_line(" 12 ") and m._page_number_line("Page 3 of 10"))
+        self.assertFalse(m._page_number_line("Table 12"))
