@@ -18,6 +18,38 @@ Measured on the owner's documents (see `document-conversion-plan.md`, "Status af
   layer leaves out (text drawn as outlines, text inside a picture).
 - Repair with the 8B model is the most expensive step; it should run only on pages that really need it.
 
+### Baseline: the owner's last full run (0.9.22, dashboard figures)
+
+2,145 documents, 19,723 pages in successfully converted files, 17,772 of them reused from the page cache.
+
+| Pages by kind | | Outcome | |
+|---|---|---|---|
+| digital (text layer) | 16,448 (83 %) | pass | 17,846 |
+| scanned (VLM) | 1,496 | low | 1,505 (7.6 %, in 487 documents) |
+| image files | 231 | no text | 293 |
+| embedded pictures | 394 | repaired | 92 |
+| scanned by docling OCR | 45 | | |
+| text, office | 720, 389 | | |
+
+Gate findings: table shape 639, coverage 435, low resolution 262, docling grade 105, totals 84, script 63, running
+balance 18, degenerate 16. Repair: 0 of 13 suspect cells fixed. Times: convert 27 h 56 min, of which 3.2 Read
+13 h 39 min and 3.3 Gate 4 h 30 min; document reader 2.09 M tokens in 17 h 26 min (33 tokens/s); profile 1 min 11 s;
+CPU 4 h 41 min.
+
+What it says for this plan:
+- **The VLM is the cost.** About 1,700 scan and image pages, plus 394 picture reads, take most of the reading time.
+  The owner says most scans are English, so 3.2b is aimed at the expensive part. The page cache matters too: a run
+  over unchanged documents reuses pages, so the saving shows on new documents and whenever a setting re-converts them.
+- **3.1A costs nothing** (71 s for 19,736 pages). 3.1B only has to run on the roughly 3,000 pages that are not plainly
+  digital.
+- **The gate flags many digital pages that nothing acts on.** Repair handles scans only, and table shape (639) and
+  coverage (435) are probably mostly digital pages. Either docling loses content on them (the ink-residue and
+  layer-agreement checks would show it), or the checks are noisy. This has to be found out before the gate decides
+  more routes.
+- **The gate is slow:** 4 h 30 min, a third of the read time, so about 0.8 s a page on average. Find out why (it may
+  re-check reused pages) before adding checks.
+- **Cell repair did nothing here** (0 of 13); the 92 repaired pages came from the 8B page re-read.
+
 ## 2. Philosophy
 
 **When sure, read with docling (with or without OCR). When in doubt, read with the VLM.** Refined:
@@ -210,6 +242,7 @@ Each phase leaves the product working and measurable. No routing behaviour chang
 
 | Phase | Content | Exit criterion |
 |---|---|---|
+| **R0a trace mining** (first, no reading) | a report from the stored traces of a run: pages by kind × gate check × outcome, read and gate time per kind, the low pages listed per check for sampling; the profile cost; why the gate takes 4 h 30 min | the owner samples about 20 low pages per main check (table shape, coverage) and says which are real |
 | **R0 harness skeleton** | `bench route` running today's pipeline as runway engines (a = docling digital, b = docling OCR, d = VLM); per-page records; oracle and reports; synthetic damaged-scan generator in `tests/data` tooling | reports on the synthetic set and one owner document set |
 | **R1 profiler 3.1A + 3.1B** (runs alongside R2) | the features of 4.1 and 4.2 in the profile record; probe interface (3.1C hooks) with a no-op probe; features in the harness | feature distributions per oracle runway; profile cost per page measured |
 | **R2 runway b as first-class** (priority: most scans are English) | try-3.2b-first for clean scans (3.1B quality features), deskew before OCR, the result's script checked; brings forward the two gate checks 3.2b needs, expected size and plausibility, with escalation to 3.2d; behind a setting, off until the harness agrees | harness: b vs d quality and time on the English scans; share of 3.2b passes that escalate |
