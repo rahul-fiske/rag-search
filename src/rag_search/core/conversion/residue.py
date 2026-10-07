@@ -117,11 +117,17 @@ def page_regions(src: Path, page: int, known: list[list[float]] | None = None) -
             text = np.zeros_like(ink)
             tp = pg.get_textpage()
             try:
+                import pypdfium2.raw as raw
+
+                from . import profiler
+
                 pw, ph = pg.get_size()
                 for i in range(tp.count_rects()):
                     left, bottom, right, top = tp.get_rect(i)
-                    x0, x1 = int(left / pw * w) - 1, int(right / pw * w) + 2
-                    y0, y1 = int((1 - top / ph) * h) - 1, int((1 - bottom / ph) * h) + 2
+                    # where the text is on the page as displayed (rotation, box origin), as the render is
+                    box = profiler.page_box(pg, raw, left, bottom, right, top) or [left / pw, 1 - top / ph, right / pw, 1 - bottom / ph]
+                    x0, x1 = int(box[0] * w) - 1, int(box[2] * w) + 2
+                    y0, y1 = int(box[1] * h) - 1, int(box[3] * h) + 2
                     text[max(0, y0):max(0, y1), max(0, x0):max(0, x1)] = True
             finally:
                 tp.close()

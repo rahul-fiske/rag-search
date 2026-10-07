@@ -35,18 +35,40 @@ from Hugging Face (about 5 GB) and of the Python packages at install time.
 
 ## Requirements
 
-* macOS on Apple Silicon (M1 or newer) with 16 GB RAM or more (Linux works too; slower on CPU).
-* Intel Macs are supported on a best-effort basis: CPU only (no Metal), so indexing and reranking are
-  much slower, and `install.sh` pins `numpy<2` because the last PyTorch build for Intel Macs needs it.
-* About 15 GB free disk (packages ≈ 5 GB, models ≈ 5 GB, plus your indexes).
+### Hardware
+
+**Yes, it runs on a MacBook**: any Apple Silicon MacBook (M1 or newer; Air or Pro) with macOS 13 or later. It was
+developed and tested on an M4 Max with 36 GB; that is the only machine it has been measured on.
+
+| | Minimum | Recommended | Why |
+|---|---|---|---|
+| Chip | Apple Silicon (M1) | M2 Pro / M3 / M4 or newer | the models run on the GPU (Metal for the embedder and reranker, MLX for the document reader); a newer chip is faster, not different |
+| Memory | 16 GB | 32 GB or more | search holds about 3.5 GB of models resident; an indexing run adds the conversion workers (1-2 GB each) and, for scanned pages, the document reader (about 4 GB while it reads) and the repair model (about 6 GB when a table needs it). With less than about 17 GB, one worker is used instead of two |
+| Free disk | 15 GB | 30 GB | packages about 1.5 GB, models about 8 GB (embedder 2.3 GB, reranker 2.1 GB, document reader and repair model about 6 GB together), plus the Markdown and indexes of your documents (about 0.5 GB per 100,000 chunks) |
+| Network | once, for the install | | the models and Python packages are downloaded once (about 10 GB); afterwards nothing leaves the machine |
+
+What to expect: on the M4 Max a full rebuild of about 2,100 documents (20,000 pages, 94,000 chunks) took 1 h 35 min,
+86 minutes of it embedding; a run that finds only new or changed files takes seconds to minutes. Searching is
+interactive (a fraction of a second once the models are warm). On a 16 GB machine expect indexing to be slower (one
+conversion worker, the reader and the repair model one at a time) and keep other heavy applications closed while a
+large run is going. 8 GB machines are not supported.
+
+* Intel Macs are supported on a best-effort basis: CPU only (no Metal, no document reader), so indexing and reranking
+  are much slower, and `install.sh` pins `numpy<2` because the last PyTorch build for Intel Macs needs it.
+* Linux works too (CPU or CUDA), without Apple Vision, MLX or the document reader.
+
+### Software
+
+* macOS 13 or later on Apple Silicon (see above).
 * [`uv`](https://docs.astral.sh/uv/) (`brew install uv`). It fetches Python 3.12 itself.
+* Optional: Tesseract (`brew install tesseract tesseract-lang`) as the last-resort reader for pages the document reader cannot read.
 * Optional: Claude Desktop and/or Claude Code (any other MCP host can use the adapter too).
 
 ## Install
 
 ### From a git clone
 
-Build the release folder from the source and install it (a MacBook with Apple Silicon; see Requirements):
+Build the release folder from the source and install it (a MacBook with Apple Silicon; see Requirements > Hardware):
 
 ```bash
 brew install uv                                   # once; uv fetches Python 3.12 itself

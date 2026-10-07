@@ -72,13 +72,8 @@ def read_page(src: Path, page: int, *, is_image: bool = False, languages: list[s
 
     with tempfile.TemporaryDirectory(prefix="rag-search-av-") as tmp:
         img = Path(tmp) / "page.png"
-        if is_image:
-            from PIL import Image
-
-            with Image.open(src) as im:
-                im.seek(page - 1)
-                frame = im.convert("RGB")
-            frame.save(img, "PNG")
+        if is_image:                                   # upright (EXIF) and without transparency, at its own size
+            vlm.render_image_frame(src, page, img, long_side=1_000_000)
         else:
             vlm.render_pdf_page(src, page, img, long_side=LONG_SIDE)
         return read_image(img, languages)

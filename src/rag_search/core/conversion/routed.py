@@ -127,6 +127,9 @@ def _new_text(page_md: str, pic_md: str) -> str:
     return "\n".join(keep).strip()
 
 
+# what sends a page with a text layer to the document reader when RAG_SEARCH_ESCALATE_DIGITAL=auto: the layer and docling
+# did not give the page, or (plausibility, column_types: only checked on a scanner's hidden OCR layer) the layer is a poor OCR
+UP_DIGITAL = ("coverage", "script", "plausibility", "column_types")
 # gate checks that a re-read by another model cannot cure (the page's resolution, docling's own grade)
 NOT_ESCALATED = ("low_resolution", "docling_grade")
 # a page doubted for one of these has a structure (a table) that plain text would lose: no Tesseract rung, the document reader reads it
@@ -369,7 +372,7 @@ class _Converter:
         g = gate.check_page(r["md"], branch_kind=kind, profile=gprof, confidence=conf, layer=g_layer, ocr=ocr,
                             residue=r.get("residue"))
         gate_s = round(time.perf_counter() - t_gate, 4)
-        up = [c for c in gate.failed(g) if c in ("coverage", "script")] if (may_escalate and kind == "digital" and not e["blank"]
+        up = [c for c in gate.failed(g) if c in UP_DIGITAL] if (may_escalate and kind == "digital" and not e["blank"]
                                                                           and self.up_digital and self.vlm_ok()
                                                                           and n not in self.up_from) else []
         if up:                                      # the text layer and docling together did not give the page: read its image
@@ -828,7 +831,10 @@ class _Converter:
             r["note"] = "; ".join(x for x in (r.get("note"), f"Tesseract failed ({type(exc).__name__}: {str(exc)[:120]})") if x)
             return False
         took = time.perf_counter() - t0
-        if not has_real_text(text) or degenerate.assess(text)["bad"]:
+        # kept only when it is text: Tesseract knows the languages it was given, and on a page in another script (which the
+        # runaway check may have doubted for that reason alone) it writes letters that are not words
+        if (not has_real_text(text) or degenerate.assess(text)["bad"] or not gate._plausibility(text)["ok"]
+                or not gate._script(text, "scan", {})["ok"]):
             r["note"] = "; ".join(x for x in (r.get("note"), "Tesseract found no usable text either") if x)
             return False
         r.update(md=text.strip() + "\n", via="tesseract", branch="fallback", time_s=r["time_s"] + took,
@@ -934,7 +940,9 @@ class _Converter:
 
 def no_text_message(src: Path, results: dict[int, dict[str, Any]], reasons: str = "") -> str:
     """Why nothing could be read, in words that say what to do (shown in the Indexing tab)."""
-    via = {r.get("via") or ("cache" if r.get("cache") == "hit" else "docling") for r in results.values()}
+    # who read each page: a result from the page cache was read by the reader recorded with it, not by nobody
+    via = {str((r.get("reader") or {}).get("tool") or "cache") if r.get("cache") == "hit" else (r.get("via") or "docling")
+           for r in results.values()}
     msg = f"no text could be read from {src.name} ({len(results)} page(s))"
     if results and all(r.get("cache") == "none" and not r.get("via") for r in results.values()):
         msg += "; every page is blank (almost no ink), so nothing was read"

@@ -428,6 +428,38 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   script, and for pages without text a small greyscale render (36 dpi) from which `ink` (the share of
   clearly dark pixels) and a content `hash` come; text pages are hashed from their text layer and size.
   The profile is the page's identity for the cache and the source of the blank-page rule.
+  What a review of the profiler and the gate corrected in 0.9.29 (each found on generated pages, most confirmed on
+  the pages of the full run):
+  * **Where a picture is.** The boxes of large pictures (`big_pics`, cut out for the document reader in lane c) and
+    the text rectangles of the residue finder were taken from the page's own coordinates, which ignore `/Rotate`
+    and the origin of the page box: on a rotated page the reader was handed another part of the page.
+    `profiler.page_box` maps them with PDFium to the page as it is displayed; a picture hanging over the edge
+    counts for the part on the page.
+  * **Whose text it is.** `hidden_ocr_layer` meant "text over a full-page picture". Of 556 such pages in the run
+    506 were born-digital pages on a background picture (statements on a letterhead, web pages printed with their
+    backdrop), and lost the comparison with their own text layer for it. It now needs **invisible** text (text
+    render mode 3 or 7, which is how a scanner writes its OCR): 50 pages. Those are read from that layer as before
+    and get `plausibility` and `column_types` from the gate, because the layer is an OCR reading nobody else has
+    seen (with `RAG_SEARCH_ESCALATE_DIGITAL=auto` a failure sends the page to the document reader).
+  * **Which text layer is garbled** (`docling_convert._page_text_ok`; a garbled layer sends the page to the
+    document reader). Three kinds of sound layers were called garbled, 81 of the run's 94 such pages: long tokens
+    that are values, not words run together (UUIDs, identifiers with `_` and `:`, rows of figures: only long runs
+    of letters count now, and none in a script written without spaces); bullets and icons from a symbol font
+    (one or two private-use or control codes standing alone; damage inside words and pages set in a symbol font
+    still count); and invisible format characters (zero-width spaces, joiners). Those pages keep their exact
+    text instead of a model's reading of their identifiers.
+  * **Image files.** A picture with a transparent ground (a PNG without a background) reached every reader as
+    black on black; `profiler.opaque` puts it on white (on black when its content is light), for the ink figure,
+    the document reader, Tesseract and Apple Vision (which now also gets the picture upright). Only a TIFF has
+    pages: the second frame of a phone's JPEG (a depth or gain map) and the frames of an animation are not read
+    as page 2. A resolution tag with two values counts by the coarser one (a fax).
+  * **Skew** (`scanfacts`): the search went to 6 degrees while pages up to 8 are straightened for Tesseract, so
+    a page at 8 or 12 degrees measured 5 or 6 and passed as straightenable. It goes to 10.
+  * **Gate.** The script of a page's text layer is not held against the reading when that layer is garbled (a
+    broken font map can come out as Greek letters). A Tesseract last resort is kept only when its text is words
+    (`plausibility`, `script`): on a page in a script Tesseract was not given it writes letters, not words.
+    "No text" for a page served from the page cache names the reader that read it (it said no reader had, and
+    the file was tried again on every update run).
 * **Page cache** (`pagecache.py`, `indexer_workspace/page_cache/<hh>/<key>.json`): the Markdown and facts
   of one page, keyed by hash of (page content hash, reader id + mode, the full conversion profile string);
   any change of page, tool or setting is a different key, so a hit is always valid. One file per page,
@@ -445,7 +477,7 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   below 90 %, in between `uncertain`; a layer of under 15 words is not judged). When text is missing, the layer lines
   the Markdown does not hold are appended under `<!-- text layer: lines the conversion left out -->` (at most 20,000
   characters a page; deterministic, milliseconds, no model), and the page record says so (`layer`: verdict, recalls,
-  `added_lines`, `before`). Not applied when the page's layer is a scanner's hidden OCR layer or looks garbled
+  `added_lines`, `before`). Not applied when the page's layer is a scanner's hidden OCR layer (invisible text) or looks garbled
   (`text_ok`, `page_text_ok`): such a layer proves nothing and the page belongs to an image reader.
   `RAG_SEARCH_LAYER_FILL`: `fill` (default), `report` (compare and record `would_add_lines`, change nothing, gate as
   before) or `off`. Measured on the first full run (16,842 pages): 16 % had lost text, 2,212 of those had passed the gate.

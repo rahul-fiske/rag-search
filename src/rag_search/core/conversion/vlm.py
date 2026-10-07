@@ -369,7 +369,9 @@ def render_image_frame(src: Path, frame: int, out: Path, *, long_side: int = REN
     with Image.open(src) as im:
         if frame > 1:
             im.seek(frame - 1)
-        im = ImageOps.exif_transpose(im.convert("RGB"))
+        from . import profiler
+
+        im = profiler.opaque(ImageOps.exif_transpose(im)).convert("RGB")       # upright, and on paper (a transparent ground is black otherwise)
     if crop:
         W, H = im.size
         im = im.crop((int(crop[0] * W), int(crop[1] * H), max(int(crop[2] * W), int(crop[0] * W) + 1),

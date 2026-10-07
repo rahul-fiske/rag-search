@@ -213,14 +213,50 @@ _SAMPLE_PAGES = 12
 _MIN_TEXT_CHARS = 40          # a page with less text than this counts as image-only
 
 
+def _odd_char(c: str) -> bool:
+    """A character a broken font map leaves behind: the replacement character, a private-use code, a control code."""
+    return c == "\ufffd" or "\ue000" <= c <= "\uf8ff" or ord(c) < 32 or 0x80 <= ord(c) < 0xa0
+
+
+def _spaceless(c: str) -> bool:
+    """A letter of a script that is written without spaces between words (Chinese, Japanese, Thai, Lao, Khmer,
+    Burmese, Tibetan): a long unbroken run of them is a sentence, not words whose spaces were lost."""
+    cp = ord(c)
+    return (0x0E00 <= cp <= 0x0FFF or 0x1000 <= cp <= 0x109F or 0x1780 <= cp <= 0x17FF or 0x2E80 <= cp <= 0x9FFF
+            or 0xF900 <= cp <= 0xFAFF or 0xFF00 <= cp <= 0xFFEF)
+
+
+def _run_together(word: str) -> bool:
+    """Is *word* several words whose spaces were lost?  Long, and made of letters.  A UUID, a hexadecimal value, an
+    identifier (``mailbox_command_status``), a path, a row of comma-separated figures is long too and is exactly what
+    the page says: counted as damage, pages of specifications and logs were taken away from their own text layer and
+    given to a vision model to read."""
+    if len(word) <= 30 or "/" in word or "." in word:
+        return False
+    if any(c.isdigit() or c in "_:=@#\\|<>+*~^" or _spaceless(c) for c in word):
+        return False
+    return sum(1 for c in word if unicodedata.category(c)[0] in "LM") / len(word) >= 0.9
+
+
 def _page_text_ok(text: str) -> bool:
     """True when the text of a page reads like text: letters, digits and punctuation, words of a
-    normal length, none of the replacement/private-use characters a broken font map produces."""
-    chars = [c for c in text if not c.isspace()]
+    normal length, none of the replacement/private-use characters a broken font map produces.
+
+    Not counted as damage: format characters (zero-width spaces and joiners, direction marks, soft hyphens: invisible,
+    and part of the text), and a bullet or an icon from a symbol font, which arrives as one or two private-use or
+    control codes standing by themselves between words (``\uf0b7 First item``) -- unless a fifth of the page's words
+    are such marks, which is a page set in a symbol font."""
+    words = ["".join(c for c in w if unicodedata.category(c) != "Cf") for w in text.split()]
+    words = [w for w in words if w]
+    if not words:
+        return False
+    marks = [w for w in words if len(w) <= 2 and all(_odd_char(c) for c in w)]
+    if len(marks) <= 0.2 * len(words):
+        words = [w for w in words if not (len(w) <= 2 and all(_odd_char(c) for c in w))]
+    chars = [c for w in words for c in w]
     if not chars:
         return False
-    bad = sum(1 for c in chars if c == "\ufffd" or "\ue000" <= c <= "\uf8ff"
-              or (ord(c) < 32) or 0x80 <= ord(c) < 0xa0)
+    bad = sum(1 for c in chars if _odd_char(c))
     if bad / len(chars) > 0.01:
         return False
     # letters, digits, punctuation, symbols and combining marks (the vowel signs of Indic scripts
@@ -228,11 +264,8 @@ def _page_text_ok(text: str) -> bool:
     normal = sum(1 for c in chars if c.isalnum() or unicodedata.category(c)[0] in "PSM")
     if normal / len(chars) < 0.9:
         return False
-    words = text.split()
-    if words:
-        long = sum(1 for w in words if len(w) > 30 and "/" not in w and "." not in w)
-        if long / len(words) > 0.05:          # words run together: the spaces were lost
-            return False
+    if sum(1 for w in words if _run_together(w)) / len(words) > 0.05:      # words run together: the spaces were lost
+        return False
     return True
 
 

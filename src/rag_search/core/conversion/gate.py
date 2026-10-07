@@ -21,6 +21,9 @@ goes to the document reader (``escalate`` in the result):
 9. ``plausibility``  the words are not words (no vowels, letters mixed with digits, stray symbols)
 10. ``column_types`` a number column holds cells that are digits with letters among them (``1O5``, ``l2``)
 
+A text page whose text is invisible (``hidden_ocr_layer``: a scanner's own OCR over the picture of the page) is read from
+that layer and gets ``plausibility`` and ``column_types`` too: it is an OCR reading that no other reader has seen.
+
 For a text page whose pictures or residue regions the document reader was to read (lane 3.2c) ``residue_read`` checks
 that it read them all.
 
@@ -87,7 +90,9 @@ def _script(md: str, branch_kind: str, prof: dict[str, Any]) -> dict[str, Any]:
         short = sum(1 for t in toks if len(t) == 1 and not t.isdigit()) / len(toks)
         if short > NOISE_TOKEN_SHARE:
             return _check("script", False, f"{round(100 * short)} % of the words are single letters: OCR noise")
-    want = str(prof.get("script") or "")
+    # the script of the page's own text layer -- unless that layer is garbled (which is why the page was read as an image):
+    # a broken font map can come out as Greek or Cyrillic letters, and says nothing about what the page is written in
+    want = "" if prof.get("text_ok") is False else str(prof.get("script") or "")
     if want and want not in ("Latin", "Mixed", "none"):
         got = dominant_script(text)
         if got and got != want and got != "Mixed":
@@ -273,6 +278,10 @@ def check_page(md: str, *, branch_kind: str, profile: dict[str, Any] | None = No
               _table_shape(md), _resolution(branch_kind, prof), _degenerate(md, branch_kind)]
     if ocr and branch_kind == "scan":
         checks += [_expected_size(md, prof), _plausibility(md), _column_types(md)]
+    elif branch_kind == "digital" and prof.get("hidden_ocr_layer"):
+        # the text of this page is a scanner's OCR, laid invisibly over the picture: nobody else has read the page, so it
+        # gets the checks an OCR reading gets (not the size check: the ink of such a page is not measured)
+        checks += [_plausibility(md), _column_types(md)]
     if residue:
         checks.append(_residue(residue))
     violations: list[dict[str, Any]] = []

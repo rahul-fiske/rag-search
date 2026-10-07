@@ -34,8 +34,8 @@ def decide(kind: str, page: dict[str, Any] | None = None) -> tuple[str, str]:
     if page.get("text_ok") is False:
         return "raster", f"the text layer looks garbled ({chars} characters)"
     if page.get("hidden_ocr_layer"):
-        return "digital", (f"text layer ({chars} characters) over a full-page picture: probably a "
-                           "scanner's hidden OCR layer; kept as digital until it is compared with a read")
+        return "digital", (f"invisible text ({chars} characters) over a full-page picture: a scanner's hidden OCR "
+                           "layer; read from it and checked as an OCR reading")
     return "digital", f"good text layer ({chars} characters)"
 
 

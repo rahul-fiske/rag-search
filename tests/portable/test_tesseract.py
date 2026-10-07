@@ -116,6 +116,16 @@ class LastResortTests(RoutedVlmBase):
         self.assertEqual(rec["outcome"], "low")
         self.assertIn("found no usable text either", rec["note"])
 
+    def test_letters_that_are_not_words_are_not_taken(self):
+        self.plan(always_loop=True)                         # what Tesseract writes on a page in a script it was not given
+        junk = "Xqzt wrtk plmn bvcx zzrt qwrt mnbv lkjh gfds trwq pljk hgfd szxc vbnm.\n" * 12
+        with mock.patch.object(tesseract, "why_not", return_value=""), \
+                mock.patch.object(tesseract, "read_page", return_value=junk):
+            rec = self.page3(self.convert(self.reader()))
+        self.assertEqual((rec["outcome"], rec["reader"]["tool"]), ("low", "vlm"))
+        self.assertIn("found no usable text either", rec["note"])
+        self.assertNotIn("Xqzt", self.out.read_text())
+
     def test_a_healthy_page_never_reaches_tesseract(self):
         with mock.patch.object(tesseract, "read_page", side_effect=AssertionError("must not be called")):
             rec = self.page3(self.convert(self.reader()))

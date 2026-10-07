@@ -1,10 +1,12 @@
 """Step 1 of the conversion flow: a per-page profile of a source file, without any model.
 
 For a PDF, every page gets: the number of text characters, whether that text reads like text,
-how much of the page is covered by pictures, the resolution of the largest picture, the page
-rotation and the script of the text layer.  Images are one page each (a multi-page TIFF has one
-per frame).  Office and text files are one "page".  The profile costs milliseconds per page
-(pypdfium2 reads the text layer; nothing is rendered).
+how much of the page is covered by pictures (and where the large ones are, as the page is displayed),
+the resolution of the largest picture, the page rotation, the script of the text layer and whether
+that text is invisible (a scanner's OCR layer).  An image file is one page; only a TIFF has one per
+frame (the second frame of a phone's JPEG is a depth or gain map, of an animation the next picture).
+Office and text files are one "page".  The profile costs milliseconds per page: pypdfium2 reads the
+text layer, and only a page without usable text is drawn, small, for its ink and its content hash.
 
 pypdfium2 and Pillow are imported inside the functions: importing this module costs nothing.
 The source file is opened for reading only.
@@ -40,8 +42,33 @@ def kind_of(src: Path) -> str:
     return "office"
 
 
+MULTI_PAGE_FORMATS = {"TIFF"}        # image formats whose frames are pages
+HIDDEN_TEXT_SAMPLE = 300             # text objects looked at to tell whether a page's text is invisible
+_DEVICE = 100_000                    # the size of the device square that page coordinates are mapped to
 INK_SCALE = 0.5                      # the small render used for ink and the content hash (~36 dpi)
 BLANK_INK = 0.0003                   # less ink than this, and as little that is lighter than the ground: a blank page
+
+
+def opaque(im: Any) -> Any:
+    """*im* without transparency.  A picture with an alpha channel (a PNG saved without a background: a signature, an
+    exported diagram, some screenshots) keeps black under its transparent pixels, so converted as it is the whole
+    ground is black and dark writing on it is gone, for the ink figure and for every reader.  It is put on white
+    paper -- on black when what it holds is light (white lettering made for a dark ground)."""
+    from PIL import Image, ImageStat
+
+    if im.mode == "P" and "transparency" in im.info:
+        im = im.convert("RGBA")
+    if im.mode not in ("RGBA", "LA", "PA", "RGBa", "La"):
+        return im
+    rgba = im.convert("RGBA")
+    alpha = rgba.getchannel("A")
+    if alpha.getextrema()[0] == 255:                       # an alpha channel that hides nothing
+        return rgba.convert("RGB")
+    stat = ImageStat.Stat(rgba.convert("L"), mask=alpha)
+    light = bool(stat.count[0]) and stat.mean[0] > 170
+    flat = Image.new("RGB", rgba.size, (0, 0, 0) if light else (255, 255, 255))
+    flat.paste(rgba, mask=alpha)
+    return flat
 
 
 def ink_and_hash(im: Any) -> dict[str, Any]:
@@ -72,6 +99,37 @@ def _ink_and_hash(page: Any) -> dict[str, Any]:
         return {}
 
 
+def page_box(page: Any, raw: Any, left: float, bottom: float, right: float, top: float) -> list[float] | None:
+    """A rectangle in PDF page coordinates as (left, top, right, bottom) fractions of the page **as it is displayed**
+    (not clipped to it).  PDFium applies the page's rotation and the origin of its box: on a page with ``/Rotate 90``,
+    or one whose box does not start at 0,0, the page's own coordinates say nothing about where a picture is seen.
+    None when PDFium cannot say."""
+    import ctypes
+
+    xs, ys = [], []
+    for x, y in ((left, bottom), (right, top)):
+        dx, dy = ctypes.c_int(), ctypes.c_int()
+        if not raw.FPDF_PageToDevice(page.raw, 0, 0, _DEVICE, _DEVICE, 0, x, y, ctypes.byref(dx), ctypes.byref(dy)):
+            return None
+        xs.append(dx.value / _DEVICE)
+        ys.append(dy.value / _DEVICE)
+    return [min(xs), min(ys), max(xs), max(ys)]
+
+
+def _text_is_hidden(page: Any, raw: Any) -> bool:
+    """Is the page's text invisible -- text render mode 3 (neither filled nor stroked) or 7 (a clip path only), which is
+    how a scanner or an OCR tool lays its reading over the picture of the page?  The first ``HIDDEN_TEXT_SAMPLE`` text
+    objects decide.  Visible text over a full-page picture is a born-digital page on a background (a statement on its
+    letterhead, a web page printed with its backdrop), and its text layer is as good as any."""
+    n = hidden = 0
+    for obj in page.get_objects(filter=[raw.FPDF_PAGEOBJ_TEXT], max_depth=15):
+        n += 1
+        hidden += raw.FPDFTextObj_GetTextRenderMode(obj.raw) in (3, 7)
+        if n >= HIDDEN_TEXT_SAMPLE:
+            break
+    return n > 0 and hidden / n >= 0.9
+
+
 def _page_profile(pdf: Any, i: int, raw: Any) -> dict[str, Any]:
     page = pdf[i]
     try:
@@ -89,11 +147,18 @@ def _page_profile(pdf: Any, i: int, raw: Any) -> dict[str, Any]:
             covered = 0.0
             for obj in page.get_objects(filter=[raw.FPDF_PAGEOBJ_IMAGE], max_depth=15):
                 left, b, r, t = obj.get_bounds()
-                covered += max(0.0, r - left) * max(0.0, t - b)
-                share = max(0.0, r - left) * max(0.0, t - b) / area
+                box = None
+                try:
+                    box = page_box(page, raw, left, b, r, t)
+                except Exception:  # noqa: BLE001 - another PDFium: the page's own coordinates (right when it is not rotated)
+                    pass
+                if box is None:
+                    box = [left / w, 1 - t / h, r / w, 1 - b / h]
+                box = [min(1.0, max(0.0, v)) for v in box]         # the part of the picture that is on the page
+                share = (box[2] - box[0]) * (box[3] - box[1])
+                covered += share * area
                 if BIG_PICTURE <= share < router.FULL_PAGE_COVER and len(pics) < MAX_PICTURES:
-                    pics.append([round(max(0.0, left / w), 3), round(max(0.0, 1 - t / h), 3),
-                                 round(min(1.0, r / w), 3), round(min(1.0, 1 - b / h), 3)])
+                    pics.append([round(v, 3) for v in box])
                 try:
                     px = obj.get_px_size()[0]
                     dpi = max(dpi, round(px / max(0.1, (r - left) / 72.0)))
@@ -112,8 +177,13 @@ def _page_profile(pdf: Any, i: int, raw: Any) -> dict[str, Any]:
             prof["dpi"] = int(dpi)
         if pics:                                           # large pictures inside a text page
             prof["big_pics"] = pics
-        prof["hidden_ocr_layer"] = bool(chars >= router.MIN_TEXT_CHARS
-                                        and (cover or 0) >= router.FULL_PAGE_COVER)
+        hidden = bool(chars >= router.MIN_TEXT_CHARS and (cover or 0) >= router.FULL_PAGE_COVER)
+        if hidden:                                         # text over a full-page picture: a scanner's layer only when it is invisible
+            try:
+                hidden = _text_is_hidden(page, raw)
+            except Exception:  # noqa: BLE001 - cannot tell: as before, do not trust the layer as proof
+                pass
+        prof["hidden_ocr_layer"] = hidden
         if chars < router.MIN_TEXT_CHARS:                  # a candidate for reading as an image
             prof.update(_ink_and_hash(page))
         else:                                              # text pages: what the text layer says
@@ -158,8 +228,8 @@ def _profile_image(src: Path) -> dict[str, Any]:
         pass
     pages: list[dict[str, Any]] = []
     with Image.open(src) as im:
-        frames = min(int(getattr(im, "n_frames", 1) or 1), MAX_IMAGE_FRAMES)
-        total = int(getattr(im, "n_frames", 1) or 1)
+        total = int(getattr(im, "n_frames", 1) or 1) if (im.format or "").upper() in MULTI_PAGE_FORMATS else 1
+        frames = min(total, MAX_IMAGE_FRAMES)
         for f in range(frames):
             if f:
                 im.seek(f)
@@ -167,7 +237,8 @@ def _profile_image(src: Path) -> dict[str, Any]:
             prof: dict[str, Any] = {"page": f + 1, "chars": 0, "image_cover": 1.0,
                                     "size_px": [im.width, im.height]}
             if isinstance(dpi, (tuple, list)) and dpi and dpi[0]:
-                prof["dpi"] = round(float(dpi[0]))
+                both = [float(v) for v in dpi[:2] if v]            # a fax is 204 x 98: the coarser direction decides
+                prof["dpi"] = round(min(both))
             try:
                 orient = im.getexif().get(0x0112)
                 if orient and int(orient) != 1:
@@ -175,7 +246,7 @@ def _profile_image(src: Path) -> dict[str, Any]:
             except Exception:  # noqa: BLE001
                 pass
             try:
-                small = im.convert("L")
+                small = opaque(im).convert("L")
                 small.thumbnail((400, 400))
                 prof.update(ink_and_hash(small))
             except Exception:  # noqa: BLE001

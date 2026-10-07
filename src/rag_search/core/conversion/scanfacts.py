@@ -15,7 +15,9 @@ from typing import Any
 import numpy as np
 
 RENDER_DPI = 100
-SKEW_RANGE = 6.0                     # degrees searched on each side
+SKEW_RANGE = 10.0                    # degrees searched on each side.  More than router.THRESHOLDS["max_deskew"], so that a page
+                                     # skewed beyond what is straightened measures as such: a search that ends at its limit
+                                     # says "at least this much" (with 6 a page at 8 or 12 degrees measured 5 or 6)
 SKEW_STEP = 0.5
 
 
