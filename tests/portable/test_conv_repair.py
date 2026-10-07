@@ -601,12 +601,6 @@ class RepairIndexTests(StatementIndexBase):
         self.run_index()
         self.assertEqual(self.meta("bank/stmt")["conversion"]["outcomes"], {"low": 1})
 
-    def test_the_repair_setting_is_a_validated_tunable(self):
-        from rag_search import spec
-
-        t = [x for x in spec.TUNABLES if x.key == "repair"][0]
-        self.assertEqual((t.section, t.env, tuple(t.choices)), ("indexer", "RAG_SEARCH_REPAIR", ("auto", "off")))
-
 
 if __name__ == "__main__":
     unittest.main()

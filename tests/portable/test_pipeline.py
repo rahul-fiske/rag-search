@@ -129,9 +129,15 @@ class PipelineTests(TempHome):
     def test_name_collisions(self):
         self.write_doc("c/same.md", AUTH)
         self.write_doc("c/same.txt", "other text")
-        s = self.index()
+        events = []
+        s = self.index(progress=events.append)
         self.assertEqual(len(s["errors"]), 1)
         self.assertIn("same document name", s["errors"][0]["message"])
+        docs = {e["doc"]["path"]: e["doc"] for e in events if "doc" in e}          # the one left out is listed, with the reason
+        left = Path(s["errors"][0]["src"]).name
+        self.assertEqual(docs[left]["status"], "error")
+        self.assertIn("same document name", docs[left]["message"])
+        self.assertEqual(sum(1 for d in docs.values() if d["status"] == "error"), len(s["errors"]))
 
     def test_failed_document_progress_carries_the_cause(self):
         from unittest import mock

@@ -44,6 +44,29 @@ from Hugging Face (about 5 GB) and of the Python packages at install time.
 
 ## Install
 
+### From a git clone
+
+Build the release folder from the source and install it (a MacBook with Apple Silicon; see Requirements):
+
+```bash
+brew install uv                                   # once; uv fetches Python 3.12 itself
+git clone https://github.com/rahul-fiske/rag-search.git
+cd rag/rag-search
+git checkout rag_1.0                              # the branch the current version is on
+
+scripts/build_release.sh                          # builds dist/rag-search-<version>/ and dist/rag-search-<version>.zip
+cd dist/rag-search-*/                             # the release folder (the newest, if there are several)
+./install.sh                                      # installs, downloads the models (about 5 GB), starts the daemons
+```
+
+`scripts/build_release.sh` needs only `uv`; it writes the wheel, the source archive, `install.sh`, `uninstall.sh`
+and `SHA256SUMS` into `dist/rag-search-<version>/` and zips that folder, which is what you hand to someone who has
+no clone. To upgrade, `git pull` and repeat the last three lines: the data folder and the indexes are kept. To work
+on the code instead (an editable install that runs the clone itself), see "Modify the source" below and
+`CONTRIBUTING.md`.
+
+### From a release folder
+
 Unzip the release folder, open Terminal in it and run:
 
 ```bash
@@ -104,9 +127,12 @@ rag-search collection delete NAME [-y]                         delete a collecti
 rag-search register [--desktop] [--code] | unregister | mcp-config [--profile NAME]
 ```
 
-A file that cannot be indexed for its own reasons (a password-protected PDF, a file with no text at all) is
-converted once: later runs still list it with its reason ("not tried again") but only compute its checksum.
-Change the file, change a conversion setting, or tick *re-convert to Markdown* (`--force-md`) to try again.
+A file that cannot be indexed for its own reasons (a password-protected PDF, a PDF that is damaged, a file with no
+text at all, a file left out because another one in its folder has the same name) is reported as a failure by the
+run that finds it, and remembered. Later `index new` runs only compute its checksum and list it as **not tried
+again**, apart from the run's errors: an update run with nothing new that failed ends `succeeded`. Change the file,
+change a conversion setting, tick *re-convert to Markdown* (`--force-md`), or run a complete run (`index all`,
+`--rebuild`) to try it again; a complete run attempts every file and reports every failure again.
 
 
 Every command accepts `--json`, `--home PATH` and `--client NAME`. `PATH` arguments are files or
@@ -678,6 +704,11 @@ diff force.md smart.md | head -50
 ```
 | `RAG_SEARCH_DEVICE` | auto | force `mps`, `cuda` or `cpu` |
 | `RAG_SEARCH_EMBED_BATCH` | `32` | embedding batch size |
+| `RAG_SEARCH_MAX_SEQ` | `1024` | longest chunk, in tokens, the embedder reads (longer ones are cut) |
+| `RAG_SEARCH_RERANK_BATCH` / `RAG_SEARCH_RERANK_MAX_LEN` | `8` / `1024` | query and passage pairs per reranker pass / longest pair in tokens |
+| `RAG_SEARCH_EMBEDDER` / `RAG_SEARCH_RERANKER` | – | a backend of your own, as `package.module:ClassName` (a class with `load()` and `encode(texts)` / `score(query, texts)`); used by the tests |
+| `RAG_SEARCH_CONVERT_TIMEOUT` | `6000` | seconds one document may take when docling runs in another Python (`RAG_SEARCH_DOCLING_PYTHON`) |
+| `RAG_SEARCH_BENCH_ENGINES` | – | extra page readers for `rag-search bench run`, comma-separated `package.module:attr` (an object with `read_pages(src, pages)`) |
 | `RAG_SEARCH_MODEL` / `RAG_SEARCH_RERANK_MODEL` | from `config.json`, else bge-m3 / bge-reranker-v2-m3 | model ids; they override `models set` |
 | `RAG_SEARCH_DTYPE` | auto | force the weight precision: `float32`, `float16` or `bfloat16` |
 | `RAG_SEARCH_DOCLING_PYTHON` | unset | python of a separate environment that has docling |

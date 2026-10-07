@@ -69,6 +69,34 @@ class RoutedUnitTests(TempHome):
         self.assertTrue(all(e["hash"] for e in plan))
         self.assertNotEqual(plan[0]["hash"], plan[1]["hash"])           # different text, different page
 
+    def test_light_writing_on_a_dark_ground_is_not_a_blank_page(self):
+        from PIL import Image, ImageDraw
+
+        from rag_search.core.conversion import profiler
+
+        dark = Image.new("L", (400, 300), 20)
+        d = ImageDraw.Draw(dark)
+        for y in range(40, 260, 30):
+            d.rectangle((40, y, 360, y + 8), fill=235)                 # lines of light "writing"
+        facts = profiler.ink_and_hash(dark)
+        self.assertLess(facts["ink"], profiler.BLANK_INK)              # nothing is darker than the ground ...
+        self.assertGreater(facts["light"], 0.05)                       # ... but a lot is lighter
+        white = profiler.ink_and_hash(Image.new("L", (400, 300), 252))
+        self.assertEqual((white["ink"], white["light"]), (0.0, 0.0))
+        page = {"page": 1, "branch": "image", "chars": 0, "hash": "r1"}
+        for facts_, blank in ((facts, False), (white, True), ({"ink": 0.0}, True)):      # a profile without the figure: as before
+            prof = {"kind": "image", "pages": [{**page, **facts_, "hash": "r1"}], "page_count": 1}
+            with mock.patch.object(profiler, "route_pages", return_value=[(1, "image", "an image file")]):
+                self.assertEqual(routed.plan_pages(prof)[0]["blank"], blank, facts_)
+
+    def test_a_file_of_blank_pages_says_so(self):
+        blank = {1: {"md": "", "cache": "none", "via": ""}, 2: {"md": "", "cache": "none", "via": ""}}
+        msg = routed.no_text_message(Path("empty.jpg"), blank)
+        self.assertIn("every page is blank", msg)
+        self.assertNotIn("install", msg)                                # not the advice for a missing reader
+        msg = routed.no_text_message(Path("photo.jpg"), {1: {"md": "", "cache": "miss", "via": "vlm"}})
+        self.assertIn("found no text", msg)
+
     def test_runs(self):
         self.assertEqual(routed._runs([1, 2, 3, 7, 8, 12]), [(1, 3), (7, 8), (12, 12)])
         self.assertEqual(routed._runs(list(range(1, 46)), 20), [(1, 20), (21, 40), (41, 45)])

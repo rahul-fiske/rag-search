@@ -46,6 +46,17 @@ class TokenTests(unittest.TestCase):
         self.assertEqual(layer.compare(layer_text, new)["verdict"], "intact")
         self.assertEqual(layer.missing_lines(layer_text, new), [])                   # nothing left to add
 
+    def test_single_digits_do_not_count_as_lost_numbers(self):
+        ruler = "3 3 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1\n1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0"
+        text = f"{PAGE}\n{ruler}\nThe word holds 4096 entries of 512 bytes at offset 128."
+        md = f"{PAGE}\n\nThe word holds 4096 entries of 512 bytes at offset 128."     # the bit ruler of the diagram is gone
+        cmp = layer.compare(text, md)
+        self.assertEqual((cmp["number_recall"], cmp["verdict"]), (1.0, "intact"))
+        self.assertEqual(cmp["layer_numbers"], 4)                                    # 2112, 4096, 512, 128
+        self.assertEqual(len(layer.missing_lines(text, md)), 2)                      # but a line of digits is still put back
+        lost = layer.compare(text, md.replace("4096", "").replace("512", ""))
+        self.assertEqual((lost["number_recall"], lost["verdict"]), (0.5, "lost text"))   # a figure that is gone still counts
+
     def test_a_repeated_value_counts_as_missing_when_the_result_has_fewer(self):
         text = "Value 0\nValue 0\nValue 0\nValue 0"
         self.assertEqual(len(layer.missing_lines(text, "Value 0 Value 0")), 2)
@@ -131,6 +142,17 @@ class RoutedLayerTests(TempHome):
         self.assertIn(layer.FILL_MARKER, text)
         self.assertIn("extension four hundred", text)                                # page 3's own words are in the result
         self.assertTrue(all("text layer" in r["note"] for r in recs))
+
+    def test_a_page_with_every_line_there_is_not_flagged_for_a_few_scattered_words(self):
+        def thinned(t):                    # every sixteenth word gone: no line is missing, about 94 % of the words are there
+            return "\n".join(" ".join(w for i, w in enumerate(line.split()) if i % 16 != 7) for line in t.split("\n"))
+        res, text = self.convert(FakeReader(bad={n: thinned(t) for n, t in enumerate(self.layers, 1)}), "fill")
+        for r in res["records"]:
+            self.assertLess(r["layer"]["word_recall"], layer.INTACT_WORDS, r["layer"])
+            self.assertGreaterEqual(r["layer"]["word_recall"], layer.LOST)
+            self.assertEqual((r["layer"]["verdict"], r["outcome"]), ("intact", "pass"), r)
+            self.assertNotIn("added_lines", r["layer"])
+        self.assertNotIn(layer.FILL_MARKER, text)
 
     def test_report_records_and_changes_nothing_off_does_not_look(self):
         res, text = self.convert(FakeReader(bad=self.half), "report")

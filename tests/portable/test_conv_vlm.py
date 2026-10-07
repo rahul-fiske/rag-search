@@ -763,12 +763,6 @@ class VlmInterfaceTests(VlmBase):
         st, _, _, _ = ro.req("POST", "/api/models/reader", {"model": "mlx-community/PaddleOCR-VL-1.5-8bit"})
         self.assertIn(st, (403, 405))
 
-    def test_the_vlm_setting_is_a_validated_tunable(self):
-        from rag_search import spec
-
-        t = [x for x in spec.TUNABLES if x.key == "vlm"][0]
-        self.assertEqual((t.section, t.env, tuple(t.choices)), ("indexer", "RAG_SEARCH_VLM", ("auto", "off")))
-
     def test_live_view_counts_tokens(self):
         from rag_search.core.conversion import runview
 

@@ -195,12 +195,21 @@ document found at a new path (a location registered again where the folder now i
 Merging concatenates stored embeddings; nothing is re-embedded.
 A document that **cannot** be indexed for a reason of its own gets the same treatment: `outcome.json` in its
 index folder records the source SHA-256, the conversion settings (`convert_profile`) and the reason, and the
-next run reports that reason again (same status, "not tried again") without converting -- only the checksum
-is computed. Remembered: a password-protected or encrypted PDF, and "no text" when every reader had its turn.
-Never remembered: anything that may pass by itself (a cloud file that could not be fetched, a timeout, a
-crash, a "no text" where the document reader was not used). A changed file, a changed conversion setting,
-`--force-md` ("re-convert to Markdown") or a rebuild tries again; success or a deleted source removes the
-record. The run summary counts them as `not_retried`. Unsupported formats never reach this step: they are
+next update run does not convert it -- only the checksum is computed. Remembered: a password-protected or
+encrypted PDF, a PDF whose bytes cannot be opened at all (`damaged_pdf_reason`; a copy that syncs completely later
+has another checksum), and "no text" when every reader had its turn. Never remembered: anything that may pass by
+itself (a cloud file that could not be fetched, a timeout, a crash, a "no text" where the document reader was not
+used). A changed file, a changed conversion setting, `--force-md` ("re-convert to Markdown") or a complete run
+(`index all`, `--rebuild`) tries again; success or a deleted source removes the record.
+**How a remembered document is reported (0.9.28).** The run that finds the failure reports it in `errors` /
+`no_text`. An update run after that lists it under `known` (document status `known`, "not tried again", with the
+reason and what it was), **outside** `errors`, so the run ends `succeeded` when nothing new failed; until 0.9.27 it
+was put into `errors` again and every update run of a folder with one protected PDF ended `partial`. A file left
+out because another file has its document name (`a.pdf` next to `a.jpg`) is handled the same way: the names a run
+reported are kept in `left_out.json` in the workspace, an update run lists them as `known`, a complete run reports
+them again, and a renamed or deleted file drops out. `not_retried` in the summary is the number of `known`
+documents. In the dashboard's Documents list the filter **Skipped** shows everything a run did not convert, each
+with its reason: unchanged, not tried again, unsupported format. Unsupported formats never reach this step: they are
 recognised by extension when the folder is listed and are not opened at all. A document whose source was deleted
 loses its Markdown and index (`prune_orphans`, see 5.1) -- but only when the run read its whole
 collection and the collection's folder could be read; an unreachable folder changes nothing.
@@ -346,7 +355,7 @@ Settings, Architecture and Playground tabs and `rag-search playground settings` 
 │       converter kept per process, threads shared, RAG_SEARCH_DOC_TIMEOUT per docling call;    │
 │       every reader call is announced (`step` event) and every page reported when it is done;  │
 │       <!-- page N --> marks                                                                   │
-│       (formats without pages become page 1; .md/.txt are copied as they are;                  │
+│       (formats without pages become page 1; .md/.txt are read as text, whatever encoding;     │
 │        an .md is reused when its .md.sha256 sidecar has the same source SHA + settings)       │
 │       no text at all (a photo, a blank page) -> "skipped: no text", not a failure;            │
 │       a password-protected / encrypted PDF fails, with that reason in the message             │
@@ -401,7 +410,9 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   pictures), `raster` / `unknown` pages (scans, garbled text layers, unprofiled pages) to the **document
   VLM** (5.1.3; branch `raster`) or, when it is off, not installed, short of memory or fails on the page,
   to docling with full-page OCR (branch `fallback`, the reason is in the page's `note`), blank pages (no
-  text, no ink) are not read at all. docling reads pages in runs of consecutive
+  text, almost nothing darker than the ground **and almost nothing lighter**: since 0.9.28 a slide, a screenshot in
+  dark mode or a photograph with light writing on a dark ground is no longer taken for a blank page) are not read
+  at all. docling reads pages in runs of consecutive
   pages of one kind via its `page_range` (at most 20 pages per call); the document reader reads **one page per
   call**, so each of its pages is stored, gated and reported the moment it is read. The OCR setting only decides
   whether OCR is on or off. Image files are read page by page by the document VLM (5.1.3); Office/HTML
@@ -438,6 +449,13 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   (`text_ok`, `page_text_ok`): such a layer proves nothing and the page belongs to an image reader.
   `RAG_SEARCH_LAYER_FILL`: `fill` (default), `report` (compare and record `would_add_lines`, change nothing, gate as
   before) or `off`. Measured on the first full run (16,842 pages): 16 % had lost text, 2,212 of those had passed the gate.
+  Two rules since 0.9.28, from the full run of 0.9.27 where 1,021 digital pages were marked `low` by this check, 808
+  of them in one collection of specifications: numbers of **one digit do not count** in the number recall (they
+  were the bit rulers over register diagrams, list markers and footnote signs; words count from two letters on for
+  the same reason; a missing line of digits is still put back), and a page of which **no line is missing** and at
+  least 90 % of the words and numbers are there is `intact` (the rule a page already got after a fill). Evaluated
+  again on that run's pages: 621 of the 1,021 are no longer marked; the 400 that stay miss a number of two digits
+  or more or more than a tenth of their words.
 * **The four lanes of 3.2** (`routed.py`, `router.py`, `residue.py`, `scanfacts.py`, `tesseract.py`; 0.9.24). Every
   page that is read goes down exactly one lane, chosen once per page by the router and recorded in the page's `route`
   (`runway`: the lane chosen, `reasons`, `final`: the lane whose text the page ended with, `engine`, and
@@ -1137,6 +1155,21 @@ below reads this one list instead of re-describing or re-validating the same kno
   default → `config.json` → environment variable, who reads each section) stays in `/api/architecture`; the
   Architecture tab no longer shows it as a card since 0.9.27 (the Settings tab shows every value and its source).
 
+**What a value may be (0.9.28).** `spec.LIMITS` gives every whole-number tunable a range (a chunk of 32 to 8,192
+tokens, a stall limit of one minute to seven days, a batch of at most 1,024 ...); `validate_tunable` refuses a value
+outside it, and `spec.check_chunking` refuses an overlap of more than half a chunk, checked against the default of
+whichever of the two is not given (the chunker clamps to the same half, so a value that reaches it another way still
+makes progress). A `config.json` edited by hand is read through `config._sane`: a value of the wrong kind (text where
+a number belongs, a negative number, a section that is not an object) is left out, the default is used, and
+`load_config` returns one message that names each of them; a daemon no longer fails to start on such a file. Keys
+the program does not know are kept as they are. `update_config` holds the file lock while it reads and writes.
+`tests/portable/test_tunables.py` walks the registry: every tunable takes its sentinel and its good values and
+refuses the bad ones, reaches the environment of the process that reads it, loses to a variable that is already
+set, and is shown with the right source; every `RAG_SEARCH_*` name in the code is in `README.md`; and a launchd
+service keeps every variable a tunable or a stage reads (`service.PASS_ENV` is derived from the registry; until
+0.9.27 it was a list written by hand that lacked the reader, repair, Tesseract, lane and stall variables, so those
+were lost when the daemons ran as services).
+
 "When does a change take effect" is one of three tiers (`spec.IMMEDIATE`/`NEXT_RUN`/`RESTART`),
 shown as a pill next to each tunable and next to each group on the Settings tab:
 
@@ -1154,7 +1187,7 @@ shown as a pill next to each tunable and next to each group on the Settings tab:
 | indexer daemon stopped by a signal or `daemon stop` | the reason is logged and stored on the run (`interrupted`); the next start cleans up |
 | indexer daemon crashes mid-run | worker keeps running until the next daemon start, which kills it and marks the run `interrupted`; rerun is cheap |
 | worker killed by a signal (e.g. out of memory) | run `failed`, error names the signal (`SIGKILL`) |
-| a document that cannot be indexed and has not changed (password-protected PDF, no text at all) | reported with its reason every run, converted only once (`outcome.json`, see Freshness) |
+| a document that cannot be indexed and has not changed (password-protected or damaged PDF, no text at all, the name of another file) | an error of the run that finds it; update runs after that list it as "not tried again" and can end `succeeded`; a complete run tries it again (`outcome.json`, `left_out.json`, see Freshness) |
 | one document too slow (`RAG_SEARCH_DOC_TIMEOUT`) | that document is an error, the run continues (`partial`), retried next run. The limit is docling's, per call: a whole document, or one run of up to 20 pages of a routed PDF; the document reader has its own limit per page (`RAG_SEARCH_VLM_PAGE_TIMEOUT`) |
 | a conversion process hangs (a call into native code that never returns: an Apple Vision request, a render of a file a cloud app never delivers) | **stall watch** (`core/stallwatch.py`, 0.9.25): every conversion process says what it does in the event log (`work`, `stage`, `step`, `page`); one with a document open that writes nothing for `indexer.stall_timeout` (default 1 hour, never less than the document timeout plus 15 minutes; `RAG_SEARCH_STALL_TIMEOUT=0` = off) is killed, its document is an error ("stalled: no progress for 60 min on page 12 (document reader) ...", retried next run, pages already read are in the page cache) and the run goes on. Time is counted in observed poll intervals, so a laptop that slept has not stalled. With `jobs=1` (and in the Playground) documents are converted in the run's own process, which can only be ended: the run fails with that message. The indexer daemon is the second line: a run whose event log does not grow at all for twice the limit is stopped and marked `failed` |
 | a conversion process ends abruptly (killed by the system for memory, a crash in native code, stopped by the stall watch) | Python marks the whole pool broken and fails every waiting document; `indexer._convert_in_pool` keeps the finished documents, puts the rest in a **new pool**, and leaves out only a document that was open in a process that died twice (`STRIKES`), named as the likely cause; at most 8 new pools per run. Before 0.9.25 every document still waiting was reported "worker failed" |

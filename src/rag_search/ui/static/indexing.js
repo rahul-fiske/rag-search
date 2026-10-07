@@ -13,9 +13,11 @@
   const EMPTY_DOCS = { total: 0, matched: 0, by_status: {}, by_collection: {}, items: [] };
   const DOC_STATUS_FILTERS = [
     ['', 'All'], ['indexed', 'Indexed'], ['converted', 'Converted'],
-    ['skipped', 'Unchanged'], ['no_text', 'No text'], ['error', 'Failed'],
-    ['unsupported', 'Skipped — unsupported format'],
+    ['skipped_all', 'Skipped'], ['no_text', 'No text'], ['error', 'Failed'],
   ];
+  // "Skipped" is everything the run did not convert; each row says which: unchanged since the last run, not tried
+  // again (it could not be indexed before and has not changed), or a format that is not indexed.
+  const SKIPPED_HELP = 'Everything this run did not convert: files unchanged since the last run, files that could not be indexed before and have not changed (not tried again), and files in a format that is not indexed. Each row says which.';
   // Filter/UI state persists across re-renders (the view object itself is a singleton).
   let docFilter = { status: '', collection: '', q: '', branch: '', outcome: '' };
   let estimate = { busy: false, data: null, error: '' };
@@ -117,8 +119,19 @@
       h('summary', { style: { cursor: 'pointer' } }, h('b', null, `${num(sum.unsupported_count)} file(s) skipped — format not supported`),
         h('span', { class: 'small muted' }, exts.length ? '  ' + exts.slice(0, 6).map(([k, n]) => `${k} ×${n}`).join(', ') + (exts.length > 6 ? ', …' : '') + (sum.unsupported_count > listed.length ? ` (of the first ${listed.length} listed)` : '') : '')),
       h('p', { class: 'small', style: { margin: '6px 0' } }, 'Counted, never changed or deleted. Accepted formats are listed under Start. ',
-        h('a', { href: '#/indexing', on: { click: e => { e.preventDefault(); jumpToStatus('unsupported'); } } }, 'Show all of them in the Documents list below')),
+        h('a', { href: '#/indexing', on: { click: e => { e.preventDefault(); jumpToStatus('skipped_all'); } } }, 'Show all of them in the Documents list below')),
       h('ul', { class: 'tight', style: { maxHeight: '180px', overflow: 'auto' } }, listed.map(e => h('li', null, h('span', { class: 'mono' }, e.src || ''), ' (', e.extension || 'no extension', ')'))));
+  }
+
+  // Files that could not be indexed before and have not changed: not this run's failures, so a quiet, collapsed note.
+  function knownNotice(sum) {
+    const listed = sum.known || [];
+    return h('details', { class: 'notice', style: { marginTop: '12px' } },
+      h('summary', { style: { cursor: 'pointer' } }, h('b', null, `${num(sum.known_count)} file(s) not tried again`),
+        h('span', { class: 'small muted' }, '  they could not be indexed before (protected, damaged, without text, or the name of another file) and are unchanged')),
+      h('p', { class: 'small', style: { margin: '6px 0' } }, 'A changed file is tried again by itself; a complete run (rebuild) tries all of them. ',
+        h('a', { href: '#/indexing', on: { click: e => { e.preventDefault(); jumpToStatus('skipped_all'); } } }, 'Show them in the Documents list below')),
+      h('ul', { class: 'tight', style: { maxHeight: '180px', overflow: 'auto' } }, listed.map(e => h('li', null, h('span', { class: 'mono' }, e.src || ''), e.message ? ': ' + e.message : ''))));
   }
 
   function runCard() {
@@ -150,6 +163,7 @@
       job.error ? h('div', { class: 'notice bad', style: { marginTop: '12px' } }, job.error) : null,
       sum && sum.error_count ? failedNotice(sum) : null,
       sum && sum.unsupported_count ? unsupportedNotice(sum) : null,
+      sum && sum.known_count ? knownNotice(sum) : null,
       job.publish ? h('p', { class: 'small muted', style: { marginBottom: 0 } }, 'Published: ' + (job.publish.generation ? `generation ${job.publish.generation}` : (job.publish.changed === false ? 'nothing changed' : JSON.stringify(job.publish)))) : null);
   }
 
@@ -209,8 +223,8 @@
       ['convert', 'chunk', 'embed'].map(k => h('i', { class: k, title: `${PL.label(k)} ${dur(d[k + '_s'])}`, style: { width: (100 * (d[k + '_s'] || 0) / t) + '%' } })))) : null;
     const conv = d.conversion;
     return h('tr', { class: conv && conv.trace ? 'clickable' : '', title: conv && conv.trace ? 'Click for the page-by-page record' : '', on: conv && conv.trace ? { click: () => CV.openSummary(conv) } : {} },
-      h('td', null, d.status === 'indexed' ? chip('indexed', 'ok') : d.status === 'converted' ? chip('converted', 'accent') : d.status === 'skipped' ? chip('unchanged') : d.status === 'no_text' ? chip('skipped · no text', 'warn') : d.status === 'unsupported' ? chip('skipped · unsupported format', 'warn') : chip('failed', 'bad')),
-      h('td', null, h('span', { class: 'muted' }, d.collection + '/'), d.path || d.source, d.status === 'error' && d.message ? h('div', { class: 'small', style: { color: 'var(--bad)' } }, d.message) : d.status === 'no_text' ? h('div', { class: 'small muted' }, d.message || 'no text to index') : d.status === 'unsupported' ? h('div', { class: 'small muted' }, 'extension: ' + (d.extension || '(none)')) : null),
+      h('td', null, d.status === 'indexed' ? chip('indexed', 'ok') : d.status === 'converted' ? chip('converted', 'accent') : d.status === 'skipped' ? chip('skipped · unchanged') : d.status === 'no_text' ? chip('skipped · no text', 'warn') : d.status === 'unsupported' ? chip('skipped · unsupported format', 'warn') : d.status === 'known' ? h('span', { class: 'chip', title: 'It could not be indexed in an earlier run and neither the file nor the conversion settings have changed. A complete run (rebuild) tries it again.' }, 'skipped · not tried again') : chip('failed', 'bad')),
+      h('td', null, h('span', { class: 'muted' }, d.collection + '/'), d.path || d.source, d.status === 'error' && d.message ? h('div', { class: 'small', style: { color: 'var(--bad)' } }, d.message) : d.status === 'no_text' ? h('div', { class: 'small muted' }, d.message || 'no text to index') : d.status === 'unsupported' ? h('div', { class: 'small muted' }, 'extension: ' + (d.extension || '(none)')) : d.status === 'known' ? h('div', { class: 'small muted' }, d.message || '') : null),
       h('td', { style: { minWidth: '120px' } }, conv && conv.pages ? h('div', null, CV.strip(conv), h('div', { class: 'small muted' }, `${num(conv.pages)} p.` + (conv.outcomes && (conv.outcomes.low || conv.outcomes.error) ? ' · ' + [conv.outcomes.low ? conv.outcomes.low + ' low' : '', conv.outcomes.error ? conv.outcomes.error + ' error' : ''].filter(Boolean).join(', ') : ''))) : ''),
       h('td', { class: 'num' }, d.chunks !== undefined ? num(d.chunks) : ''),
       h('td', { style: { minWidth: '160px' } }, seg, d.status === 'indexed' ? h('div', { class: 'small muted' }, `${PL.label('convert')} ${dur(d.convert_s)} · ${PL.label('chunk')} ${dur(d.chunk_s)} · ${PL.label('embed')} ${dur(d.embed_s)}`, conv && CV.costText(conv.cost) ? ' · ' + CV.costText(conv.cost) : '') : d.status === 'converted' ? h('div', { class: 'small muted' }, `${PL.label('convert')} ${dur(d.convert_s)} · ${PL.label('chunk')} ${dur(d.chunk_s)} · waiting for ${PL.label('embed')}`) : null),
@@ -276,11 +290,12 @@
       ? `${num(docs.matched)} of ${num(docs.total)} match this filter` + (shown < docs.matched ? ` (showing ${num(shown)})` : '')
       : (docs.total > shown ? `latest ${shown} of ${docs.total}` : `${num(docs.total)} handled`);
 
-    const byStatus = docs.by_status || {};
+    // the counts follow the search box and the other filters, so a number never stands above an empty list
+    const byStatus = docs.by_status_filtered || docs.by_status || {};
     fill(refs.docStatusRow, DOC_STATUS_FILTERS.map(([key, label]) => {
-      const count = key === '' ? docs.total : (byStatus[key] || 0);
+      const count = byStatus[key] !== undefined ? byStatus[key] : (key === '' ? docs.total : 0);
       return h('button', {
-        type: 'button', class: docFilter.status === key ? 'on' : '',
+        type: 'button', class: docFilter.status === key ? 'on' : '', title: key === 'skipped_all' ? SKIPPED_HELP : '',
         on: { click: () => setFilter({ status: docFilter.status === key ? '' : key }) },
       }, `${label} (${num(count)})`);
     }));

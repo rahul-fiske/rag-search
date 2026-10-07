@@ -187,7 +187,7 @@ def _fmt_conv_totals(c: dict[str, Any] | None, indent: str = "  ") -> list[str]:
 
 
 def _fmt_doc(d: dict[str, Any]) -> str:
-    name = f"{d.get('collection', '')}/{d.get('source', '')}"
+    name = f"{d.get('collection', '')}/{d.get('path') or d.get('source', '')}"
     st = d.get("status")
     conv = _fmt_conv_doc(d.get("conversion"))
     conv = f"  [{conv}]" if conv else ""
@@ -204,6 +204,8 @@ def _fmt_doc(d: dict[str, Any]) -> str:
         return f"[skip] {name}  no text to index"
     if st == "unsupported":
         return f"[skip] {name}  unsupported format ({d.get('extension') or 'no extension'})"
+    if st == "known":
+        return f"[same] {name}  not tried again: {d.get('message', '')}"
     if st == "removed":
         return f"[gone] {name}  source deleted: its Markdown and index were removed"
     return f"[FAIL] {name}  after {_dur(d.get('total_s'))}: {d.get('message', '')}"
@@ -217,8 +219,9 @@ def _fmt_docs(docs: dict[str, Any] | None) -> str:
     empty = f", no text {by['no_text']}" if by.get("no_text") else ""
     unsup = f", unsupported format {by['unsupported']}" if by.get("unsupported") else ""
     gone = f", removed {by['removed']}" if by.get("removed") else ""
+    same = f", not tried again {by['known']}" if by.get("known") else ""
     head = (f"documents: {docs['total']} handled (indexed {by.get('indexed', 0)}{waiting}, unchanged "
-            f"{by.get('skipped', 0)}{empty}{unsup}{gone}, failed {by.get('error', 0)})")
+            f"{by.get('skipped', 0)}{empty}{unsup}{gone}{same}, failed {by.get('error', 0)})")
     if docs.get("by_branch"):
         head += "\n  documents with pages of each branch: " + _fmt_branches(docs["by_branch"])
     if docs.get("by_outcome"):
@@ -254,7 +257,8 @@ def _fmt_job(job: dict[str, Any] | None) -> str:
         if summ.get("unsupported_count"):
             line += f", unsupported format {summ['unsupported_count']}"
         if summ.get("not_retried"):
-            line += f"\n  {summ['not_retried']} of those are unchanged files that failed or had no text before: not tried again"
+            line += (f"\n  not tried again: {summ['not_retried']} unchanged file(s) that could not be indexed before "
+                     "(protected, damaged, without text, or the name of another file); a complete run tries them")
         if summ.get("removed_count"):
             line += f", removed {summ['removed_count']} (source deleted)"
         if summ.get("unreachable"):
@@ -855,6 +859,7 @@ def _cmd_index_foreground(a: argparse.Namespace) -> int:
               f"no text {len(summary.get('no_text', []))}, "
               f"errors {len(summary['errors'])}"
               + (f", unsupported format {len(uns)}" if uns else "")
+              + (f", not tried again {len(summary['known'])}" if summary.get("known") else "")
               + (f", removed {len(summary['removed'])} (source deleted)"
                  if summary.get("removed") else "")
               + f" in {summary['elapsed_s']}s")
@@ -1534,8 +1539,9 @@ def _cmd_playground_index(a: argparse.Namespace) -> int:
         _json(summary)
         return EXIT_FAIL if summary["errors"] else EXIT_OK
     print(f"indexed {summary['indexed']}, unchanged {summary['skipped_fresh']}, "
-          f"no text {len(summary.get('no_text', []))}, errors {len(summary['errors'])} "
-          f"in {summary['elapsed_s']}s")
+          f"no text {len(summary.get('no_text', []))}, errors {len(summary['errors'])}"
+          + (f", not tried again {len(summary['known'])}" if summary.get("known") else "")
+          + f" in {summary['elapsed_s']}s")
     for e in summary["errors"][:10]:
         print(f"  ! {e['src']}: {e['message']}")
     for c in summary.get("collections", []):
@@ -2392,7 +2398,7 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--docs", type=int, default=20,
                    help="show the timings of the last N documents of the run (default 20, 0 = none)")
     q.add_argument("--doc-status", default="", dest="doc_status",
-                   help="only documents with this status (e.g. error, indexed, skipped, no_text)")
+                   help="only documents with this status (error, indexed, no_text, skipped = unchanged, known = not tried again, unsupported, or skipped_all for the last three)")
     q.add_argument("--doc-collection", default="", dest="doc_collection",
                    help="only documents in this collection")
     q.add_argument("--doc-find", default="", dest="doc_q", help="only documents whose filename contains this text")

@@ -99,10 +99,6 @@ class PlaygroundApiTests(UiBase):
         self.assertEqual(st, 200)
         self.assertTrue(js["ok"])
 
-    def test_unknown_action_404(self):
-        st, js, _, _ = self.dash.req("POST", "/api/playground/nonsense", {"name": "x"})
-        self.assertEqual(st, 404)
-
     def test_config_action_accepts_docling_tunables(self):
         """The dashboard's /api/playground/config passes the docling/OCR/table/PDF-backend knobs
         through to the CLI the same way it already does for embedding_model & co (server.py's

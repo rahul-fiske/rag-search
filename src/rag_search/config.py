@@ -39,7 +39,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .paths import Paths, env_flag, write_json_atomic
+from .paths import Paths, env_flag, file_lock, write_json_atomic
 
 DEFAULTS: dict[str, Any] = {
     "search": {
@@ -101,11 +101,52 @@ def load_config(paths: Paths) -> tuple[dict[str, Any], str]:
             data = json.loads(f.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
                 raise ValueError("top level must be an object")
+            data, bad = _sane(data)
             cfg = _merge(cfg, data)
+            if bad:
+                err = f"{f}: ignored (the default is used): " + "; ".join(bad)
         except (OSError, ValueError) as exc:
             err = f"{f}: {exc} (using defaults)"
     _env_overrides(cfg)
     return cfg, err
+
+
+def _sane(data: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """*data* without the values that are of the wrong kind, and what was left out.  A daemon reads these values at
+    start and at every run: a section that is not an object, or a number written as a word, must cost that one
+    setting (with a message in `doctor` and on the dashboard), not the daemon.  Keys this version does not know are
+    kept as they are (a newer version's settings, a hand-written note)."""
+    out: dict[str, Any] = {}
+    bad: list[str] = []
+    for section, values in data.items():
+        known = DEFAULTS.get(section)
+        if known is None:
+            out[section] = values
+            continue
+        if not isinstance(values, dict):
+            bad.append(f"{section} is not an object")
+            continue
+        keep: dict[str, Any] = {}
+        for key, value in values.items():
+            default = known.get(key)
+            if key not in known or value is None:
+                if value is not None:
+                    keep[key] = value
+                continue
+            if isinstance(default, bool):
+                ok = isinstance(value, bool)
+            elif isinstance(default, int):               # whole numbers; a memory limit may be a fraction
+                ok = isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0 \
+                    and (key == "memory_limit_gb" or float(value).is_integer())
+                value = value if key == "memory_limit_gb" else (int(value) if ok else value)
+            else:
+                ok = isinstance(value, str)
+            if ok:
+                keep[key] = value
+            else:
+                bad.append(f"{section}.{key} = {value!r}")
+        out[section] = keep
+    return out, bad
 
 
 class ConfigStore:
@@ -145,14 +186,15 @@ def update_config(paths: Paths, section: str, values: dict[str, Any]) -> Path:
 
     A file that cannot be parsed is not overwritten (the error is raised instead)."""
     f = paths.config_file
-    data: dict[str, Any] = {}
-    if f.exists():
-        data = json.loads(f.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise ValueError(f"{f}: top level must be an object")
-    current = data.get(section)
-    data[section] = {**(current if isinstance(current, dict) else {}), **values}
-    write_json_atomic(f, data)
+    with file_lock(f):                       # the dashboard and the CLI may both be changing a setting
+        data: dict[str, Any] = {}
+        if f.exists():
+            data = json.loads(f.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError(f"{f}: top level must be an object")
+        current = data.get(section)
+        data[section] = {**(current if isinstance(current, dict) else {}), **values}
+        write_json_atomic(f, data)
     return f
 
 

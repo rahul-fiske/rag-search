@@ -249,7 +249,7 @@
 
   const statusClass = { done: 'ok', failed: 'bad', cancelled: 'warn', running: 'warn', queued: 'warn' };
   const docClass = { indexed: 'ok', skipped: '', converted: 'warn', no_text: 'warn', error: 'bad', working: 'warn', unsupported: '', removed: '' };
-  const docText = { indexed: 'indexed', skipped: 'unchanged', converted: 'converted, waiting to embed', no_text: 'no text', error: 'failed', working: 'working', unsupported: 'unsupported', removed: 'removed' };
+  const docText = { indexed: 'indexed', skipped: 'unchanged', converted: 'converted, waiting to embed', no_text: 'no text', error: 'failed', working: 'working', unsupported: 'unsupported', removed: 'removed', known: 'not tried again' };
 
   function stageChips(tl) {
     if (!tl) return h('span', { class: 'muted small' }, '…');

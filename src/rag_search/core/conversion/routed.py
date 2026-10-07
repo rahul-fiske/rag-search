@@ -101,6 +101,7 @@ def plan_pages(profile: dict[str, Any]) -> list[dict[str, Any]]:
                  "mode": "digital" if branch == "digital" else "scan", "blank": False}
         ink = prof.get("ink")
         if (branch in ("raster", "image") and isinstance(ink, (int, float)) and ink < profiler.BLANK_INK
+                and float(prof.get("light") or 0.0) < profiler.BLANK_INK       # light writing on a dark ground is not blank
                 and int(prof.get("chars") or 0) == 0):
             entry.update(blank=True, mode="", why=f"blank page (almost no ink: {round(100 * ink, 3)} %)")
         if is_image and branch == "unknown":
@@ -300,6 +301,9 @@ class _Converter:
         cmp = layer.compare(text, r["md"])
         if cmp["verdict"] != "intact" and cmp["layer_words"] >= layer.MIN_LAYER_TOKENS:
             lines = layer.missing_lines(text, r["md"])
+            if not lines and cmp["verdict"] != "intact" and (cmp["word_recall"] or 0) >= layer.LOST \
+                    and (cmp["number_recall"] is None or cmp["number_recall"] >= layer.LOST):
+                cmp["verdict"] = "intact"      # no line of the layer is missing: what differs is single words in lines that are there
             if self.layer_mode == "fill":
                 new_md, added = layer.fill(r["md"], lines)
                 if added:
@@ -932,7 +936,9 @@ def no_text_message(src: Path, results: dict[int, dict[str, Any]], reasons: str 
     """Why nothing could be read, in words that say what to do (shown in the Indexing tab)."""
     via = {r.get("via") or ("cache" if r.get("cache") == "hit" else "docling") for r in results.values()}
     msg = f"no text could be read from {src.name} ({len(results)} page(s))"
-    if "vlm" not in via:
+    if results and all(r.get("cache") == "none" and not r.get("via") for r in results.values()):
+        msg += "; every page is blank (almost no ink), so nothing was read"
+    elif "vlm" not in via:
         msg += ("; the document reader (a vision model) did not read any page, so docling's OCR was the only "
                 "reader and found nothing. For photographed or scanned pages install and select the reader "
                 "(Models tab: Document reader), then index again")

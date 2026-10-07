@@ -193,6 +193,33 @@ class DocumentListTests(unittest.TestCase):
             self.assertEqual(d["by_status"], {"indexed": 2, "error": 1})
             self.assertEqual(jobs.documents(paths, jid, limit=10, q="2024")["matched"], 1)
 
+    def test_skipped_is_one_filter_and_the_counts_on_the_filters_follow_the_search_box(self):
+        import tempfile
+        from pathlib import Path
+        from rag_search import jobs
+        from rag_search.paths import get_paths
+
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = get_paths(Path(tmp))
+            paths.jobs.mkdir(parents=True, exist_ok=True)
+            jid = "20260101-000000-abce"
+            rows = [("a/same.md", "skipped", {}), ("a/locked.pdf", "known", {"message": "protected", "was": "error"}),
+                    ("a/plan.json", "unsupported", {"extension": ".json"}), ("b/data.zip", "unsupported", {"extension": ".zip"}),
+                    ("a/new.md", "indexed", {}), ("a/broken.pdf", "error", {"message": "x"})]
+            lines = [ev(ts=n, event="doc", collection="c", source=p.split("/")[-1], path=p, status=st, **kw)
+                     for n, (p, st, kw) in enumerate(rows, 1)]
+            jobs.events_file(paths, jid).write_text("\n".join(lines) + "\n")
+            d = jobs.documents(paths, jid, limit=10, status="skipped_all")
+            self.assertEqual(sorted(i["status"] for i in d["items"]), ["known", "skipped", "unsupported", "unsupported"])
+            self.assertEqual((d["matched"], d["by_status_filtered"]["skipped_all"], d["by_status_filtered"][""]), (4, 4, 6))
+            d = jobs.documents(paths, jid, limit=10, status="skipped_all", q="plan")      # a word in the search box
+            self.assertEqual((d["matched"], [i["path"] for i in d["items"]]), (1, ["a/plan.json"]))
+            self.assertEqual(d["by_status_filtered"], {"unsupported": 1, "": 1, "skipped_all": 1})
+            self.assertEqual(d["by_status"]["unsupported"], 2)                             # the run's totals are not narrowed
+            d = jobs.documents(paths, jid, limit=10, status="unsupported", q="ppf")
+            self.assertEqual((d["matched"], d["by_status_filtered"]["skipped_all"]), (0, 0))   # no number above an empty list
+            self.assertEqual(jobs.documents(paths, jid, limit=10, status="known")["matched"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

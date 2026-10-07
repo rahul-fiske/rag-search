@@ -14,7 +14,24 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
 
-_SEP_RE = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$")
+_SEP_PATTERN = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$")
+_SEP_CHARS = frozenset("|-: \t")
+
+
+class _SepRow:
+    """``match(line)``: is *line* the separator row of a pipe table (``|---|:--:|``)?  A row of that kind holds only
+    bars, dashes, colons and blanks and is short; anything else is refused before the pattern runs, so a line of
+    thousands of blanks from a runaway reading cannot make it backtrack."""
+
+    @staticmethod
+    def match(line: str):
+        s = line.strip()
+        if not s or len(s) > 4000 or not _SEP_CHARS.issuperset(s):
+            return None
+        return _SEP_PATTERN.match(s)
+
+
+_SEP_RE = _SepRow()
 _NUM_STRIP = re.compile(r"[\s\u00a0\u202f]")
 _CURRENCY = "₹$€£¥"
 _NUMBER_RE = re.compile(r"^(\d+(\.\d+)?|\.\d+|\d{1,3}(,\d{3})+(\.\d+)?|\d{1,2}(,\d{2})+,\d{3}(\.\d+)?)$")

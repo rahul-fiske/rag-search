@@ -237,7 +237,11 @@ class SearchDaemon(DaemonBase):
         if action == "search":
             return self._search(req, rules, client)
         if action == "reload":
-            if not self.ready.wait(max(0.0, min(float(req.get("wait_s", 30)), 300.0))):
+            try:
+                wait = max(0.0, min(float(req.get("wait_s", 30)), 300.0))
+            except (TypeError, ValueError):
+                return protocol.error(protocol.BAD_REQUEST, "wait_s must be a number")
+            if not self.ready.wait(wait):
                 return protocol.error(protocol.WARMING_UP, "daemon is still starting")
             try:
                 return {"ok": True, **self.reload(prewarm=self.prewarm)}
@@ -266,14 +270,20 @@ class SearchDaemon(DaemonBase):
         if err:
             return err
         t0 = time.perf_counter()
-        res = grep_isolated(self.paths.live_markup(), str(req.get("pattern", "")), scope,
-                            int(req.get("context_lines", 2)), int(req.get("max_matches", 20)))
+        try:
+            ctx, most = int(req.get("context_lines", 2)), int(req.get("max_matches", 20))
+        except (TypeError, ValueError):
+            return protocol.error(protocol.BAD_REQUEST, "context_lines and max_matches must be whole numbers")
+        res = grep_isolated(self.paths.live_markup(), str(req.get("pattern", "")), scope, ctx, most)
         res.setdefault("timing", {})["server_ms"] = int((time.perf_counter() - t0) * 1000)
         return {"ok": True, "result": res}
 
     def _search(self, req: dict[str, Any], rules: policy.Rules, client: str) -> dict[str, Any]:
         t_req = time.perf_counter()
-        wait = max(0.0, min(float(req.get("wait_s", 30)), 300.0))
+        try:
+            wait = max(0.0, min(float(req.get("wait_s", 30)), 300.0))
+        except (TypeError, ValueError):
+            return protocol.error(protocol.BAD_REQUEST, "wait_s must be a number")
         if not self.ready.wait(wait):
             return protocol.error(protocol.WARMING_UP, "search engine is still loading its models",
                                   state=self.state,

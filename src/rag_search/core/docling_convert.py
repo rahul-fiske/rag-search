@@ -37,7 +37,6 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import shutil
 import sys
 import time
 import traceback
@@ -115,16 +114,16 @@ def convert_settings(ocr: bool | None = None, env: Any = None) -> dict:
         raise ValueError(f"RAG_SEARCH_OCR_ENGINE must be auto or one of {sorted(OCR_ENGINES)}, "
                          f"got {engine!r}")
     lang = [x.strip() for x in environ.get("RAG_SEARCH_OCR_LANG", "").split(",") if x.strip()]
-    table = environ.get("RAG_SEARCH_TABLE_MODE", "accurate").strip().lower()
+    table = environ.get("RAG_SEARCH_TABLE_MODE", "").strip().lower() or "accurate"
     if table not in ("accurate", "fast"):
         raise ValueError(f"RAG_SEARCH_TABLE_MODE must be accurate or fast, got {table!r}")
-    pipeline = environ.get("RAG_SEARCH_PIPELINE", "standard").strip().lower()
+    pipeline = environ.get("RAG_SEARCH_PIPELINE", "").strip().lower() or "standard"
     if pipeline not in ("standard", "vlm"):
         raise ValueError(f"RAG_SEARCH_PIPELINE must be standard or vlm, got {pipeline!r}")
     routing = environ.get("RAG_SEARCH_ROUTING", "pages").strip().lower() or "pages"
     if routing not in ROUTING_MODES:
         raise ValueError(f"RAG_SEARCH_ROUTING must be one of {list(ROUTING_MODES)}, got {routing!r}")
-    backend = environ.get("RAG_SEARCH_PDF_BACKEND", DEFAULT_PDF_BACKEND).strip().lower()
+    backend = environ.get("RAG_SEARCH_PDF_BACKEND", "").strip().lower() or DEFAULT_PDF_BACKEND
     backend = _PDF_BACKEND_ALIASES.get(backend, backend)
     if backend not in PDF_BACKENDS:
         raise ValueError(f"RAG_SEARCH_PDF_BACKEND must be one of {list(PDF_BACKENDS)}, got {backend!r}")
@@ -653,6 +652,20 @@ def protected_pdf_reason(src: Path) -> str:
     return ""
 
 
+def damaged_pdf_reason(src: Path) -> str:
+    """Why *src* (a PDF nothing was read from) cannot be opened at all, or "" when it opens: a file cut short
+    by a failed download or sync is not a scan, and the advice for scans does not help with it."""
+    try:
+        import pypdfium2 as pdfium
+
+        pdfium.PdfDocument(str(src)).close()
+    except ImportError:
+        return ""
+    except Exception as exc:  # noqa: BLE001
+        return f"the file cannot be opened as a PDF ({str(exc).strip()[:160]}): it is damaged or incomplete"
+    return ""
+
+
 # When a PDF cannot be read by the configured backend, the other one often can (a font or string
 # that one parser rejects, e.g. non-UTF-8 text in the file): try it once before giving up.
 _OTHER_BACKEND = {"pypdfium2": "docling-parse", "docling-parse": "pypdfium2", "default": "pypdfium2"}
@@ -747,6 +760,20 @@ def convert_range(src: Path, first: int, last: int, mode: str, ocr: bool | None 
             "seconds": round(time.perf_counter() - t0, 3), "ocr": cfg["ocr"]}
 
 
+def read_text_file(src: Path) -> str:
+    """The text of a ``.md`` / ``.txt`` source, whatever it is encoded in.  Most are UTF-8; a file saved by Windows
+    Notepad as "Unicode" is UTF-16 with a byte-order mark, and an old one is in a one-byte code page.  Copied as
+    bytes, those became unreadable text in the index.  The source is only read."""
+    raw = src.read_bytes()
+    for bom, enc in ((b"\xef\xbb\xbf", "utf-8-sig"), (b"\xff\xfe", "utf-16"), (b"\xfe\xff", "utf-16")):
+        if raw.startswith(bom):
+            return raw.decode(enc, errors="replace")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("cp1252", errors="replace")
+
+
 def convert_file(src: Path, out_md: Path, ocr: bool | None = None) -> dict:
     """Write Markdown for *src* to *out_md*.  Returns {"pages": int, "seconds": float}.
 
@@ -759,7 +786,7 @@ def convert_file(src: Path, out_md: Path, ocr: bool | None = None) -> dict:
     suffix = src.suffix.lower()
 
     if suffix in PASSTHROUGH:
-        shutil.copyfile(src, tmp)
+        tmp.write_text(read_text_file(src), encoding="utf-8")
         os.replace(tmp, out_md)
         return {"pages": 1, "seconds": round(time.perf_counter() - t0, 2)}
 
@@ -802,10 +829,11 @@ def convert_file(src: Path, out_md: Path, ocr: bool | None = None) -> dict:
             n_pages = max(n_pages, 1)
             page_texts = {1: whole}
     if not parts:
+        damaged = damaged_pdf_reason(src) if suffix == ".pdf" else ""
         hint = (" (scanned PDF? make sure RAG_SEARCH_OCR is not 'off'; the default, "
                 "RAG_SEARCH_OCR=force, reads every page as an image; for photographed pages install the "
                 "document reader, see the Models tab)") if suffix == ".pdf" else ""
-        raise NoTextError(f"no text extracted from {src.name}{hint}")
+        raise NoTextError(f"no text extracted from {src.name}{': ' + damaged if damaged else hint}")
 
     tmp.write_text("\n\n".join(parts) + "\n", encoding="utf-8")
     os.replace(tmp, out_md)

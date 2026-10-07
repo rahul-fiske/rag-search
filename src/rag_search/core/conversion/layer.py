@@ -43,6 +43,15 @@ def tokens(text: str) -> tuple[Counter, Counter]:
     return words, nums
 
 
+def _figures(nums: Counter) -> Counter:
+    """*nums* without the single digits.  A lone digit is a list marker, a footnote sign or one tick of the bit ruler
+    over a register diagram (``3 3 2 2 ...`` above ``1 0 9 8 ...``), which a converter drops or joins without losing
+    anything of the page; counted, they marked hundreds of complete specification pages as having lost numbers.  Words
+    are counted from two letters on for the same reason.  (``missing_lines`` still counts them: a line of digits that
+    is gone is still put back.)"""
+    return Counter({k: v for k, v in nums.items() if len(k) > 1})
+
+
 def recall(layer: Counter, out: Counter) -> float | None:
     """The share of *layer*'s tokens (with multiplicity) that *out* has; None when the layer has none."""
     total = sum(layer.values())
@@ -69,6 +78,7 @@ def compare(layer_text: str, md_text: str) -> dict[str, Any]:
 
     lw, ln = tokens(layer_text)
     ow, on = tokens(plain_text(md_text))
+    ln, on = _figures(ln), _figures(on)
     w, n = recall(lw, ow), recall(ln, on)
     return {"word_recall": None if w is None else round(w, 3), "number_recall": None if n is None else round(n, 3),
             "layer_words": sum(lw.values()), "layer_numbers": sum(ln.values()),

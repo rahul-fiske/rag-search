@@ -162,6 +162,8 @@ def _pieces(block: str, size: int) -> list[str]:
 
 def split_text(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
     """Greedy packing of blocks into chunks of ~chunk_size with block-level overlap."""
+    chunk_size = max(1, int(chunk_size))
+    chunk_overlap = max(0, min(int(chunk_overlap), chunk_size // 2))   # never more than half a chunk carried over
     pieces: list[str] = []
     for b in _blocks(text):
         pieces.extend(_pieces(b, chunk_size))

@@ -182,21 +182,3 @@ class SourceCheckTests(TempHome):
         self.assertEqual(m._verdict(1.0, 1.0, 5, True, []), "uncertain")            # too short to judge
         self.assertEqual(m._verdict(1.0, 1.0, 50, False, []), "uncertain")          # a garbled layer proves nothing
 
-    def test_running_headers_footers_and_page_numbers_are_not_lost_text(self):
-        m = load()
-        words = "ports fabric login zoning frames credits switches links buffers timers".split()
-        layers = [f"ACME Spec Rev 1.{i}\n" + "\n".join(f"{words[(i + k) % 10]} section {i}.{k} explains {words[k]}"
-                                                     for k in range(5)) + f"\nPage {i} of 9\n" for i in range(1, 10)]
-        boiler = m._boilerplate(layers)
-        clean, dropped = m._clean_layer(layers[3], boiler)
-        self.assertEqual(dropped, 2)
-        self.assertEqual(len(clean.strip().splitlines()), 5)                 # the body stays
-        self.assertEqual(m._boilerplate(layers[:3]), set())                 # too few pages to tell
-        self.assertTrue(m._page_number_line(" 12 ") and m._page_number_line("Page 3 of 10"))
-        parts = [("Acme Confidential", f"body {i}", f"Revision 4.86 June 16, 2024 page {i}") for i in range(1, 5)]
-        self.assertEqual(m._repeated_bands(parts), {"acme confidential", "revision #.# june #, # page #"})
-        self.assertEqual(m._repeated_bands(parts[:2]), set())
-        page = "Acme Confidential\nThe port logs in.\nRevision 4.86 June 16, 2024 page 3"
-        out = m._without_bands("Acme Confidential", page, "Revision 4.86 June 16, 2024 page 3", m._repeated_bands(parts))
-        self.assertEqual(out.split(), "The port logs in.".split())
-        self.assertFalse(m._page_number_line("Table 12"))

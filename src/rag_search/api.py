@@ -56,9 +56,13 @@ def search(paths: Paths, query: str, *, top_k: int | None = None,
         fields["rerank_pool"] = rerank_pool
     if rrf_k is not None:
         fields["rrf_k"] = rrf_k
+    try:
+        wanted = parse_collections(collections)
+    except ValueError as exc:
+        return protocol.error(protocol.BAD_REQUEST, str(exc))
     r = client_mod.request_sync(
         paths, "search", "search", client=_client(client), wait_s=wait_s, query=query,
-        collections=parse_collections(collections), origin=origin, **fields)
+        collections=wanted, origin=origin, **fields)
     return _with_round_trip(r, t0)
 
 
@@ -114,9 +118,13 @@ def grep(paths: Paths, pattern: str, *, collections: list[str] | str | None = No
          context_lines: int = 2, max_matches: int = 20,
          client: str | None = None, origin: str = "") -> dict[str, Any]:
     t0 = time.perf_counter()
+    try:
+        wanted = parse_collections(collections)
+    except ValueError as exc:
+        return protocol.error(protocol.BAD_REQUEST, str(exc))
     r = client_mod.request_sync(
         paths, "search", "grep", client=_client(client), autostart=False, wait_s=0,
-        request_timeout=60, pattern=pattern, collections=parse_collections(collections),
+        request_timeout=60, pattern=pattern, collections=wanted,
         context_lines=context_lines, max_matches=max_matches, origin=origin)
     if r.get("ok") or r.get("code") not in (protocol.UNAVAILABLE, protocol.WARMING_UP):
         return _with_round_trip(r, t0)

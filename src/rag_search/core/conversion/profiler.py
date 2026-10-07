@@ -41,13 +41,14 @@ def kind_of(src: Path) -> str:
 
 
 INK_SCALE = 0.5                      # the small render used for ink and the content hash (~36 dpi)
-BLANK_INK = 0.0003                   # less ink than this: a blank page
+BLANK_INK = 0.0003                   # less ink than this, and as little that is lighter than the ground: a blank page
 
 
 def ink_and_hash(im: Any) -> dict[str, Any]:
-    """``{"ink", "hash"}`` of a small greyscale PIL image: the share of pixels clearly darker than the
-    paper (the median grey minus 40 levels), and a hash of the pixels (the page-cache identity of a
-    page that has no text layer)."""
+    """``{"ink", "light", "hash"}`` of a small greyscale PIL image: the share of pixels clearly darker than the
+    paper (the median grey minus 40 levels), the share clearly lighter than it (light writing on a dark
+    ground: a slide, a screenshot in dark mode, a photograph at night; nothing on white paper), and a hash
+    of the pixels (the page-cache identity of a page that has no text layer)."""
     im = im.convert("L")
     hist = im.histogram()
     total = max(1, sum(hist))
@@ -59,7 +60,8 @@ def ink_and_hash(im: Any) -> dict[str, Any]:
             break
     cut = max(1, median - 40)
     dark = sum(hist[:cut])
-    return {"ink": round(dark / total, 5),
+    light = sum(hist[min(256, median + 41):])
+    return {"ink": round(dark / total, 5), "light": round(light / total, 5),
             "hash": "r" + hashlib.sha256(im.tobytes()).hexdigest()[:31]}
 
 

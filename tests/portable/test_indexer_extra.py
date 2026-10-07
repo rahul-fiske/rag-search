@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from pathlib import Path
 
 from tests.helpers import FakeEmbedder, TempHome
 from rag_search.core import indexer
@@ -185,10 +186,47 @@ class RememberedOutcomeTests(TempHome):
         s = self.run_index()                                    # nothing changed
         self.assertEqual(sorted(self.calls), ["flaky", "unread"])       # only what may pass next time
         self.assertEqual((s["indexed"], s["skipped_fresh"], len(s["errors"]), len(s["no_text"]), s["not_retried"]),
-                         (0, 1, 2, 2, 2))
-        locked = [e for e in s["errors"] if e["src"].endswith("locked.html")][0]["message"]
-        self.assertIn("password-protected", locked)             # still reported, with its reason
+                         (0, 1, 1, 1, 2))                       # the two remembered ones are not this run's failures
+        self.assertEqual(sorted((Path(e["src"]).stem, e["was"], e["reason"]) for e in s["known"]),
+                         [("empty", "no_text", "no_text"), ("locked", "error", "protected")])
+        locked = [e for e in s["known"] if e["src"].endswith("locked.html")][0]["message"]
+        self.assertIn("password-protected", locked)             # still listed, with its reason
         self.assertIn("not tried again", locked)
+
+    def test_an_update_run_after_the_failures_were_reported_is_clean_and_a_complete_run_tries_all(self):
+        del self.fail["flaky"], self.fail["unread"]             # only lasting failures are left
+        self.write_doc("c/fine.txt", "the same document name as fine.html")
+        events: list = []
+        first = self.run_index()
+        self.assertEqual((len(first["errors"]), len(first["no_text"]), len(first["known"])), (2, 1, 0))   # locked + the name
+        s = self.run_index(progress=events.append)              # an update: nothing new, nothing changed
+        self.assertEqual((s["errors"], s["no_text"], s["indexed"]), ([], [], 0))
+        self.assertEqual(sorted(e["reason"] for e in s["known"]), ["name", "no_text", "protected"])
+        self.assertEqual(self.calls, [])                        # no converter was started
+        docs = [e["doc"] for e in events if "doc" in e]
+        self.assertEqual(sorted(d["status"] for d in docs), ["known", "known", "known", "skipped", "skipped", "skipped"])
+        self.write_doc("c/new.html", "<html><body>a new document about switches</body></html>")
+        s = self.run_index()
+        self.assertEqual((s["indexed"], s["errors"], len(s["known"]), self.calls), (1, [], 3, ["new"]))
+        for kw in ({"rebuild": True}, {"force_md": True}, {"wipe": True}):
+            s = self.run_index(**kw)                            # a complete run tries every file and reports again
+            self.assertIn("locked", self.calls, kw)
+            self.assertIn("empty", self.calls, kw)
+            self.assertEqual((len(s["errors"]), len(s["no_text"]), s["known"]), (2, 1, []), kw)
+        (self.sdir / "c" / "fine.txt").unlink()                 # the name is free again: nothing is remembered about it
+        s = self.run_index()
+        self.assertEqual(sorted(e["reason"] for e in s["known"]), ["no_text", "protected"])
+        self.assertFalse((self.paths.workspace / indexer.LEFT_OUT_FILE).exists())
+
+    def test_a_pdf_that_cannot_be_opened_is_remembered_and_a_passing_error_is_not(self):
+        (self.sdir / "c" / "cut.pdf").write_bytes(b"%PDF-1.4\n" + bytes(range(256)) * 8)
+        self.fail["cut"] = RuntimeError("ConversionError: could not load document")
+        self.run_index()
+        self.assertEqual(indexer.read_json(self.outcome("cut"))["reason"], "damaged")
+        self.assertFalse(self.outcome("flaky").exists())
+        s = self.run_index()
+        self.assertNotIn("cut", self.calls)
+        self.assertIn("damaged", [e["reason"] for e in s["known"]])
 
     def test_a_changed_file_other_settings_or_a_forced_run_try_again(self):
         self.run_index()

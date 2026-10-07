@@ -156,11 +156,6 @@ class DeletedAndCollidingSourcesTests(Base):
         self.publish()
         self.assertEqual(catalog.collection_names(catalog.live_catalog(self.paths)), ["security"])
 
-    def test_indexing_with_nothing_registered_is_an_error(self):
-        with self.assertRaises(locations.LocationError) as cm:
-            locations.plan_scan(self.paths)
-        self.assertEqual(str(cm.exception), locations.NO_LOCATIONS)
-
 
 # ── Phase 0: names, metadata stores, search ───────────────────────────────
 

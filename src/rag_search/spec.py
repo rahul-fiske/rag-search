@@ -450,6 +450,18 @@ TUNABLES_BY_SECTION: dict[str, tuple[Tunable, ...]] = {
 }
 
 
+# The range a whole-number tunable may be set to (0 always means "the built-in default").  Outside it the value is
+# refused where it is typed -- the CLI, the Settings tab, a Playground experiment -- instead of failing a run or a
+# search later: a chunk of 3 tokens, a reranker window shorter than its own prompt, a batch that cannot fit.
+LIMITS: dict[str, tuple[int, int]] = {
+    "retrieval_pool": (1, RETRIEVAL_POOL_MAX), "rerank_pool": (1, RERANK_POOL_MAX), "rrf_k": (RRF_K_MIN, RRF_K_MAX),
+    "top_k": (1, MAX_TOP_K),
+    "chunk_size": (32, 8192), "chunk_overlap": (1, 4096),
+    "stall_timeout": (60, 7 * 86400), "doc_timeout": (30, 7 * 86400), "docling_batch": (1, 64),
+    "embed_batch": (1, 1024), "max_seq": (32, 32768), "rerank_batch": (1, 256), "rerank_max_len": (64, 32768),
+}
+
+
 def validate_tunable(t: Tunable, value: Any) -> Any:
     """Normalise/validate one raw value (typically CLI-argument or JSON-body text) against *t*.
 
@@ -465,6 +477,9 @@ def validate_tunable(t: Tunable, value: Any) -> Any:
             raise ValueError(f"{t.label} must be a whole number") from None
         if n < 0:
             raise ValueError(f"{t.label} must be zero or a positive integer")
+        lo, hi = LIMITS.get(t.key, (0, 0))
+        if n and hi and not lo <= n <= hi:
+            raise ValueError(f"{t.label} must be between {lo} and {hi} (or 0 for the built-in default), got {n}")
         return n
     if t.kind == "choice":
         v = str(value).strip().lower()
@@ -491,4 +506,13 @@ def validate_section(section: str, values: dict[str, Any]) -> dict[str, Any]:
         if t is None:
             raise ValueError(f"unknown {section} setting: {key!r}")
         out[key] = validate_tunable(t, value)
+    if section == "indexer" and (out.get("chunk_size") or out.get("chunk_overlap")):
+        check_chunking(out.get("chunk_size") or DEFAULT_CHUNK_SIZE, out.get("chunk_overlap") or DEFAULT_CHUNK_OVERLAP)
     return out
+
+
+def check_chunking(size: int, overlap: int) -> None:
+    """A chunk's overlap must leave room for new text: at most half the chunk.  (Checked with the values given
+    together; the chunker itself also never carries more than half a chunk over.)"""
+    if overlap * 2 > size:
+        raise ValueError(f"Chunk overlap ({overlap}) must be at most half the chunk size ({size})")

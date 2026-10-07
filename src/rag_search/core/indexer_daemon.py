@@ -112,7 +112,7 @@ def _log_event(jid: str, ev: dict[str, Any]) -> None:
         elif st == "write":
             log.info("%s  %s %s", f, tag, ev.get("part", ""))
     elif kind == "doc":
-        f = f"{ev.get('collection', '')}/{ev.get('source', '?')}".lstrip("/")
+        f = f"{ev.get('collection', '')}/{ev.get('path') or ev.get('source', '?')}".lstrip("/")   # with its folder, as the stage lines
         if ev.get("status") == "indexed":
             log.info("%s  INDEXED  %s chunks, total %s (convert %s, embed %s)", f, ev.get("chunks", "?"),
                      _secs(ev.get("total_s")), _secs(ev.get("convert_s")), _secs(ev.get("embed_s")))

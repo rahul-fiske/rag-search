@@ -371,6 +371,25 @@ class SearchDebugParamsTests(DaemonCase):
         r = self.call("search", query="x", retrieval_pool="lots")
         self.assertEqual((r["ok"], r["code"]), (False, protocol.BAD_REQUEST))
 
+    def test_a_request_field_of_the_wrong_kind_is_a_bad_request_not_a_crash(self):
+        self.build(security__auth=AUTH)
+        d = self.start_daemon()
+        self.wait_ready(d)
+        for action, fields in (("search", {"query": "x", "wait_s": "soon"}), ("reload", {"wait_s": [1]}),
+                               ("grep", {"pattern": "x", "context_lines": "two"}),
+                               ("grep", {"pattern": "x", "max_matches": None})):
+            r = self.call(action, **fields)
+            self.assertEqual((r["ok"], r["code"]), (False, protocol.BAD_REQUEST), (action, fields))
+        self.assertTrue(self.call("search", query="token")["ok"])                     # and it still answers
+
+    def test_a_collection_name_that_cannot_exist_is_a_bad_request_from_the_api(self):
+        from rag_search import api
+
+        for call in (lambda: api.search(self.paths, "x", collections="../etc"),
+                     lambda: api.grep(self.paths, "x", collections="a b")):
+            r = call()
+            self.assertEqual((r["ok"], r["code"]), (False, protocol.BAD_REQUEST))
+
     def test_overrides_are_clamped_even_from_a_client_request(self):
         from rag_search import spec
         self.build(security__auth=AUTH)

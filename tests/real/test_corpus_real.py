@@ -117,12 +117,15 @@ class CorpusRunTests(RealCase):
         self.assertEqual([(x["doc"], x["page"]) for x in m], [("many-pages", "22")])
 
     def test_a_second_run_converts_nothing_and_does_not_retry_lasting_failures(self):
-        again = self.cli_json("index", "foreground", ok_codes=(1,))["summary"]
+        again = self.cli_json("index", "foreground", ok_codes=(0, 1))["summary"]
         self.assertEqual(again["indexed"], 0)
         self.assertEqual(again["skipped_fresh"], self.summary["indexed"])
-        self.assertGreaterEqual(again["not_retried"], 1)                  # the password-protected PDF
-        failing = {Path(e["src"]).relative_to(self.sdir).as_posix() for e in again["errors"]}
-        self.assertTrue({"pdf/password.pdf", "pdf/damaged.pdf"} <= failing)    # still reported every run
+        rel = lambda rows: {Path(e["src"]).relative_to(self.sdir).as_posix() for e in rows}  # noqa: E731
+        lasting = {"pdf/password.pdf", "pdf/damaged.pdf"}                 # protected; bytes that are not a PDF
+        self.assertTrue(lasting <= rel(again["known"]), again["known"])   # listed as not tried again ...
+        self.assertFalse(lasting & rel(again["errors"]))                  # ... and not as errors of this run
+        self.assertEqual(again["not_retried"], len(again["known"]))
+        # (an .heic photo stays an error here: no reader for it in this tier, which a later run may have)
 
     def test_the_cli_views_of_a_real_run(self):
         out = self.cli("trace", "pdf/mixed").stdout

@@ -198,9 +198,13 @@ class ConvertFileTests(TempHome):
     def test_pages_of_placeholders_only_are_not_text(self):
         doc = FakeDoc([1, 2])
         doc.markdown = {1: "<!-- image -->\n\nOther", 2: "<!-- image -->"}
-        with self.assertRaises(dc.NoTextError) as cm:
-            self.convert(doc)
+        with mock.patch.object(dc, "damaged_pdf_reason", return_value=""), self.assertRaises(dc.NoTextError) as cm:
+            self.convert(doc)                                        # a PDF that opens: probably a scan
         self.assertIn("document reader", str(cm.exception))
+        with self.assertRaises(dc.NoTextError) as cm:
+            self.convert(doc)                                        # the stand-in file is not a PDF at all
+        self.assertIn("damaged or incomplete", str(cm.exception))
+        self.assertNotIn("scanned PDF", str(cm.exception))
 
     def test_the_command_writes_the_facts_file_and_says_no_text_by_its_exit_code(self):
         src = self.tmp / "a.pdf"

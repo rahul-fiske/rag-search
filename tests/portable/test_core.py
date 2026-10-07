@@ -404,13 +404,6 @@ class SmartOcrTests(unittest.TestCase):
         self.dc._apply_batch_sizes(o, 0)  # 0 = leave docling's own values
         self.assertEqual(o.layout_batch_size, 8)
 
-    def test_bad_numbers_are_rejected(self):
-        for var, val in (("RAG_SEARCH_THREADS", "many"), ("RAG_SEARCH_DOC_TIMEOUT", "-1")):
-            os.environ[var] = val
-            with self.assertRaises(ValueError):
-                self.dc.convert_settings()
-            del os.environ[var]
-
     def test_page_text_judgement(self):
         ok = self.dc._page_text_ok
         self.assertTrue(ok("• To enable “multi-factor” authentication — open Settings and select Security. " * 3))

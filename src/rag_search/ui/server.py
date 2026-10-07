@@ -886,6 +886,13 @@ class UiServer(ThreadingHTTPServer):
         self.app = app
         super().__init__(addr, Handler)
 
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        """A browser that closes a tab or reloads ends its connection in the middle of a request: that is not
+        an error of the dashboard and does not belong in its log as a traceback."""
+        if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
     def shutdown_all(self) -> None:
         self.app.live.stop()
         self.shutdown()

@@ -48,6 +48,9 @@ def all_records(paths: Paths) -> list[dict[str, Any]]:
     return recs
 
 
+SKIPPED = ("skipped", "known", "unsupported")      # what a run did not convert: unchanged, not tried again, unsupported
+
+
 def documents(paths: Paths, job_id: str, limit: int = 50, *, status: str = "",
              collection: str = "", q: str = "", hidden: "set[str] | None" = None,
              branch: str = "", outcome: str = "") -> dict[str, Any]:
@@ -68,12 +71,15 @@ def documents(paths: Paths, job_id: str, limit: int = 50, *, status: str = "",
     ``status``/``collection``/``q`` narrow which documents are counted and returned -- ``total``,
     ``by_status`` and ``by_collection`` are always computed before filtering (so the stat cards
     stay accurate regardless of what the document list is currently filtered to); ``matched`` is
-    the count *after* filtering, before ``limit`` truncates ``items``.  ``hidden`` (collection
+    the count *after* filtering, before ``limit`` truncates ``items``.  ``by_status_filtered`` counts the statuses
+    after every filter but the status itself: the numbers on the status filters, which then agree with the list under
+    them whatever is typed in the search box.  The status ``skipped_all`` stands for everything the run did not
+    convert (``SKIPPED``: unchanged, not tried again, unsupported format).  ``hidden`` (collection
     names, case-insensitive) excludes documents from every count and from ``items`` -- this runs
     before anything else, so a client that cannot see a collection never sees it in a total either.
     """
     out: dict[str, Any] = {"total": 0, "by_status": {}, "by_collection": {}, "by_branch": {},
-                           "by_outcome": {}, "matched": 0, "items": []}
+                           "by_outcome": {}, "by_status_filtered": {}, "matched": 0, "items": []}
     if not JOB_ID_RE.fullmatch(job_id or ""):
         return out
     try:
@@ -116,8 +122,6 @@ def documents(paths: Paths, job_id: str, limit: int = 50, *, status: str = "",
                 out["by_outcome"][o] = out["by_outcome"].get(o, 0) + 1
     out["total"] = len(items)
     filtered = items
-    if status:
-        filtered = [i for i in filtered if str(i.get("status", "")) == status]
     if collection:
         filtered = [i for i in filtered if str(i.get("collection", "")) == collection]
     if branch:
@@ -127,6 +131,14 @@ def documents(paths: Paths, job_id: str, limit: int = 50, *, status: str = "",
     if q:
         ql = q.casefold()
         filtered = [i for i in filtered if ql in str(i.get("path") or i.get("source", "")).casefold()]
+    for i in filtered:
+        st = str(i.get("status", ""))
+        out["by_status_filtered"][st] = out["by_status_filtered"].get(st, 0) + 1
+    out["by_status_filtered"][""] = len(filtered)
+    out["by_status_filtered"]["skipped_all"] = sum(out["by_status_filtered"].get(s, 0) for s in SKIPPED)
+    if status:
+        wanted = SKIPPED if status == "skipped_all" else (status,)
+        filtered = [i for i in filtered if str(i.get("status", "")) in wanted]
     out["matched"] = len(filtered)
     out["items"] = filtered[-max(0, int(limit)):] if limit else []
     return out
@@ -146,12 +158,14 @@ def view(rec: dict[str, Any]) -> dict[str, Any]:
         empty = summ.get("no_text") or []
         uns = summ.get("unsupported_extension") or []
         removed = summ.get("removed") or []
+        known = summ.get("known") or []
         out["summary"] = {
             **{k: v for k, v in summ.items()
-               if k not in ("errors", "no_text", "unsupported_extension", "removed")},
+               if k not in ("errors", "no_text", "unsupported_extension", "removed", "known")},
             "errors": errs[:20], "error_count": len(errs),
             "no_text": empty[:20], "no_text_count": len(empty),
             "unsupported_extension": uns[:20], "unsupported_count": len(uns),
             "removed": removed[:20], "removed_count": len(removed),
+            "known": known[:20], "known_count": len(known),
         }
     return out

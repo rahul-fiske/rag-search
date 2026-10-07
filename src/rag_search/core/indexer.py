@@ -78,6 +78,7 @@ from .docling_convert import (
     NoTextError,
     ProtectedPdfError,
     convert_profile,
+    damaged_pdf_reason,
     convert_settings,
     describe_error,
     has_real_text,
@@ -150,6 +151,8 @@ def is_fresh(idx_dir: Path, src_sha: str, chunk_size: int, chunk_overlap: int,
 # the file in a converter.  A changed file, changed conversion settings, a rebuild or
 # "re-convert" (force_md) tries again.  Errors that may pass by themselves (a file the cloud app
 # could not fetch, a timeout, a crash, a reader that was not available) are never remembered.
+# A run that tries again is a *complete* run; an update run lists a remembered document as ``known``
+# ("not tried again"), outside its errors, so that it ends ``succeeded`` when nothing new failed.
 
 OUTCOME_FILE = "outcome.json"
 OUTCOME_VERSION = 1
@@ -565,6 +568,8 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
     def lasting(status: str, exc: BaseException | None, message: str) -> None:
         """Remember a result that will not change until the file does (see ``lasting_reason``)."""
         reason = lasting_reason(status, exc, message)
+        if not reason and status == "error" and src.suffix.lower() == ".pdf" and damaged_pdf_reason(src):
+            reason = "damaged"             # these bytes cannot be opened as a PDF: the same next time (a synced copy has another checksum)
         if reason and idx_dir is not None and sha:
             remember_outcome(idx_dir, sha, status, reason, message, task.get("ocr"))
 
@@ -588,7 +593,7 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
             stage_event(slog, rel_name, "fingerprint", "done", seconds=round(time.perf_counter() - t_fp, 3),
                         unchanged=True)
             since = str(known.get("at") or "")[:10]
-            return {"status": known["status"], "src": str(src), "known": True,
+            return {"status": known["status"], "src": str(src), "known": True, "reason": known.get("reason", ""),
                     "message": f"{known.get('message', '')} [unchanged since {since}: not tried again]",
                     "elapsed_s": round(time.perf_counter() - t0, 2)}
         stage_event(slog, rel_name, "fingerprint", "done", seconds=round(time.perf_counter() - t_fp, 3),
@@ -1063,6 +1068,34 @@ def _wipe(paths: Paths, roots: SourceRoots, sources: list[Path]) -> int:
     return n
 
 
+LEFT_OUT_FILE = "left_out.json"            # in the workspace: the files a run left out for their name, and said so
+
+
+def _left_out(paths: Paths, sources: list[Path], errors: list[dict[str, str]], known: list[dict[str, str]], *,
+              complete: bool) -> None:
+    """A file left out because another one has its document name stays left out until one of them is renamed.  The
+    run that finds it reports it as an error; an update run after that lists it as known (moved from *errors* to
+    *known*), and a complete run reports it again.  What is remembered about files outside this run is kept."""
+    store = paths.workspace / LEFT_OUT_FILE
+    old = (read_json(store) if store.exists() else {}) or {}
+    seen = old.get("sources") if isinstance(old.get("sources"), dict) else {}
+    now_out = {e["src"]: e["message"] for e in errors if e["message"].startswith("same document name")}
+    if not complete:
+        for e in [e for e in errors if e["src"] in now_out and seen.get(e["src"]) == e["message"]]:
+            errors.remove(e)
+            known.append({"src": e["src"], "message": e["message"] + " [reported before: not an error of this run]",
+                          "was": "error", "reason": "name"})
+    mine = {str(x) for x in sources}
+    new = {k: v for k, v in seen.items() if k not in mine and Path(k).exists()} | now_out
+    if new != seen:
+        with contextlib.suppress(OSError):
+            if new:
+                store.parent.mkdir(parents=True, exist_ok=True)
+                write_json_atomic(store, {"version": 1, "sources": new})
+            else:
+                store.unlink(missing_ok=True)
+
+
 def _assign_names(paths: Paths, sources: list[Path], roots: SourceRoots,
                   errors: list[dict[str, str]]) -> list[Path]:
     """The sources this run may index.  Index folders are named after the file name without its
@@ -1334,11 +1367,16 @@ def run_index(
     errors: list[dict[str, str]] = []
     no_text: list[dict[str, str]] = []      # converted fine but hold no text: skipped, not failed
     skipped = 0
-    not_retried = 0                         # failed or empty before, file unchanged: reported, not tried again
+    known: list[dict[str, str]] = []        # failed, empty or left out before and unchanged: listed, not tried again
     todo = _assign_names(paths, sources, roots, errors)
 
     with index_lock(paths):
         wiped = _wipe(paths, roots, todo) if wipe else 0
+        _left_out(paths, sources, errors, known, complete=bool(wipe or rebuild or force_md))
+        for e in errors:                    # left out for its name: listed with the run's documents, as every other failure
+            doc_event(Path(e["src"]), "error", message=e["message"])
+        for e in known:
+            doc_event(Path(e["src"]), "known", message=e["message"], was=e["was"])
         removed = prune_orphans(paths, roots, sources, prune or ())
         for name in orphans:                 # an index no location or import owns: derived data, nothing can update it
             for root in (paths.index, paths.markup):
@@ -1370,10 +1408,16 @@ def run_index(
         done = 0
 
         def _collect(res: dict[str, Any]) -> None:
-            nonlocal done, skipped, not_retried
+            nonlocal done, skipped
             done += 1
-            not_retried += 1 if res.get("known") else 0
             name = Path(res["src"]).name
+            if res.get("known"):           # failed or empty before, the file and the settings unchanged: not this run's failure
+                known.append({"src": res["src"], "message": res.get("message", ""), "was": res["status"],
+                              "reason": res.get("reason", "")})
+                doc_event(Path(res["src"]), "known", message=res.get("message", ""), was=res["status"],
+                          total_s=res.get("elapsed_s"))
+                emit({"phase": "convert", "done": done, "total": total, "current": name, "message": "not tried again"})
+                return
             if res["status"] != "skipped":
                 conv.add(res.get("conversion"), ok=res["status"] == "prepared")
             if res["status"] == "prepared":
@@ -1548,7 +1592,7 @@ def run_index(
         "scanned": len(sources),
         "removed": removed,
         "orphans_removed": orphans_removed,
-        "not_retried": not_retried,
+        "known": known, "not_retried": len(known),
         **(plan_info or {}),
     }
     emit({"phase": "done", "done": 1, "total": 1})

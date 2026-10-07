@@ -19,15 +19,22 @@ from . import api, client
 from .paths import Paths
 
 LABEL_PREFIX = "io.rag-search"
-PASS_ENV = ("RAG_SEARCH_MODEL", "RAG_SEARCH_RERANK_MODEL", "RAG_SEARCH_RERANK",
-            "RAG_SEARCH_DEVICE", "RAG_SEARCH_OCR", "RAG_SEARCH_OCR_ENGINE", "RAG_SEARCH_OCR_LANG",
-            "RAG_SEARCH_TABLE_MODE", "RAG_SEARCH_PIPELINE", "RAG_SEARCH_ROUTING", "RAG_SEARCH_PDF_BACKEND", "RAG_SEARCH_THREADS", "RAG_SEARCH_DOC_TIMEOUT",
-            "RAG_SEARCH_DOCLING_PYTHON", "HF_HOME",
-            "RAG_SEARCH_EMBED_BATCH", "RAG_SEARCH_MAX_SEQ",
-            "RAG_SEARCH_ALLOW_UNSAFE_TORCH_LOAD",
-            "RAG_SEARCH_EMBEDDER", "RAG_SEARCH_RERANKER", "RAG_SEARCH_DTYPE",
-            "RAG_SEARCH_RERANK_MAX_LEN", "RAG_SEARCH_RERANK_BATCH", "RAG_SEARCH_DOCLING_BATCH",
-            "RAG_SEARCH_CONVERT_TIMEOUT")
+def _pass_env() -> tuple[str, ...]:
+    """The environment variables a daemon installed as a service keeps from the shell that installed it: every
+    variable a tunable or a pipeline stage reads (taken from the registries, so a new one cannot be forgotten), and
+    the few that are not tunables.  ``RAG_SEARCH_HOME`` is always set; the client name and the dashboard's port are
+    not a daemon's business."""
+    from . import spec, stages
+
+    names = {t.env for t in spec.TUNABLES if t.env} | {v for s in stages.ALL for v in s.env_only}
+    names |= {"RAG_SEARCH_MODEL", "RAG_SEARCH_RERANK_MODEL", "RAG_SEARCH_RERANK", "RAG_SEARCH_VLM_MODEL",
+              "RAG_SEARCH_REPAIR_MODEL", "RAG_SEARCH_DOCLING_PYTHON", "RAG_SEARCH_ALLOW_UNSAFE_TORCH_LOAD",
+              "RAG_SEARCH_EMBEDDER", "RAG_SEARCH_RERANKER", "RAG_SEARCH_CONVERT_TIMEOUT", "RAG_SEARCH_JOBS",
+              "RAG_SEARCH_IDLE_SECONDS", "RAG_SEARCH_PREWARM", "HF_HOME", "HF_HUB_CACHE"}
+    return tuple(sorted(names))
+
+
+PASS_ENV = _pass_env()
 
 
 def label(kind: str) -> str:

@@ -236,7 +236,7 @@
 
   function lastRun(run) {
     if (!run) return h('span', { class: 'muted' }, 'no recent run touched this collection');
-    const order = ['indexed', 'skipped', 'removed', 'no_text', 'unsupported', 'error', 'converted'];
+    const order = ['indexed', 'skipped', 'removed', 'no_text', 'unsupported', 'known', 'error', 'converted'];
     const cls = { indexed: 'ok', error: 'bad', removed: 'warn', no_text: '', unsupported: '' };
     const counts = Object.entries(run.counts).sort((x, y) => order.indexOf(x[0]) - order.indexOf(y[0]));
     return h('div', null,

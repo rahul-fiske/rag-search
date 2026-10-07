@@ -152,6 +152,9 @@ class IndexerDaemonTests(IndexerCase):
                               "message": "UnicodeDecodeError: bad\n [at x.py:1 in f]"})
         self.assertIn("c/bad.pdf  FAILED   UnicodeDecodeError: bad [at x.py:1 in f]", cm.output[0])
         self.assertTrue(cm.output[0].startswith("WARNING"))
+        with self.assertLogs("rag_search.indexer_daemon", level="INFO") as cm:      # with its folder, as the stage lines
+            _log_event("j1", {"event": "doc", "collection": "c", "source": "a.md", "path": "sub/a.md", "status": "indexed"})
+        self.assertIn("c/sub/a.md  INDEXED", cm.output[0])
 
     def test_cancel_stops_and_does_not_publish(self):
         self.docs()
