@@ -38,13 +38,17 @@ import argparse
 import os
 import re
 import sys
+import tempfile
 import time
 import traceback
 import unicodedata
+import zipfile
 from pathlib import Path
 from typing import Any
 
 PASSTHROUGH = {".md", ".txt"}
+RTF_EXTENSIONS = {".rtf"}                 # read here, with the standard library (docling needs an office suite installed for RTF)
+MACRO_WORD_EXTENSIONS = {".docm"}         # a .docx with another content type: docling's Word reader refuses it as it is
 IMAGES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 
 # Bump when the conversion code changes what it writes, so that documents are converted again.
@@ -793,6 +797,173 @@ def convert_range(src: Path, first: int, last: int, mode: str, ocr: bool | None 
             "seconds": round(time.perf_counter() - t0, 3), "ocr": cfg["ocr"]}
 
 
+# ── RTF and macro-enabled Word files: read without any tool that docling does not already bring ──────────────
+_RTF_TOKEN = re.compile(r"\\([a-zA-Z]+)(-?\d+)? ?|\\'([0-9a-fA-F]{2})|\\([^a-zA-Z0-9])|([{}])|([^\\{}\r\n]+)|[\r\n]+")
+# destinations that hold no text of the document (fonts, colours, styles, document properties, pictures, list tables ...)
+_RTF_SKIP = frozenset({"fonttbl", "colortbl", "stylesheet", "info", "pict", "object", "header", "headerl", "headerr", "headerf",
+                       "footer", "footerl", "footerr", "footerf", "listtable", "listoverridetable", "listtext", "pntext",
+                       "pntxta", "pntxtb", "revtbl", "rsidtbl", "themedata", "colorschememapping", "datastore",
+                       "latentstyles", "generator", "upr", "xmlnstbl", "fldinst", "bkmkstart", "bkmkend", "shpinst",
+                       "background", "private", "mmathPr", "wgrffmtfilter", "factoidname", "nonshppict", "blipuid"})
+_RTF_CHARS = {"emdash": "\u2014", "endash": "\u2013", "bullet": "\u2022", "lquote": "\u2018", "rquote": "\u2019",
+              "ldblquote": "\u201c", "rdblquote": "\u201d", "tab": " ", "emspace": " ", "enspace": " ", "qmspace": " ",
+              "line": "\n", "page": "\n\n", "sect": "\n\n"}
+_RTF_CODEPAGES = {"mac": "mac_roman", "pc": "cp437", "pca": "cp850"}
+
+
+def _rtf_decode(raw: bytes, codepage: str) -> str:
+    try:
+        return raw.decode(codepage)
+    except (UnicodeDecodeError, LookupError):
+        return raw.decode("latin-1")
+
+
+def rtf_to_markdown(data: bytes) -> str:
+    """The text of an RTF document as Markdown: paragraphs, and tables as pipe tables.  Fonts, styles, colours, pictures
+    and the formatting of runs are dropped; ``\\'hh`` bytes are decoded with the document's code page and ``\\uN``
+    escapes (with their fallback characters skipped) are read as Unicode.  Standard library only."""
+    text = data.decode("latin-1")
+    codepage = "cp1252"
+    paras: list[str] = []
+    para: list[str] = []                  # the paragraph being written
+    cell: list[str] = []                  # the table cell being written
+    row: list[str] = []
+    rows: list[list[str]] = []
+    in_table = False
+    pending = bytearray()                 # \'hh bytes not yet decoded
+    stack: list[tuple[bool, int]] = []    # (skipping, fallback characters per \u) of the enclosing groups
+    skipping, uc, to_skip, group_start = False, 1, 0, False
+
+    def put(chunk: str) -> None:
+        nonlocal pending
+        if pending:
+            (cell if in_table else para).append(_rtf_decode(bytes(pending), codepage))
+            pending = bytearray()
+        if chunk:
+            (cell if in_table else para).append(chunk)
+
+    def end_table() -> None:
+        nonlocal rows
+        if rows:
+            width = max(len(r) for r in rows)
+            norm = [[c.replace("|", "\\|") for c in r] + [""] * (width - len(r)) for r in rows]
+            lines = ["| " + " | ".join(norm[0]) + " |", "|" + "|".join(["---"] * width) + "|"]
+            lines += ["| " + " | ".join(r) + " |" for r in norm[1:]]
+            paras.append("\n".join(lines))
+            rows = []
+
+    def end_para() -> None:
+        put("")
+        t = "".join(para).strip()
+        para.clear()
+        if t:
+            end_table()                   # a table that came before this text is complete
+            paras.append(t)
+
+    pos, n = 0, len(text)
+    while pos < n:
+        m = _RTF_TOKEN.match(text, pos)
+        if not m:
+            pos += 1
+            continue
+        pos = m.end()
+        word, arg, hexa, sym, brace, lit = m.groups()
+        if brace == "{":
+            put("")
+            stack.append((skipping, uc))
+            group_start = True
+            continue
+        if brace == "}":
+            put("")
+            skipping, uc = stack.pop() if stack else (False, 1)
+            group_start = False
+            continue
+        starting, group_start = group_start, False
+        if starting and ((sym == "*") or (word in _RTF_SKIP)):      # an ignorable or text-less destination
+            skipping = True
+            group_start = sym == "*"
+            continue
+        if word == "bin" and arg:
+            pos += int(arg)
+            continue
+        if skipping:
+            continue
+        if word:
+            if word == "ansicpg" and arg:
+                codepage = "cp" + arg
+            elif word in _RTF_CODEPAGES:
+                codepage = _RTF_CODEPAGES[word]
+            elif word == "uc" and arg:
+                uc = int(arg)
+            elif word == "u" and arg is not None:
+                code = int(arg)
+                put(chr(code + 65536 if code < 0 else code))
+                to_skip = uc
+            elif word == "par":
+                if in_table:
+                    put(" ")
+                else:
+                    end_para()
+            elif word == "pard":
+                in_table = False
+            elif word == "intbl":
+                in_table = True
+            elif word == "cell":
+                put("")
+                row.append("".join(cell).strip())
+                cell.clear()
+            elif word == "row":
+                rows.append(row)
+                row = []
+                in_table = False
+            elif word in _RTF_CHARS:
+                put(_RTF_CHARS[word])
+            elif to_skip:
+                to_skip -= 1
+        elif hexa:
+            if to_skip:
+                to_skip -= 1
+            else:
+                pending.append(int(hexa, 16))
+        elif sym:
+            if to_skip:
+                to_skip -= 1
+            elif sym in "\\{}":
+                put(sym)
+            elif sym == "~":
+                put(" ")
+            elif sym == "_":
+                put("-")
+        elif lit:
+            if to_skip:
+                k = min(to_skip, len(lit))
+                lit, to_skip = lit[k:], to_skip - k
+            if lit:
+                put(lit)
+    end_para()
+    end_table()
+    out = "\n\n".join(paras)
+    out = out.encode("utf-16-le", "surrogatepass").decode("utf-16-le", "replace")      # \u escapes of a pair of surrogates
+    return out + "\n" if out else ""
+
+
+_MACRO_MAIN = re.compile(rb'ContentType="[^"]*macroEnabled[^"]*main\+xml"')
+_DOCX_MAIN = b'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"'
+
+
+def _word_macro_as_docx(src: Path, tmp_dir: Path) -> Path:
+    """A copy of the macro-enabled Word file *src* that docling's Word reader accepts: the same package with the
+    main part's content type of a .docx.  The macros (``vbaProject.bin``) are never read or run."""
+    out = tmp_dir / (src.stem + ".docx")
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "[Content_Types].xml":
+                data = _MACRO_MAIN.sub(_DOCX_MAIN, data)
+            zout.writestr(item.filename, data)
+    return out
+
+
 def read_text_file(src: Path) -> str:
     """The text of a ``.md`` / ``.txt`` source, whatever it is encoded in.  Most are UTF-8; a file saved by Windows
     Notepad as "Unicode" is UTF-16 with a byte-order mark, and an old one is in a one-byte code page.  Copied as
@@ -822,13 +993,25 @@ def convert_file(src: Path, out_md: Path, ocr: bool | None = None) -> dict:
         tmp.write_text(read_text_file(src), encoding="utf-8")
         os.replace(tmp, out_md)
         return {"pages": 1, "seconds": round(time.perf_counter() - t0, 2)}
+    if suffix in RTF_EXTENSIONS:
+        raw = src.read_bytes()
+        md = rtf_to_markdown(raw) if raw.lstrip()[:5] == b"{\\rtf" else read_text_file(src)   # a text file named .rtf
+        if not has_real_text(md):
+            raise NoTextError(f"no text extracted from {src.name}")
+        tmp.write_text("<!-- page 1 -->\n\n" + md, encoding="utf-8")
+        os.replace(tmp, out_md)
+        return {"pages": 1, "seconds": round(time.perf_counter() - t0, 2)}
 
     os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")  # Apple GPU: fall back per-op
     cfg, why = resolve_ocr_mode(src, convert_settings(ocr))
     if why:
         print(f"note: {src.name}: {why}", file=sys.stderr)
     try:
-        doc = _convert_document(src, suffix, cfg)
+        if suffix in MACRO_WORD_EXTENSIONS:
+            with tempfile.TemporaryDirectory(prefix="rag-search-docm-") as tmp_dir:
+                doc = _convert_document(_word_macro_as_docx(src, Path(tmp_dir)), ".docx", cfg)
+        else:
+            doc = _convert_document(src, suffix, cfg)
     except ConversionTimeout:
         raise
     except Exception as exc:  # noqa: BLE001

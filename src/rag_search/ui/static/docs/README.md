@@ -760,8 +760,10 @@ with the model that built it, until a re-embedded index is complete.
 
 ## Supported files
 
-`.pdf .docx .pptx .xlsx .html .htm .csv .adoc .md .txt .png .jpg .jpeg .tif .tiff .bmp .webp`.
-Legacy `.doc`/`.xls`/`.ppt`/`.rtf` are not read (docling only reads modern Office formats reliably); a
+`.pdf .docx .docm .rtf .pptx .xlsx .html .htm .csv .adoc .md .txt .png .jpg .jpeg .tif .tiff .bmp .webp .heic .heif`.
+`.rtf` is read by rag-search itself (paragraphs and tables; fonts, colours and pictures are dropped) and `.docm`
+(macro-enabled Word) as a `.docx`; neither needs LibreOffice or any other tool, and macros are never read or run.
+Legacy `.doc`/`.xls`/`.ppt` are not read (docling needs LibreOffice for them); a
 file with any other extension is skipped and shown in the Indexing tab / `index status` as
 `unsupported_extension`, never silently dropped. To index a legacy file, save a modern copy yourself (Word,
 LibreOffice) in a folder that is registered as a location: rag-search never changes your files.

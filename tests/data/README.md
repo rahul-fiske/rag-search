@@ -1,15 +1,15 @@
 # The test corpus
 
-One small, synthetic file for every kind of input rag-search handles: 45 files, about 800 KB, no real
+One small, synthetic file for every kind of input rag-search handles: 46 files, about 800 KB, no real
 person's data. Tests copy what they need into a temporary data folder; the corpus itself is never written to.
 
 ```
 corpus/pdf/          text, statement tables, scans, mixed, blank page, picture on a text page, hidden OCR layer,
                      garbled text layer, rotated, 23 pages, password-protected, damaged
-corpus/office/       .docx .xlsx .pptx .html .htm .csv .adoc
+corpus/office/       .docx .docm .rtf .xlsx .pptx .html .htm .csv .adoc
 corpus/text/         .md .txt (Devanagari, nested folder, whitespace only, a hidden file)
 corpus/images/       .png .jpg (EXIF-rotated, no text) .tif (3 frames) .bmp .webp .heic
-corpus/unsupported/  .doc .rtf .zip, no extension, an Office lock file: reported or never listed
+corpus/unsupported/  .doc .zip, no extension, an Office lock file: reported or never listed
 corpus/collision/    manual.pdf + manual.docx: two files, one document name
 corpus.json          what each file is for and what it must produce (the single description of the corpus)
 make_corpus.py       rebuilds corpus/ (generator-only dependencies are listed in its docstring)

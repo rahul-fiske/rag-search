@@ -263,13 +263,13 @@ class IndexAndLocationTextTests(TempHome):
     def test_index_foreground_reports_what_it_could_not_index(self):
         corpus.copy("text/notes.md", self.sdir / "mix" / "notes.md")
         corpus.copy("pdf/damaged.pdf", self.sdir / "mix" / "damaged.pdf")
-        corpus.copy("unsupported/notes.rtf", self.sdir / "mix" / "notes.rtf")
+        corpus.copy("unsupported/legacy.doc", self.sdir / "mix" / "legacy.doc")
         corpus.copy("text/empty.txt", self.sdir / "mix" / "empty.txt")
         self.register_tree()
         rc, out, _ = run("index", "foreground")
         self.assertIn("! ", out)                                       # the damaged PDF: an error line
         self.assertIn("damaged.pdf", out)
-        self.assertIn("unsupported format (.rtf)", out)
+        self.assertIn("unsupported format (.doc)", out)
         rc, out, _ = run("index", "foreground", "--json")
         res = json.loads(out[out.index("{"):])
         self.assertEqual(res["summary"]["indexed"], 0)                 # nothing changed since the first run

@@ -320,7 +320,7 @@ Settings, Architecture and Playground tabs and `rag-search playground settings` 
 ### 5.1 Indexing flow (worker process, `core/indexer.py`)
 
 ```
- <location folder>/<file>     pdf docx pptx xlsx html csv adoc md txt png jpg tif bmp webp
+ <location folder>/<file>     pdf docx docm rtf pptx xlsx html csv adoc md txt png jpg tif bmp webp
                               (a registered location: its whole tree is one collection)
         │  plan (locations.plan_scan): refuses to run while locations.json is unreadable; every
         │  source folder is probed for reachability first (in a thread, 10 s bound; a listing
@@ -400,7 +400,7 @@ Settings, Architecture and Playground tabs and `rag-search playground settings` 
 Every converted document gets a *conversion record*, in one vocabulary shared by the engine, the CLI,
 the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md`):
 
-* a page takes one **branch** -- `copy` (.md/.txt), `office` (Office/HTML), `digital` (PDF page with
+* a page takes one **branch** -- `copy` (.md/.txt), `office` (Office/HTML; `.rtf` is read by `docling_convert.rtf_to_markdown` with the standard library, `.docm` as the `.docx` it is -- docling needs LibreOffice for RTF, and neither is allowed to need a tool that is not already installed), `digital` (PDF page with
   a text layer), `raster` (scanned page or one without a usable text layer), `image` (image file or
   TIFF frame), `embedded`, `fallback`, `cached`, `unknown` (not profiled) -- decided by
   `router.decide(kind, page_profile)`, which also returns the reason; and ends with one **outcome**:

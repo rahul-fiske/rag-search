@@ -399,6 +399,46 @@ def docx_report(path: Path) -> None:
     d.save(path)
 
 
+def docm_policy(path: Path) -> None:
+    """A macro-enabled Word file: a .docx package whose main part has the .docm content type (and a macro part that is
+    never read)."""
+    import docx
+
+    d = docx.Document()
+    _fixed_core(d.core_properties)
+    d.add_heading("Travel policy", 0)
+    d.add_paragraph("Needle: saffron harbor policy. " + LOREM)
+    t = d.add_table(rows=1, cols=2)
+    t.style = "Table Grid"
+    t.rows[0].cells[0].text, t.rows[0].cells[1].text = "Class", "Limit"
+    for row in (("Hotel", "180.00"), ("Meals", "45.00")):
+        for cell, text in zip(t.add_row().cells, row):
+            cell.text = text
+    buf = io.BytesIO()
+    d.save(buf)
+    src = zipfile.ZipFile(io.BytesIO(buf.getvalue()))
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as out:
+        for item in src.infolist():
+            data = src.read(item.filename)
+            if item.filename == "[Content_Types].xml":
+                data = data.replace(b"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+                                    b"application/vnd.ms-word.document.macroEnabled.main+xml")
+            out.writestr(zipfile.ZipInfo(item.filename, (2024, 1, 1, 0, 0, 0)), data)
+        out.writestr(zipfile.ZipInfo("word/vbaProject.bin", (2024, 1, 1, 0, 0, 0)), b"\xd0\xcf\x11\xe0 macros are not read")
+
+
+def rtf_notes(path: Path) -> None:
+    """An RTF file the way a word processor writes it: font and colour tables, a generator group, a heading, an
+    accented letter as \\'hh, a euro sign as \\u, a table, a hyperlink field."""
+    body = (r"{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0\fswiss Arial;}}{\colortbl;\red0\green0\blue0;}"
+            r"{\*\generator Test Writer;}{\info{\title Hidden title}}\pard\b Site notes\b0\par "
+            r"Needle: coral meadow notes. The caf\'e9 budget is 40 \u8364? per week.\par "
+            r"\trowd\cellx3000\cellx6000\pard\intbl Item\cell Cost\cell\row "
+            r"\pard\intbl Tables\cell 120.00\cell\row \pard See {\field{\*\fldinst HYPERLINK \"https://example.org\"}"
+            r"{\fldrslt the site}}.\par}")
+    path.write_bytes(body.encode("ascii"))
+
+
 def docx_lock(path: Path) -> None:
     path.write_bytes(b"\x00" * 162)                                        # what Word leaves while a file is open
 
@@ -596,7 +636,8 @@ def build() -> None:
 
     if not legacy_doc(d["unsupported"] / "legacy.doc", d["office"] / "report.docx"):
         pass
-    (d["unsupported"] / "notes.rtf").write_text(r"{\rtf1\ansi Needle: rtf is not read.\par}", encoding="ascii")
+    rtf_notes(d["office"] / "notes.rtf")
+    docm_policy(d["office"] / "policy.docm")
     with zipfile.ZipFile(d["unsupported"] / "bundle.zip", "w") as z:
         z.writestr(zipfile.ZipInfo("inside.txt", (2024, 1, 1, 0, 0, 0)), "zip contents are not read")
     (d["unsupported"] / "no-extension").write_text("a file without an extension\n", encoding="utf-8")
