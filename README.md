@@ -11,7 +11,9 @@ from Hugging Face (about 5 GB) and of the Python packages at install time.
 ## Quick start: build and install from a clone
 
 On a MacBook with Apple Silicon (M1 or newer, 16 GB RAM or more, about 15 GB of free disk; see
-[Hardware](#hardware)):
+[Hardware](#hardware)).
+
+### 1. Install
 
 ```bash
 brew install uv                                   # once; uv fetches Python 3.12 itself
@@ -21,21 +23,68 @@ git checkout v1.0.0                               # the first good release (or s
 
 scripts/build_release.sh                          # builds dist/rag-search-<version>/ and dist/rag-search-<version>.zip
 cd dist/rag-search-*/                             # the release folder (the newest, if there are several)
-./install.sh                                      # installs, downloads the models (about 5 GB), starts the daemons
+./install.sh                                      # installs, then runs `rag-search setup` (step 2)
 ```
 
-Then check it and index a folder:
+`install.sh` is a convenience: it checks the release's checksums, installs the wheel with `uv tool install` and runs
+the setup. Every Python package comes with the wheel, so you can also install straight from the clone and skip the
+build: `uv tool install --python 3.12 .` and then run the setup yourself.
+
+### 2. First-time setup
 
 ```bash
-rag-search doctor --roundtrip                     # self-test with the real models and three tiny documents
-rag-search location add mydocs ~/Documents/some-folder
-rag-search index new --follow                     # converts, indexes and publishes new and changed documents
-rag-search search "what does the contract say about notice periods"
-rag-search ui                                     # the dashboard
+rag-search setup                                  # `install.sh` has already done this; run it again whenever something is missing
 ```
 
-`./install.sh` also registers the MCP adapter with Claude Desktop and Claude Code (fully quit and reopen Claude
-Desktop afterwards). More options, upgrading and uninstalling: [Install](#install).
+It creates the data folder (`~/Library/Application Support/rag-search`; `--home PATH` or `RAG_SEARCH_HOME` to use
+another), downloads the two search models (about 5 GB, once) and, on Apple Silicon, the document reader and the repair
+model, installs Tesseract with Homebrew (the last-resort page reader), runs the health check (`rag-search doctor`),
+starts the two daemons and registers the MCP adapter with Claude Desktop and Claude Code. Options such as
+`--skip-models`, `--no-tesseract`, `--no-register` and `--service` (daemons start at login) are listed under
+[Install](#install). **Fully quit and reopen Claude Desktop afterwards.**
+
+### 3. Open the dashboard
+
+```bash
+rag-search ui                                     # opens http://127.0.0.1:8765 in your browser
+```
+
+The dashboard is local and protected by a token (the address it opens contains it). Its **Models** tab lists every
+embedding model, reranker and document reader you can use, shows which are downloaded and downloads or switches them
+with a click, so nothing has to be fetched on the command line; **Collections** registers your folders, **Indexing**
+starts a run and shows its progress, **Search** tries a query, **Settings** holds every tunable, **Help** has this
+README. `rag-search ui --detach` runs it in the background, `--url` prints its address, `--stop` ends it.
+
+### 4. Index your documents and search
+
+```bash
+rag-search location add mydocs ~/Documents/some-folder   # a folder is one collection; it is only read, never changed
+rag-search index new --follow                     # converts, indexes and publishes new and changed documents
+rag-search search "what does the contract say about notice periods"
+```
+
+Run `rag-search index new` again whenever documents change; unchanged files are skipped by checksum, and files that could
+not be indexed before are listed as "not tried again" until they change.
+
+### 5. Use it from Claude
+
+After the restart, ask Claude Desktop or Claude Code: *"list my document collections"*, then *"according to my
+documents, ..."*; the answers cite the file and the page. Other MCP hosts: `rag-search mcp-config`.
+
+### Everyday commands
+
+| | |
+|---|---|
+| `rag-search doctor` (`--roundtrip`) | check the installation (and index and search three tiny documents end to end) |
+| `rag-search daemon status` / `stop` / `start` / `restart` | the search and indexer daemons; they start by themselves when needed |
+| `rag-search index status` | the running or last indexing run, its documents and what it cost |
+| `rag-search models` | the models in use and what is downloaded (the Models tab does the same) |
+| `rag-search --help` | every command |
+
+Upgrade: build or download the new release and run `./install.sh` again (or `git pull` and
+`uv tool install --force --python 3.12 .`): the data folder and the indexes are kept, and an index made with the same
+models and conversion settings is not rebuilt. Uninstall: `./uninstall.sh` (keeps your data; `--purge-data` deletes
+it too). Problems: [Troubleshooting](#troubleshooting).
 
 ## How it works
 
@@ -99,7 +148,7 @@ large run is going. 8 GB machines are not supported.
 
 Build the release folder from the source and install it (a MacBook with Apple Silicon; see Hardware):
 
-The commands are in the [quick start](#quick-start-build-and-install-from-a-clone) above. `scripts/build_release.sh` needs only `uv`; it writes the wheel, the source archive, `install.sh`, `uninstall.sh`
+The commands are in the [quick start](#1-install) above. `scripts/build_release.sh` needs only `uv`; it writes the wheel, the source archive, `install.sh`, `uninstall.sh`
 and `SHA256SUMS` into `dist/rag-search-<version>/` and zips that folder, which is what you hand to someone who has
 no clone. To upgrade, `git pull` and repeat the last three lines: the data folder and the indexes are kept. To work
 on the code instead (an editable install that runs the clone itself), see "Modify the source" below and
