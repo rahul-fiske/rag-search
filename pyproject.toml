@@ -1,19 +1,30 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "rag-search"
 dynamic = ["version"]
-description = "Local document RAG: always-on indexer and search daemons (docling, BM25 + bge-m3, reranker), a CLI, a local web dashboard, and an MCP adapter for Claude Desktop and Claude Code (other MCP hosts can use it too)."
+description = "Private, local document search: PDFs, Office files and images, with page-level citations."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
-authors = [{ name = "rag-search contributors" }]
-keywords = ["mcp", "rag", "search", "docling", "bge-m3", "claude"]
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Rahul Fiske" }]
+keywords = ["rag", "search", "semantic-search", "local-first", "pdf", "ocr", "docling", "bge-m3", "mcp", "claude", "llm", "apple-silicon"]
 classifiers = [
-  "Programming Language :: Python :: 3",
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Environment :: Web Environment",
+  "Intended Audience :: End Users/Desktop",
+  "Intended Audience :: Developers",
   "Operating System :: MacOS",
   "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Text Processing :: Indexing",
+  "Topic :: Scientific/Engineering :: Information Analysis",
 ]
 dependencies = [
   "docling>=2.30",
@@ -42,6 +53,13 @@ dependencies = [
 # `rag-search[mac-vlm]` in older instructions still install.
 mcp = []
 mac-vlm = []
+
+[project.urls]
+Homepage = "https://github.com/rahul-fiske/rag-search"
+Repository = "https://github.com/rahul-fiske/rag-search"
+Documentation = "https://github.com/rahul-fiske/rag-search/blob/main/ARCHITECTURE.md"
+Issues = "https://github.com/rahul-fiske/rag-search/issues"
+Changelog = "https://github.com/rahul-fiske/rag-search/releases"
 
 [project.scripts]
 rag-search = "rag_search.cli:main"

@@ -8,83 +8,23 @@ any other MCP host — all of them share the same indexes and the same warm mode
 Everything runs on your machine. The only network traffic is the one-time download of the models
 from Hugging Face (about 5 GB) and of the Python packages at install time.
 
-## Quick start: build and install from a clone
+## Quick start
 
-On a MacBook with Apple Silicon (M1 or newer, 16 GB RAM or more, about 15 GB of free disk; see
-[Hardware](#hardware)).
-
-### 1. Install
+Needs a Mac with Apple Silicon (16 GB RAM, 15 GB free disk; see [Requirements](#requirements)) and
+[`uv`](https://docs.astral.sh/uv/) (`brew install uv`).
 
 ```bash
-brew install uv                                   # once; uv fetches Python 3.12 itself
-git clone https://github.com/rahul-fiske/rag-search.git
-cd rag-search
-git checkout v1.0.0                               # the first good release (or stay on main for the latest work)
-
-scripts/build_release.sh                          # builds dist/rag-search-<version>/ and dist/rag-search-<version>.zip
-cd dist/rag-search-*/                             # the release folder (the newest, if there are several)
-./install.sh                                      # installs, then runs `rag-search setup` (step 2)
+uv tool install --python 3.12 rag-search     # installs the `rag-search` command and all its dependencies
+rag-search setup                             # once: models (about 5 GB), Tesseract, daemons, Claude registration
+rag-search ui                                # opens the dashboard
 ```
 
-`install.sh` is a convenience: it checks the release's checksums, installs the wheel with `uv tool install` and runs
-the setup. Every Python package comes with the wheel, so you can also install straight from the clone and skip the
-build: `uv tool install --python 3.12 .` and then run the setup yourself.
+In the dashboard, open **Collections** and add the folder with your documents, start a run on the **Indexing** tab,
+then try it on the **Search** tab. (The **Models** tab downloads and switches models.) To use it from Claude, fully
+quit and reopen Claude Desktop and ask *"list my document collections"*.
 
-### 2. First-time setup
-
-```bash
-rag-search setup                                  # `install.sh` has already done this; run it again whenever something is missing
-```
-
-It creates the data folder (`~/Library/Application Support/rag-search`; `--home PATH` or `RAG_SEARCH_HOME` to use
-another), downloads the two search models (about 5 GB, once) and, on Apple Silicon, the document reader and the repair
-model, installs Tesseract with Homebrew (the last-resort page reader), runs the health check (`rag-search doctor`),
-starts the two daemons and registers the MCP adapter with Claude Desktop and Claude Code. Options such as
-`--skip-models`, `--no-tesseract`, `--no-register` and `--service` (daemons start at login) are listed under
-[Install](#install). **Fully quit and reopen Claude Desktop afterwards.**
-
-### 3. Open the dashboard
-
-```bash
-rag-search ui                                     # opens http://127.0.0.1:8765 in your browser
-```
-
-The dashboard is local and protected by a token (the address it opens contains it). Its **Models** tab lists every
-embedding model, reranker and document reader you can use, shows which are downloaded and downloads or switches them
-with a click, so nothing has to be fetched on the command line; **Collections** registers your folders, **Indexing**
-starts a run and shows its progress, **Search** tries a query, **Settings** holds every tunable, **Help** has this
-README. `rag-search ui --detach` runs it in the background, `--url` prints its address, `--stop` ends it.
-
-### 4. Index your documents and search
-
-```bash
-rag-search location add mydocs ~/Documents/some-folder   # a folder is one collection; it is only read, never changed
-rag-search index new --follow                     # converts, indexes and publishes new and changed documents
-rag-search search "what does the contract say about notice periods"
-```
-
-Run `rag-search index new` again whenever documents change; unchanged files are skipped by checksum, and files that could
-not be indexed before are listed as "not tried again" until they change.
-
-### 5. Use it from Claude
-
-After the restart, ask Claude Desktop or Claude Code: *"list my document collections"*, then *"according to my
-documents, ..."*; the answers cite the file and the page. Other MCP hosts: `rag-search mcp-config`.
-
-### Everyday commands
-
-| | |
-|---|---|
-| `rag-search doctor` (`--roundtrip`) | check the installation (and index and search three tiny documents end to end) |
-| `rag-search daemon status` / `stop` / `start` / `restart` | the search and indexer daemons; they start by themselves when needed |
-| `rag-search index status` | the running or last indexing run, its documents and what it cost |
-| `rag-search models` | the models in use and what is downloaded (the Models tab does the same) |
-| `rag-search --help` | every command |
-
-Upgrade: build or download the new release and run `./install.sh` again (or `git pull` and
-`uv tool install --force --python 3.12 .`): the data folder and the indexes are kept, and an index made with the same
-models and conversion settings is not rebuilt. Uninstall: `./uninstall.sh` (keeps your data; `--purge-data` deletes
-it too). Problems: [Troubleshooting](#troubleshooting).
+Installing from a clone instead of PyPI: `git clone https://github.com/rahul-fiske/rag-search.git`, then
+`uv tool install --python 3.12 ./rag-search`, then the same two commands.
 
 ## How it works
 
@@ -113,85 +53,46 @@ it too). Problems: [Troubleshooting](#troubleshooting).
 
 ## Requirements
 
-### Hardware
+| | Minimum | Recommended |
+|---|---|---|
+| Computer | Apple Silicon Mac (M1 or newer), macOS 13+ | M2 Pro / M3 / M4 or newer |
+| Memory | 16 GB | 32 GB or more |
+| Free disk | 15 GB (models about 8 GB, packages 1.5 GB, plus your indexes) | 30 GB |
+| Network | once, to download about 10 GB of packages and models | |
 
-**Yes, it runs on a MacBook**: any Apple Silicon MacBook (M1 or newer; Air or Pro) with macOS 13 or later. It was
-developed and tested on an M4 Max with 36 GB; that is the only machine it has been measured on.
-
-| | Minimum | Recommended | Why |
-|---|---|---|---|
-| Chip | Apple Silicon (M1) | M2 Pro / M3 / M4 or newer | the models run on the GPU (Metal for the embedder and reranker, MLX for the document reader); a newer chip is faster, not different |
-| Memory | 16 GB | 32 GB or more | search holds about 3.5 GB of models resident; an indexing run adds the conversion workers (1-2 GB each) and, for scanned pages, the document reader (about 4 GB while it reads) and the repair model (about 6 GB when a table needs it). With less than about 17 GB, one worker is used instead of two |
-| Free disk | 15 GB | 30 GB | packages about 1.5 GB, models about 8 GB (embedder 2.3 GB, reranker 2.1 GB, document reader and repair model about 6 GB together), plus the Markdown and indexes of your documents (about 0.5 GB per 100,000 chunks) |
-| Network | once, for the install | | the models and Python packages are downloaded once (about 10 GB); afterwards nothing leaves the machine |
-
-What to expect: on the M4 Max a full rebuild of about 2,100 documents (20,000 pages, 94,000 chunks) took 1 h 35 min,
-86 minutes of it embedding; a run that finds only new or changed files takes seconds to minutes. Searching is
-interactive (a fraction of a second once the models are warm). On a 16 GB machine expect indexing to be slower (one
-conversion worker, the reader and the repair model one at a time) and keep other heavy applications closed while a
-large run is going. 8 GB machines are not supported.
-
-* Intel Macs are supported on a best-effort basis: CPU only (no Metal, no document reader), so indexing and reranking
-  are much slower, and the package pins `numpy<2` there because the last PyTorch build for Intel Macs needs it.
-* Linux works too (CPU or CUDA), without Apple Vision, MLX or the document reader.
-
-### Software
-
-* macOS 13 or later on Apple Silicon (see above).
-* [`uv`](https://docs.astral.sh/uv/) (`brew install uv`). It fetches Python 3.12 itself.
-* Optional: Tesseract (`brew install tesseract tesseract-lang`) as the last-resort reader for pages the document reader cannot read.
-* Optional: Claude Desktop and/or Claude Code (any other MCP host can use the adapter too).
+Tested on an M4 Max with 36 GB: a full rebuild of 2,100 documents (20,000 pages) took about 1.5 hours, an update run
+takes seconds to minutes, and a search a fraction of a second. On 16 GB indexing is slower (one conversion worker); 8 GB is
+not supported. Intel Macs (CPU only, no document reader) and Linux (no Apple Vision or MLX) work with less. Also needed:
+[`uv`](https://docs.astral.sh/uv/). Optional: Claude Desktop or Claude Code (any MCP host works).
 
 ## Install
 
-### From a git clone
+| From | Command |
+|---|---|
+| PyPI | `uv tool install --python 3.12 rag-search` |
+| A clone | `git clone https://github.com/rahul-fiske/rag-search.git && uv tool install --python 3.12 ./rag-search` |
+| A release folder (no clone) | `scripts/build_release.sh` in a clone makes `dist/rag-search-<version>.zip`; unzip it and run `./install.sh` |
 
-Build the release folder from the source and install it (a MacBook with Apple Silicon; see Hardware):
+Every Python package, including the Apple-only ones, is a dependency of the package, so all three give the same
+installation. Then run **`rag-search setup`** once (again whenever something is missing). It creates the data folder
+(`~/Library/Application Support/rag-search`), downloads the models, installs Tesseract, checks the installation,
+starts the daemons and registers the adapter with Claude. Useful options: `--models PRESET`, `--skip-models`,
+`--no-tesseract`, `--no-register`, `--service` (daemons start at login); all of them: `rag-search setup --help`.
+`./install.sh` installs the wheel and calls `setup` with its own options (`--home`, `--python`, and the same flags).
 
-The commands are in the [quick start](#1-install) above. `scripts/build_release.sh` needs only `uv`; it writes the wheel, the source archive, `install.sh`, `uninstall.sh`
-and `SHA256SUMS` into `dist/rag-search-<version>/` and zips that folder, which is what you hand to someone who has
-no clone. To upgrade, `git pull` and repeat the last three lines: the data folder and the indexes are kept. To work
-on the code instead (an editable install that runs the clone itself), see "Modify the source" below and
-`CONTRIBUTING.md`.
-
-### From a release folder
-
-Unzip the release folder, open Terminal in it and run:
-
-```bash
-./install.sh
-```
-
-This verifies `SHA256SUMS` and installs the wheel with `uv tool install`. **Every Python package comes with the
-wheel** (`pyproject.toml`: the MCP adapter, Apple Vision OCR and the MLX document reader on a Mac, HEIC support,
-and the pins an Intel Mac needs, each with a platform marker), so the same install works from a release folder,
-from a clone (`uv tool install .`) and, later, from PyPI. Then it runs **`rag-search setup`**, which does the
-first-time work and can be run again at any time: downloads the models, the document reader and the repair model
-(Apple Silicon), installs Tesseract with Homebrew and its Marathi and Hindi data, runs `rag-search doctor`, starts
-both daemons and registers the adapter with Claude Desktop and Claude Code. **Fully quit and reopen Claude Desktop
-afterwards.**
-
-`rag-search setup` options (`install.sh` passes its own options on to it): `--models PRESET` (another model pair:
-`default`, `qwen3-small`, `qwen3-large`; see "Models"), `--skip-models`, `--skip-reader`, `--no-tesseract`,
-`--service` (daemons start at login via launchd), `--no-start`, `--no-register`, `--tool-prefix P` (prefix tool names
-to avoid clashes with other servers), `--skip-docling` (for using collections someone else exported: no docling
-models, no document reader, no Tesseract; see "Sharing a collection"), `--minimal` (only the folders and the two
-models). Other `install.sh` options: `--home PATH` (custom data folder), `--python 3.11`; `--no-mcp` and
-`--import-only` are the old names of `--no-register` and `--skip-docling`.
-
-Self-test (real daemons and models, three tiny documents): `rag-search doctor --roundtrip`.
-
-Uninstall: `./uninstall.sh` (keeps your data; add `--purge-data` to delete indexes too).
+Upgrade: `uv tool upgrade rag-search` (or install again from the clone / release folder); data and indexes are kept.
+Uninstall: `rag-search unregister && rag-search service uninstall && uv tool uninstall rag-search` (your data stays;
+`./uninstall.sh --purge-data` removes it too). Self-test: `rag-search doctor --roundtrip`.
 
 ## Use
 
-1. Tell rag-search where your documents are: `rag-search location add NAME FOLDER` (a notes vault,
-   a synced drive, any folder). **Each registered folder is one collection**, indexed where it is and
-   never changed (see "Source locations"). There is no built-in documents folder.
-2. Index: `rag-search index new --follow` (or ask Claude: *"index my new documents"*). The run
-   happens in the indexer daemon; when it finishes the new documents are searchable automatically.
-3. Search: `rag-search search "how do I create a role?"`, or ask Claude: *"According to my
-   manuals, how do I … ? Cite pages."*
+1. **Dashboard (recommended):** `rag-search ui`, then **Collections** to add a folder (a notes vault, a synced drive,
+   any folder: **each registered folder is one collection**, indexed where it is and never changed; see "Source
+   locations"), **Indexing** to start a run and watch it, **Search** to ask a question. When a run finishes the new
+   documents are searchable automatically.
+2. **Command line**, the same three steps: `rag-search location add NAME FOLDER`, `rag-search index new --follow`,
+   `rag-search search "how do I create a role?"`.
+3. **Claude:** *"index my new documents"*, then *"According to my manuals, how do I … ? Cite pages."*
 
 ```
 rag-search search "query" [-c collection] [-k 5] [--json]     meaning-based search, cites file + page
@@ -257,7 +158,7 @@ resident memory of a running search daemon.
 
 Every search already runs BM25 and dense vector retrieval, fuses them with Reciprocal Rank Fusion
 (RRF), then reranks the fused pool with a cross-encoder (or an LLM reranker, depending on the
-configured model) — see [`ARCHITECTURE.md`](ARCHITECTURE.md#52-search-flow-search-daemon-coresearchpy)
+configured model) — see [`ARCHITECTURE.md`](https://github.com/rahul-fiske/rag-search/blob/main/ARCHITECTURE.md#52-search-flow-search-daemon-coresearchpy)
 or the dashboard's Architecture tab. To see *why* a result ranked where it did, or to isolate one stage while
 debugging, `rag-search search` and the dashboard's Search tab both expose the pipeline directly:
 
@@ -686,7 +587,7 @@ rag-search config show                                     # the merged config, 
 
 Every one of these tunables — its default, a one-line "what it means", a longer "impact" note,
 and which of the three tiers above it belongs to — is described once, in `spec.TUNABLES`, and
-`rag-search config set --help`, this table's longer cousin in [ARCHITECTURE.md](ARCHITECTURE.md),
+`rag-search config set --help`, this table's longer cousin in [ARCHITECTURE.md](https://github.com/rahul-fiske/rag-search/blob/main/ARCHITECTURE.md),
 and the dashboard all read from that same list, so they cannot drift apart. The dashboard's new
 **Settings** tab has one card each for the search and indexing tunables (label and "what it
 means" always visible; "impact" behind an ⓘ icon next to the label); the **Models** tab's
