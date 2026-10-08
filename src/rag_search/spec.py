@@ -296,7 +296,7 @@ TUNABLES: tuple[Tunable, ...] = (
             "The model runs in its own process on Apple Silicon (MLX) and is far better than OCR at "
             "tables and handwriting-free scans; with auto, a missing model, too little free memory or a "
             "failed page simply falls back to docling OCR for that page and the trace says why. "
-            "Needs the mac-vlm extra and a downloaded model; nothing is downloaded by itself.",
+            "Needs the document-reader runtime (installed with rag-search on Apple Silicon) and a downloaded model; nothing is downloaded by itself.",
             NEXT_RUN, "--doc-reader", VLM_MODES, "RAG_SEARCH_VLM",
             default_label="auto", choice_help={
                 "auto": "Use the document reader whenever it can run; fall back to OCR page by page "
@@ -309,7 +309,7 @@ TUNABLES: tuple[Tunable, ...] = (
             "balance, a total) is cut out, read again and replaced when two independent readers and "
             "the arithmetic agree; off = pages are kept as the document reader read them. Blank = auto.",
             "Needs the document reader (above) and, for the independent second reading, Apple Vision "
-            "(ocrmac, in the mac-vlm extra). A cell that cannot be confirmed is never changed: the "
+            "(ocrmac, installed with rag-search on a Mac). A cell that cannot be confirmed is never changed: the "
             "page is flagged low-confidence instead. Every attempt is in the conversion trace.",
             NEXT_RUN, "--repair", VLM_MODES, "RAG_SEARCH_REPAIR",
             default_label="auto", choice_help={

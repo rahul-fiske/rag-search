@@ -503,8 +503,8 @@ def _stream(cmd: list[str], task: Task) -> int:
 
 
 def run_runtime(paths: Paths, task: Task, req: dict[str, Any]) -> dict[str, Any]:
-    """Install the optional runtime of the document reader (``rag-search[mac-vlm]``): mlx-vlm, ocrmac,
-    pillow-heif.  Apple Silicon only; nothing else is touched and no model is downloaded."""
+    """Install the runtime of the document reader (mlx-vlm, ocrmac, pillow-heif: dependencies of rag-search, so this
+    repairs an environment that lacks them).  Apple Silicon only; nothing else is touched and no model is downloaded."""
     if not models._apple_silicon():
         raise TaskError("the document reader runs on Apple Silicon Macs only; this computer uses docling OCR")
     reqs = models.runtime_requirements()
@@ -514,7 +514,7 @@ def run_runtime(paths: Paths, task: Task, req: dict[str, Any]) -> dict[str, Any]
     code = _stream(cmd, task)
     if code != 0:
         raise TaskError(f"the installer exited with code {code} (see the log; you can also run "
-                        f"`pip install \"rag-search[{models.RUNTIME_EXTRA}]\"` yourself)")
+                        f"`uv pip install {' '.join(reqs)}` yourself)")
     task.phase("check", "checking the installation")
     state = models.runtime_state()
     if not state["ready"]:

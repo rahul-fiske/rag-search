@@ -308,8 +308,9 @@ def repair_choice() -> tuple[str, str, float]:
     return mid, "instruct", 4.0 + VLM_OVERHEAD_GB
 
 
-# The optional Apple-only runtime of the document reader: why it is not part of the base install.
-RUNTIME_EXTRA = "mac-vlm"
+# The Apple-only runtime of the document reader.  Its packages are dependencies of rag-search (with platform markers in
+# pyproject.toml), so a normal install has them; "models runtime install" is the repair for an environment that lacks them.
+RUNTIME_EXTRA = "mac-vlm"          # the old name of the extra, kept (empty) so that `rag-search[mac-vlm]` still installs
 RUNTIME_PACKAGES = (
     # module, pip name, what it is for, whether the document reader cannot work without it
     ("mlx_vlm", "mlx-vlm", "runs the document reader and the repair model on the Apple GPU (MLX)", True),
@@ -320,15 +321,18 @@ _RUNTIME_FALLBACK = ("mlx-vlm>=0.3.4", "pillow-heif>=0.18", "ocrmac>=1.0")
 
 
 def runtime_requirements() -> list[str]:
-    """The pip requirements of the ``mac-vlm`` extra, read from this package's own metadata (so the
-    list cannot drift from pyproject.toml); a fixed list when the metadata is not available."""
+    """The pip requirements of the document-reader runtime (``mlx-vlm``, ``ocrmac``, ``pillow-heif``), read from this
+    package's own metadata (so the list cannot drift from pyproject.toml), without their platform markers; a fixed
+    list when the metadata is not available."""
+    wanted = {pkg for _m, pkg, _w, _r in RUNTIME_PACKAGES}
     try:
         reqs = md.requires("rag-search") or []
     except md.PackageNotFoundError:
         reqs = []
     out = []
     for r in reqs:
-        if re.search(r"extra\s*==\s*['\"]" + re.escape(RUNTIME_EXTRA) + r"['\"]", r):
+        name = re.match(r"[A-Za-z0-9_.\-]+", r.strip())
+        if name and name.group(0).lower().replace("_", "-") in wanted and "extra" not in r:
             out.append(r.split(";")[0].strip())
     return out or list(_RUNTIME_FALLBACK)
 

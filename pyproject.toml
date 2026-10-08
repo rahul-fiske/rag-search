@@ -21,13 +21,27 @@ dependencies = [
   "torch>=2.2",
   "numpy>=1.26",
   "huggingface_hub>=0.24",
+  # the MCP adapter (Claude Desktop, Claude Code and other MCP hosts)
+  "mcp>=1.12,<2",
+  # pillow-heif lets the document reader read iPhone photos (.heic)
+  "pillow-heif>=0.18",
+  # macOS: Apple Vision (ocrmac) reads scanned pages, and is the independent second reader that confirms repaired table cells
+  "ocrmac>=1.0; sys_platform == 'darwin'",
+  # Apple Silicon: the document reader, a vision-language model that reads scanned pages, pictures and image files
+  "mlx-vlm>=0.3.4; sys_platform == 'darwin' and platform_machine == 'arm64'",
+  # Intel Macs: PyTorch stopped publishing macOS x86_64 wheels after 2.2.2, which was compiled against NumPy 1.x
+  # (with NumPy 2: "Failed to initialize NumPy: _ARRAY_API not found"); transformers 5 needs PyTorch >= 2.4 and would
+  # disable torch entirely, so it is held at 4.x with huggingface_hub 0.x
+  "numpy<2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+  "transformers>=4.44,<5; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+  "huggingface_hub>=0.30,<1; sys_platform == 'darwin' and platform_machine == 'x86_64'",
 ]
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.12,<2"]
-# Document reader (Apple Silicon only): a vision-language model reads scanned pages, pictures and image files.
-# pillow-heif lets it read iPhone photos (.heic); ocrmac (Apple Vision) is the independent second reader that confirms repaired table cells.
-mac-vlm = ["mlx-vlm>=0.3.4; sys_platform == 'darwin' and platform_machine == 'arm64'", "pillow-heif>=0.18", "ocrmac>=1.0; sys_platform == 'darwin'"]
+# These used to be optional; everything is installed by default now.  Kept so that `rag-search[mcp]` and
+# `rag-search[mac-vlm]` in older instructions still install.
+mcp = []
+mac-vlm = []
 
 [project.scripts]
 rag-search = "rag_search.cli:main"
@@ -35,7 +49,7 @@ rag-search-mcp = "rag_search.mcp.server:main"
 
 [dependency-groups]
 # coverage: measuring the tests; reportlab and pillow-heif: only to rebuild / read the test corpus (tests/data/)
-dev = ["pytest>=8", "ruff>=0.5", "mcp>=1.12,<2", "coverage>=7.10", "reportlab>=4", "pillow-heif>=0.18"]
+dev = ["pytest>=8", "ruff>=0.5", "coverage>=7.10", "reportlab>=4"]
 
 [tool.setuptools]
 package-dir = { "" = "src" }

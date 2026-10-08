@@ -85,9 +85,8 @@ and daemons use -- the `uv tool` environment -- not in a separate virtualenv or 
 
 ```bash
 ./install.sh --dev                       # from an unpacked release folder: installs the tool EDITABLE from a source tree
-# or, in this checkout, with the same extras install.sh adds on Apple Silicon:
-uv tool install --force --python 3.12 --with "mcp>=1.12,<2" --with ocrmac \
-    --with "mlx-vlm>=0.3.4" --with "pillow-heif>=0.18" --editable .
+# or, in this checkout (every package, including the Apple-only ones, is a dependency in pyproject.toml):
+uv tool install --force --python 3.12 --editable .
 PY="$(uv tool dir)/rag-search/bin/python"
 "$PY" -c "import rag_search; print(rag_search.__version__, rag_search.__file__)"   # must be this checkout
 "$PY" scripts/sanity_check.py            # quick: environment, packages, MLX/GPU, models downloaded

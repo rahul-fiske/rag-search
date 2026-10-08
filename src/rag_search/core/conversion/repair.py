@@ -75,7 +75,7 @@ class Word:
 
 
 class OcrMacSecond:
-    """Apple Vision text recognition through ``ocrmac`` (``pip install 'rag-search[mac-vlm]'``).  It
+    """Apple Vision text recognition through ``ocrmac`` (a dependency of rag-search).  It
     returns phrases with boxes (origin bottom-left, fractions of the image); a phrase is cut into
     words in proportion to its characters, which is exact enough for finding a cell."""
 
@@ -87,7 +87,7 @@ class OcrMacSecond:
         import importlib.util
 
         if importlib.util.find_spec("ocrmac") is None:
-            return "ocrmac is not installed (pip install 'rag-search[mac-vlm]')"
+            return "ocrmac is not installed (rag-search models runtime install)"
         return ""
 
     def words(self, image: Path) -> list[Word]:

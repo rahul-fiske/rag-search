@@ -854,8 +854,10 @@ class ReaderReadinessTests(VlmBase):
         reqs = models.runtime_requirements()
         self.assertTrue(any(r.startswith("mlx-vlm") for r in reqs))
         self.assertTrue(all(";" not in r for r in reqs))
-        with mock.patch.object(models.md, "requires", return_value=["torch>=2", 'x>=1; extra == "mac-vlm"']):
-            self.assertEqual(models.runtime_requirements(), ["x>=1"])
+        with mock.patch.object(models.md, "requires", return_value=[
+                "torch>=2", "mlx-vlm>=0.3.4; sys_platform == 'darwin' and platform_machine == 'arm64'", "ocrmac>=1.0; sys_platform == 'darwin'",
+                "pillow_heif>=0.18", "mcp>=1.12,<2", 'x>=1; extra == "dev"']):
+            self.assertEqual(models.runtime_requirements(), ["mlx-vlm>=0.3.4", "ocrmac>=1.0", "pillow_heif>=0.18"])
 
     def test_runtime_install_task(self):
         from rag_search import model_tasks as mt

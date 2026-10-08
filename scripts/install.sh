@@ -13,16 +13,17 @@
 #            --no-register don't touch Claude Desktop / Claude Code config
 #            --tool-prefix P  add a prefix to the MCP tool names (they already start with rag_)
 #            --service     start the daemons at login (macOS launchd)
-#            --no-mcp      skip the MCP adapter dependency (CLI + daemons only)
+#            --no-mcp      same as --no-register (the MCP adapter is always installed)
 #            --no-tesseract don't check for / install Tesseract (the last-resort page reader, with its
 #                          Marathi and Hindi language data). Installed with Homebrew on macOS.
+#   The Python packages come with the wheel (pyproject.toml); everything after the install is `rag-search setup`.
 #            --import-only for using collections others exported (rag-search collection import):
-#                          skips the OCR engine (ocrmac, macOS) and docling's document-conversion
-#                          models, which only indexing your own documents needs (the embedding
+#                          skips docling's document-conversion models, the document reader and
+#                          Tesseract, which only indexing your own documents needs (the embedding
 #                          model and the reranker are still downloaded -- search needs them).
 #                          Indexing your own text documents later still works (the conversion
 #                          models download on first use), but scanned PDFs and photos get no OCR
-#                          until you run ./install.sh again without --import-only.
+#                          until you run: rag-search setup
 #            --verify-only just check SHA256SUMS and exit
 set -euo pipefail
 
@@ -93,28 +94,8 @@ if [[ -x "$OLD_EXE" ]]; then
     fi
   fi
 fi
-WITH_ARGS=(); [[ $NO_MCP == 0 ]] && WITH_ARGS=(--with "mcp>=1.12,<2")
-# macOS: bundle Apple's on-device OCR (ocrmac) so scanned PDFs and photographed documents index
-# out of the box.  Without it, docling still tries to use it whenever OCR is needed, fails with
-# an ImportError, and that document is skipped -- a routine `uv tool install --force` upgrade
-# would otherwise silently drop OCR support again if it was ever added by hand after the fact.
-if [[ "$(uname -s)" == "Darwin" && $IMPORT_ONLY == 0 ]]; then
-  WITH_ARGS+=(--with ocrmac)
-fi
-# Apple Silicon: the document reader's runtime (mlx-vlm, and pillow-heif for iPhone photos) is part of the
-# tool environment for the same reason: the dashboard's "Install" button adds it with `uv pip install`,
-# but a later `uv tool install --force` (every upgrade) rebuilds the environment and would drop it.
-if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" && $IMPORT_ONLY == 0 ]]; then
-  WITH_ARGS+=(--with "mlx-vlm>=0.3.4" --with "pillow-heif>=0.18")
-fi
-# Intel Macs: PyTorch stopped publishing macOS x86_64 wheels after 2.2.2, and that build was
-# compiled against NumPy 1.x.  Without this pin uv picks NumPy 2 and torch cannot use it
-# ("Failed to initialize NumPy: _ARRAY_API not found").  transformers 5 requires PyTorch >= 2.4 and
-# would disable torch entirely ("PyTorch was not found"), so it is held at 4.x with huggingface_hub 0.x.
-if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "x86_64" ]]; then
-  say "Intel Mac detected: pinning numpy<2, transformers<5 and huggingface_hub<1 (the last PyTorch build for Intel Macs is 2.2.2)"
-  WITH_ARGS+=(--with "numpy<2" --with "transformers>=4.44,<5" --with "huggingface_hub>=0.30,<1")
-fi
+# Every Python package (the MCP adapter, Apple Vision OCR, the MLX document reader, HEIC support, the Intel-Mac pins)
+# is a dependency of the wheel itself (pyproject.toml, with platform markers): uv resolves them for this machine.
 if [[ $DEV == 1 ]]; then
   SDIST="$(ls "$HERE"/rag_search-*.tar.gz 2>/dev/null | head -1 || true)"
   [[ -n "$SDIST" ]] || die "no rag_search-*.tar.gz next to install.sh"
@@ -123,12 +104,12 @@ if [[ $DEV == 1 ]]; then
   mkdir -p "$DEV_DIR"
   tar -xzf "$SDIST" -C "$DEV_DIR" --strip-components=1
   say "Installing editable from $DEV_DIR (Python $PY_VER)"
-  uv tool install --force --python "$PY_VER" ${WITH_ARGS[@]+"${WITH_ARGS[@]}"} --editable "$DEV_DIR"
+  uv tool install --force --python "$PY_VER" --editable "$DEV_DIR"
 else
   WHEEL="$(ls "$HERE"/rag_search-*.whl 2>/dev/null | head -1 || true)"
   [[ -n "$WHEEL" ]] || die "no rag_search-*.whl next to install.sh"
   say "Installing $(basename "$WHEEL") (Python $PY_VER) - this downloads PyTorch and docling, a few GB"
-  uv tool install --force --python "$PY_VER" ${WITH_ARGS[@]+"${WITH_ARGS[@]}"} "$WHEEL"
+  uv tool install --force --python "$PY_VER" "$WHEEL"
 fi
 
 BIN_DIR="$(uv tool dir --bin)"
@@ -144,71 +125,21 @@ case ":$PATH:" in *":$BIN_DIR:"*) ;; *) echo "note: $BIN_DIR is not on your PATH
 
 HOME_ARGS=(); [[ -n "$HOME_OPT" ]] && HOME_ARGS=(--home "$HOME_OPT")
 
-# 4. models + checks ---------------------------------------------------------
-SETUP_ARGS=(); [[ -n "$MODELS_PRESET" ]] && SETUP_ARGS+=(--models "$MODELS_PRESET")
+# 4. first-time setup: models, the document reader, Tesseract, health check, daemons, Claude registration ------------
+# (the same steps as after `uv tool install rag-search`; see: rag-search setup --help)
+SETUP_ARGS=()
+[[ -n "$MODELS_PRESET" ]] && SETUP_ARGS+=(--models "$MODELS_PRESET")
+[[ $SKIP_MODELS == 1 ]] && SETUP_ARGS+=(--skip-models)
 [[ $IMPORT_ONLY == 1 ]] && SETUP_ARGS+=(--skip-docling)
-if [[ $SKIP_MODELS == 0 ]]; then
-  say "Downloading models (the default pair is about 5 GB, once; change them later with: rag-search models)"
-  "$EXE" ${HOME_ARGS[@]+"${HOME_ARGS[@]}"} setup ${SETUP_ARGS[@]+"${SETUP_ARGS[@]}"}
-else
-  "$EXE" ${HOME_ARGS[@]+"${HOME_ARGS[@]}"} setup --skip-models ${SETUP_ARGS[@]+"${SETUP_ARGS[@]}"}
-fi
-# 4b. the document reader and the repair model (Apple Silicon): the reader reads scanned pages, the larger
-# repair model takes over the pages the checks flag (shifted columns, a loop, a balance that does not add up)
-if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" && $IMPORT_ONLY == 0 && $SKIP_MODELS == 0 ]]; then
-  say "Downloading the document reader and the repair model (about 3 GB and 6 GB, once)"
-  "$EXE" ${HOME_ARGS[@]+"${HOME_ARGS[@]}"} models download --reader --repair \
-    || echo "warning: the reader models were not downloaded; run: rag-search models download --reader --repair"
-fi
+[[ $NO_TESSERACT == 1 ]] && SETUP_ARGS+=(--no-tesseract)
+[[ $SERVICE == 1 ]] && SETUP_ARGS+=(--service)
+[[ $NO_REGISTER == 1 || $NO_MCP == 1 ]] && SETUP_ARGS+=(--no-register)
+[[ -n "$PREFIX" ]] && SETUP_ARGS+=(--tool-prefix "$PREFIX")
+say "Setting up (the default models are about 5 GB, once; change them later with: rag-search models)"
+"$EXE" ${HOME_ARGS[@]+"${HOME_ARGS[@]}"} setup ${SETUP_ARGS[@]+"${SETUP_ARGS[@]}"} \
+  || echo "setup reported problems (see above); run it again with:  $EXE setup"
 
-# 4c. Tesseract: the last-resort reader for pages the vision model cannot read (Marathi, Hindi, English) ---
-if [[ $IMPORT_ONLY == 0 && $NO_TESSERACT == 0 ]]; then
-  say "Checking Tesseract (last-resort page reader)"
-  if ! command -v tesseract >/dev/null; then
-    if command -v brew >/dev/null; then
-      brew install tesseract || echo "warning: 'brew install tesseract' failed; pages the reader cannot read will stay flagged"
-    elif [[ "$(uname -s)" == "Linux" ]]; then
-      echo "note: install it with:  sudo apt-get install -y tesseract-ocr   (then run ./install.sh again)"
-    else
-      echo "note: Tesseract is not installed and Homebrew was not found; install it (https://brew.sh, then: brew install tesseract)"
-    fi
-  fi
-  if command -v tesseract >/dev/null; then
-    TESS_LANGS="$(tesseract --list-langs 2>&1 || true)"
-    TESSDATA="$(printf '%s\n' "$TESS_LANGS" | sed -n '1s/.*"\(.*\)".*/\1/p')"
-    for L in mar hin; do
-      printf '%s\n' "$TESS_LANGS" | grep -qx "$L" && continue
-      if [[ -n "$TESSDATA" && -w "$TESSDATA" ]] && command -v curl >/dev/null; then
-        echo "adding the $L language data to $TESSDATA"
-        curl -fsSL -o "$TESSDATA/$L.traineddata" "https://github.com/tesseract-ocr/tessdata_best/raw/main/$L.traineddata" \
-          || { rm -f "$TESSDATA/$L.traineddata"; echo "warning: could not download $L.traineddata"; }
-      else
-        echo "note: Tesseract has no '$L' data; put $L.traineddata (github.com/tesseract-ocr/tessdata_best) into ${TESSDATA:-its tessdata folder}"
-      fi
-    done
-  fi
-fi
-
-say "Health check"
-"$EXE" ${HOME_ARGS[@]+"${HOME_ARGS[@]}"} doctor || echo "doctor reported problems (see above)"
-
-# 5. daemons ----------------------------------------------------------------
-if [[ $SERVICE == 1 ]]; then
-  say "Installing launchd services (daemons start at login)"
-  "$EXE" ${HOME_ARGS[@]+"${HOME_ARGS[@]}"} service install
-else
-  say "Starting the daemons (always on until stopped; add --service to survive reboots)"
-  "$EXE" ${HOME_ARGS[@]+"${HOME_ARGS[@]}"} daemon start
-fi
-
-# 6. register ----------------------------------------------------------------
-if [[ $NO_REGISTER == 0 && $NO_MCP == 0 ]]; then
-  say "Registering with Claude"
-  REG=(register); [[ -n "$PREFIX" ]] && REG+=(--tool-prefix "$PREFIX")
-  "$EXE" ${HOME_ARGS[@]+"${HOME_ARGS[@]}"} "${REG[@]}"
-fi
-
-# 7. dashboard: bring it back if it was running before the upgrade ---------------
+# 5. dashboard: bring it back if it was running before the upgrade ---------------
 if [[ -n "$UI_PORT" ]]; then
   say "Restarting the web dashboard (port $UI_PORT)"
   "$EXE" ${HOME_ARGS[@]+"${HOME_ARGS[@]}"} ui --detach --no-browser --port "$UI_PORT" || echo "could not restart the dashboard; start it with: $EXE ui"

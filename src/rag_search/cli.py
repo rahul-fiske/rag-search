@@ -1860,7 +1860,46 @@ def _cmd_setup(a: argparse.Namespace) -> int:
     if not a.skip_models:
         for m in diagnostics.download_models(skip_docling=a.skip_docling):
             print("  " + m)
-    print("\nSetup complete. Next: rag-search register   (then restart Claude Desktop)")
+    if a.minimal:
+        print("\nSetup complete. Next: rag-search register   (then restart Claude Desktop)")
+        return EXIT_OK
+
+    import platform
+
+    conversion = not a.skip_docling                   # the steps that only indexing your own documents needs
+    if conversion and not a.skip_models and not a.skip_reader and platform.system() == "Darwin" \
+            and platform.machine() == "arm64":
+        print("\nDownloading the document reader and the repair model (about 3 GB and 6 GB, once) ...")
+        if _chain(["models", "download", "--reader", "--repair"]):
+            _err("warning: the reader models were not downloaded; run: rag-search models download --reader --repair")
+    if conversion and not a.no_tesseract:
+        print("\nChecking Tesseract (the last-resort page reader) ...")
+        from .core.conversion import tesseract
+
+        tesseract.ensure_installed(print)
+    print("\nHealth check ...")
+    if _chain(["doctor"]):
+        print("doctor reported problems (see above)")
+    if a.service:
+        print("\nInstalling the start-at-login services (launchd) ...")
+        _chain(["service", "install"])
+    elif not a.no_start:
+        print("\nStarting the daemons (always on until stopped; --service makes them start at login) ...")
+        _chain(["daemon", "start"])
+    if not a.no_register:
+        print("\nRegistering with Claude ...")
+        _chain(["register"] + (["--tool-prefix", a.tool_prefix] if a.tool_prefix else []))
+    print("\nSetup complete. Fully quit and reopen Claude Desktop (Cmd-Q), then ask: \"list my document collections\".\n"
+          "Next: rag-search location add NAME FOLDER, then rag-search index new --follow, then rag-search search \"...\".")
+    return EXIT_OK
+
+
+def _chain(argv: list[str]) -> int:
+    """Run another rag-search command in this process; its exit code (0 when it returns)."""
+    try:
+        main(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
     return EXIT_OK
 
 
@@ -1932,7 +1971,7 @@ def _print_readers(v: dict[str, Any] | None) -> None:
         print(f"   {mark} {c['label']:<28} {c['detail']}")
     if not v["runtime"]["ready"] and v["apple_silicon"]:
         print("   -> install the runtime: rag-search models runtime install   "
-              "(optional extra rag-search[mac-vlm], Apple Silicon only)")
+              "(Apple Silicon only; it normally comes with rag-search)")
     print("   (* in use, ! chosen but not usable yet)")
     for kind, title in (("reader", "reads pages"), ("repair", "re-reads suspect table cells and pages")):
         sec = v[kind]
@@ -2134,7 +2173,7 @@ def _cmd_models(a: argparse.Namespace) -> int:
             if a.json:
                 _json(rt)
                 return EXIT_OK
-            print(f"Document reader runtime (optional extra rag-search[{rt['extra']}], Apple Silicon only; "
+            print(f"Document reader runtime (a dependency of rag-search on Apple Silicon; "
                   f"installed with {rt['installer']} into {rt['python']})")
             for x in rt["packages"]:
                 print(f"  {'installed' if x['installed'] else 'missing  '}  {x['package']:<12} {x['what']}")
@@ -2726,11 +2765,19 @@ def build_parser() -> argparse.ArgumentParser:
     madd("status", "the running or last download/switch")
     madd("cancel", "stop the running download/switch")
 
-    p = add("setup", "create folders and download the models", _cmd_setup)
+    p = add("setup", "first-time setup: folders, models, Tesseract, health check, daemons, Claude registration", _cmd_setup)
     p.add_argument("--models", default="", metavar="PRESET",
                    help="use a model preset first: default, qwen3-small or qwen3-large")
-    p.add_argument("--skip-models", action="store_true")
-    p.add_argument("--skip-docling", action="store_true")
+    p.add_argument("--skip-models", action="store_true", help="download no model now (each downloads on first use)")
+    p.add_argument("--skip-docling", action="store_true",
+                   help="for collections that are only imported: no docling models, no document reader, no Tesseract")
+    p.add_argument("--skip-reader", action="store_true", help="do not download the document reader and the repair model")
+    p.add_argument("--no-tesseract", action="store_true", help="do not check for or install Tesseract")
+    p.add_argument("--no-start", action="store_true", help="do not start the daemons")
+    p.add_argument("--service", action="store_true", help="start the daemons at login (macOS launchd) instead of now")
+    p.add_argument("--no-register", action="store_true", help="do not touch the Claude Desktop / Claude Code configuration")
+    p.add_argument("--tool-prefix", default="", metavar="P", help="prefix the MCP tool names (they already start with rag_)")
+    p.add_argument("--minimal", action="store_true", help="only the folders and the two models (what setup did before 1.1)")
 
     p = add("doctor", "check the installation", _cmd_doctor)
     p.add_argument("--roundtrip", action="store_true",

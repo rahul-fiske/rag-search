@@ -83,7 +83,7 @@ conversion worker, the reader and the repair model one at a time) and keep other
 large run is going. 8 GB machines are not supported.
 
 * Intel Macs are supported on a best-effort basis: CPU only (no Metal, no document reader), so indexing and reranking
-  are much slower, and `install.sh` pins `numpy<2` because the last PyTorch build for Intel Macs needs it.
+  are much slower, and the package pins `numpy<2` there because the last PyTorch build for Intel Macs needs it.
 * Linux works too (CPU or CUDA), without Apple Vision, MLX or the document reader.
 
 ### Software
@@ -113,17 +113,22 @@ Unzip the release folder, open Terminal in it and run:
 ./install.sh
 ```
 
-This verifies `SHA256SUMS`, installs the wheel with `uv tool install` (including the MCP adapter and,
-on macOS, `ocrmac` for on-device OCR of scanned PDFs and photographed documents), downloads the
-models, runs `rag-search doctor`, starts both daemons and registers the adapter with Claude Desktop
-and Claude Code. **Fully quit and reopen Claude Desktop afterwards.**
+This verifies `SHA256SUMS` and installs the wheel with `uv tool install`. **Every Python package comes with the
+wheel** (`pyproject.toml`: the MCP adapter, Apple Vision OCR and the MLX document reader on a Mac, HEIC support,
+and the pins an Intel Mac needs, each with a platform marker), so the same install works from a release folder,
+from a clone (`uv tool install .`) and, later, from PyPI. Then it runs **`rag-search setup`**, which does the
+first-time work and can be run again at any time: downloads the models, the document reader and the repair model
+(Apple Silicon), installs Tesseract with Homebrew and its Marathi and Hindi data, runs `rag-search doctor`, starts
+both daemons and registers the adapter with Claude Desktop and Claude Code. **Fully quit and reopen Claude Desktop
+afterwards.**
 
-Options: `--home PATH` (custom data folder), `--service` (daemons start at login via launchd),
-`--tool-prefix P` (prefix tool names to
-avoid clashes with other servers), `--no-mcp` (CLI and daemons only), `--skip-models`,
-`--models PRESET` (install with another model pair: `default`, `qwen3-small`, `qwen3-large`; see "Models"),
-`--no-register`, `--python 3.11`, `--import-only` (for using collections someone else exported:
-skips the OCR engine and docling's document-conversion models; see "Sharing a collection").
+`rag-search setup` options (`install.sh` passes its own options on to it): `--models PRESET` (another model pair:
+`default`, `qwen3-small`, `qwen3-large`; see "Models"), `--skip-models`, `--skip-reader`, `--no-tesseract`,
+`--service` (daemons start at login via launchd), `--no-start`, `--no-register`, `--tool-prefix P` (prefix tool names
+to avoid clashes with other servers), `--skip-docling` (for using collections someone else exported: no docling
+models, no document reader, no Tesseract; see "Sharing a collection"), `--minimal` (only the folders and the two
+models). Other `install.sh` options: `--home PATH` (custom data folder), `--python 3.11`; `--no-mcp` and
+`--import-only` are the old names of `--no-register` and `--skip-docling`.
 
 Self-test (real daemons and models, three tiny documents): `rag-search doctor --roundtrip`.
 
@@ -669,7 +674,7 @@ Environment variables (override `config.json` where both exist):
 | `RAG_SEARCH_RESIDUE` (setting `indexer.residue`) | `off` | lane **c**. `auto` = a page with a text layer is also searched for regions of ink the text layer does not explain (a stamp, a signature, a drawing: at least 4 % of the page) and the document reader reads them, as it reads large embedded pictures (always, whatever this says). A region it cannot read leaves the page `low`. Measured: 10 % of 99 real text pages have such a region |
 | `RAG_SEARCH_ESCALATE_DIGITAL` (setting `indexer.escalate_digital`) | `off` | `auto` = a page with a text layer that still has lost text or garbled text after the text-layer fill is read as an image by the document reader (lane a or c to d); when the reader cannot, the text-layer result is kept and flagged |
 | `RAG_SEARCH_ROUTING` | `pages` | `pages` = each PDF page is read the way it needs (text-layer pages without forced OCR, scanned pages with full-page OCR, a page cache so nothing is read twice, a quality gate); `document` = one docling call per file as before (also the automatic fallback if routing fails for a document) |
-| `RAG_SEARCH_VLM` | `auto` | `auto` = scanned pages, large pictures in PDFs and image files are read by a vision-language model (the *document reader*, Apple Silicon, `pip install "rag-search[mac-vlm]"`, model downloaded with `rag-search models download --reader`) when it can run, with docling OCR as the per-page fallback; `off` = never start it |
+| `RAG_SEARCH_VLM` | `auto` | `auto` = scanned pages, large pictures in PDFs and image files are read by a vision-language model (the *document reader*, Apple Silicon, installed with rag-search, model downloaded with `rag-search models download --reader`) when it can run, with docling OCR as the per-page fallback; `off` = never start it |
 | `RAG_SEARCH_VLM_MODEL` / `RAG_SEARCH_REPAIR_MODEL` | catalogue default | the document reader / repair model (Hugging Face ORG/NAME); `rag-search models reader MODEL_ID` stores the choice |
 | `RAG_SEARCH_TESSERACT` / `RAG_SEARCH_TESSERACT_LANG` | `auto` / `mar+hin+eng` | the last-resort page reader (plain text, no tables) for a page the document reader and the repair model could not read; `off` switches it off, a language that is not installed is left out. `scripts/install.sh` installs Tesseract and its Marathi / Hindi data with Homebrew (`--no-tesseract` to skip) |
 | `RAG_SEARCH_REPAIR` | `auto` | `auto` = a table cell on a scanned page that breaks the table's arithmetic (a running balance, a total) is cut out, read again and replaced when a second, independent reader (Apple Vision, `ocrmac`) and the arithmetic agree; `off` = suspect pages are only flagged low-confidence |
@@ -696,9 +701,9 @@ reason ("the document reader did not read any page …; install it / choose it o
 indexed as an empty document. The proper fix is the document reader: the Models tab's *Document reader* card
 lists what is missing (an Apple Silicon Mac, the optional runtime `mlx-vlm` -- `rag-search models runtime
 install` or the *Install* button --, the model weights) and the Overview shows it under *Needs attention*. The
-runtime is an optional extra (`rag-search[mac-vlm]`) because it is Apple-only and large. `install.sh` adds it on
-Apple Silicon Macs (so an upgrade, which rebuilds the `uv tool` environment, keeps it); the *Install* button and
-`rag-search models runtime install` add it later with `uv pip install` into the environment rag-search runs in
+runtime (`mlx-vlm`) is a dependency of the package on Apple Silicon Macs, so it is installed with rag-search and an
+upgrade keeps it; the *Install* button and `rag-search models runtime install` repair it with `uv pip install` into
+the environment rag-search runs in
 (that environment has no pip; uv is looked for on the PATH and in `~/.local/bin`, `~/.cargo/bin`, Homebrew). The
 embedding model and the reranker need no extra package, only their weights.
 
@@ -717,11 +722,10 @@ typically several times slower than `auto` (the PDF backend itself is not slower
    It gives up nothing for PDFs that are really scans; it can only differ from `force` on PDFs whose
    text layer looks clean but reads tables worse than OCR does. Check on your own documents (below).
 2. `RAG_SEARCH_OCR_ENGINE=ocrmac` (macOS) - Apple's Vision OCR is much faster than the engines docling
-   uses otherwise, and `install.sh` installs it by default on macOS since 0.7.4 (`rag-search doctor`
+   uses otherwise, and it is a dependency of the package on macOS (`rag-search doctor`
    line "OCR" says what is installed). Without it, a document that needs OCR doesn't just fall back to a
    slower engine - it fails to convert at all, so this isn't purely a speed knob. On an install from
-   before 0.7.4, add it with `uv tool install --force --with ocrmac <path to the wheel/zip you installed
-   from>` or by re-running the current `install.sh`.
+   before 1.1 that lacks it, install the current release again.
 3. `RAG_SEARCH_TABLE_MODE=fast` - only if the tables come out well enough.
 4. Since 0.3.2 the models are loaded once per process instead of once per document, cores are shared between
    the workers (`RAG_SEARCH_THREADS`), and a document that runs past `RAG_SEARCH_DOC_TIMEOUT` (45 minutes)
@@ -797,9 +801,9 @@ removes it from search after the next `index new`.
   not inherit Terminal's access to `~/Documents`, `~/Desktop` or `~/Downloads`. Grant Full Disk Access to the tool's Python.
 * **Out of memory while indexing** – set `indexer.jobs` to 1 and lower `RAG_SEARCH_EMBED_BATCH`.
 * **"A module that was compiled using NumPy 1.x cannot be run in NumPy 2.x" / "Failed to initialize
-  NumPy: _ARRAY_API not found"** – Intel Mac with NumPy 2 installed next to the old PyTorch. Re-run
-  `./install.sh` from release 0.2.1 or later (it pins `numpy<2`), or by hand:
-  `uv tool install --force --python 3.12 --with "numpy<2" --with "transformers>=4.44,<5" --with "huggingface_hub>=0.30,<1" --with "mcp>=1.12,<2" rag_search-*.whl`.
+  NumPy: _ARRAY_API not found"** – Intel Mac with NumPy 2 installed next to the old PyTorch. Install the current
+  release again (the package pins `numpy<2`, `transformers<5` and `huggingface_hub<1` on Intel Macs), or by hand:
+  `uv tool install --force --python 3.12 --with "numpy<2" --with "transformers>=4.44,<5" --with "huggingface_hub>=0.30,<1" rag_search-*.whl`.
 * **"PyTorch >= 2.4 is required but found 2.2.2" / `import sentence_transformers` fails with
   `NameError: name 'nn' is not defined`** – Intel Mac with transformers 5. Same fix as above
   (release 0.2.1 or later does it automatically).

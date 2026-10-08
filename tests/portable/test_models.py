@@ -855,15 +855,63 @@ class CliTests(TempHome):
         rc, out, _ = run_cli("models", "status")
         self.assertIn("verify", out)
 
+    def test_setup_runs_every_step_and_each_one_can_be_left_out(self):
+        from rag_search.core import diagnostics
+        from rag_search.core.conversion import tesseract
+
+        chained = []
+
+        def fake_main(argv):
+            chained.append(list(argv))
+            raise SystemExit(0)
+
+        def run(*flags):
+            chained.clear()
+            with mock.patch.object(diagnostics, "download_models", return_value=["x"]), \
+                    mock.patch.object(tesseract, "ensure_installed") as tess, \
+                    mock.patch.object(cli, "main", fake_main), \
+                    mock.patch("platform.system", return_value="Darwin"), mock.patch("platform.machine", return_value="arm64"):
+                rc = cli._cmd_setup(cli.build_parser().parse_args(["setup", *flags]))
+            return rc, tess
+
+        rc, tess = run()
+        self.assertEqual(rc, 0)
+        self.assertEqual(chained, [["models", "download", "--reader", "--repair"], ["doctor"], ["daemon", "start"], ["register"]])
+        tess.assert_called_once()
+        rc, tess = run("--service", "--tool-prefix", "x_", "--no-tesseract")
+        self.assertEqual(chained, [["models", "download", "--reader", "--repair"], ["doctor"], ["service", "install"],
+                                   ["register", "--tool-prefix", "x_"]])
+        tess.assert_not_called()
+        rc, tess = run("--skip-reader", "--no-start", "--no-register")
+        self.assertEqual(chained, [["doctor"]])
+        rc, tess = run("--skip-docling")                          # imported collections only: no reader, no Tesseract
+        self.assertEqual(chained, [["doctor"], ["daemon", "start"], ["register"]])
+        tess.assert_not_called()
+        rc, tess = run("--minimal")
+        self.assertEqual(chained, [])
+
+    def test_a_step_that_fails_does_not_stop_the_setup(self):
+        from rag_search.core import diagnostics
+        from rag_search.core.conversion import tesseract
+
+        def failing(argv):
+            raise SystemExit(1)
+
+        with mock.patch.object(diagnostics, "download_models", return_value=[]), \
+                mock.patch.object(tesseract, "ensure_installed"), mock.patch.object(cli, "main", failing), \
+                mock.patch("platform.system", return_value="Linux"):
+            rc = cli._cmd_setup(cli.build_parser().parse_args(["setup"]))
+        self.assertEqual(rc, 0)
+
     def test_setup_with_a_preset(self):
         from rag_search.core import diagnostics
 
         with mock.patch.object(diagnostics, "download_models", return_value=["x"]) as dl:
-            rc, out, err = run_cli("setup", "--models", "qwen3-large")
+            rc, out, err = run_cli("setup", "--minimal", "--models", "qwen3-large")
         self.assertEqual(rc, 0, out + err)
         dl.assert_called_once()
         self.assertEqual(models.selection("embedding")[0], "Qwen/Qwen3-Embedding-4B")
-        rc, _, err = run_cli("setup", "--models", "nope", "--skip-models")
+        rc, _, err = run_cli("setup", "--minimal", "--models", "nope", "--skip-models")
         self.assertEqual(rc, 2)
 
 class DoctorTests(TempHome):

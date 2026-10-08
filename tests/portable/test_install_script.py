@@ -1,8 +1,7 @@
-"""scripts/install.sh: the Tesseract step, run on its own with stand-in binaries."""
+"""scripts/install.sh: what it passes to uv and to `rag-search setup`, run with stand-in `uv` and `rag-search` programs."""
 
 from __future__ import annotations
 
-import re
 import shutil
 import stat
 import subprocess
@@ -13,67 +12,75 @@ from tests.helpers import TempHome
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "install.sh"
 
+FAKE_UV = """#!/bin/sh
+echo "uv $*" >> "$LOG"
+if [ "$1" = "tool" ] && [ "$2" = "dir" ]; then echo "$BIN"; fi
+exit 0
+"""
+FAKE_RAG = """#!/bin/sh
+echo "rag-search $*" >> "$LOG"
+if [ "$1" = "--version" ]; then echo "rag-search 1.2.3"; fi
+exit 0
+"""
 
-def tesseract_block() -> str:
-    text = SCRIPT.read_text(encoding="utf-8")
-    m = re.search(r"^# 4c\. Tesseract.*?(?=^say \"Health check\")", text, re.S | re.M)
-    assert m, "the Tesseract step is missing from install.sh"
-    return m.group(0)
+
+def make_exe(path: Path, text: str) -> None:
+    path.write_text(text)
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
 @unittest.skipUnless(shutil.which("bash"), "needs bash")
-class TesseractStepTests(TempHome):
-    def run_block(self, *, fake_tesseract: str | None, extra_env: dict[str, str] | None = None) -> str:
-        bindir = self.tmp / "bin"
-        bindir.mkdir()
-        if fake_tesseract is not None:
-            exe = bindir / "tesseract"
-            exe.write_text(fake_tesseract)
-            exe.chmod(exe.stat().st_mode | stat.S_IXUSR)
-        script = ('set -euo pipefail; say(){ printf "==> %s\\n" "$*"; }; IMPORT_ONLY=0; NO_TESSERACT='
-                  + (extra_env or {}).get("NO_TESSERACT", "0") + "\n" + tesseract_block())
-        # only the tools the step uses, and no tesseract, brew or curl from this machine: the step must not find a
-        # real Tesseract or download language data into the system (a Linux test box has both)
-        for tool in ("sed", "grep", "rm", "cat"):
-            found = shutil.which(tool)
-            if found and not (bindir / tool).exists():
-                (bindir / tool).symlink_to(found)
-        uname = bindir / "uname"                         # the Mac branch of the step, on any machine
-        uname.write_text("#!/bin/sh\necho Darwin\n")
-        uname.chmod(uname.stat().st_mode | stat.S_IXUSR)
-        env = {"PATH": str(bindir), "HOME": str(self.tmp)}
-        proc = subprocess.run([shutil.which("bash"), "-c", script], capture_output=True, text=True, env=env, timeout=60)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        return proc.stdout
+class InstallerTests(TempHome):
+    def setUp(self):
+        super().setUp()
+        self.rel = self.tmp / "release"
+        self.rel.mkdir()
+        shutil.copy(SCRIPT, self.rel / "install.sh")
+        (self.rel / "rag_search-1.2.3-py3-none-any.whl").write_bytes(b"not a wheel: the stand-in uv does not read it")
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        make_exe(self.bin / "uv", FAKE_UV)
+        make_exe(self.bin / "rag-search", FAKE_RAG)
+        self.log = self.tmp / "calls.log"
 
-    def fake(self, langs: str, data_dir: Path) -> str:
-        return ('#!/bin/sh\nif [ "$1" = "--list-langs" ]; then\n'
-                f'  echo \'List of available languages in "{data_dir}/" (2):\'\n'
-                + "".join(f"  echo {x}\n" for x in langs.split()) + "fi\n")
+    def run_install(self, *args: str) -> list[str]:
+        env = {"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.tmp), "LOG": str(self.log), "BIN": str(self.bin)}
+        proc = subprocess.run(["bash", str(self.rel / "install.sh"), *args], capture_output=True, text=True, env=env,
+                              timeout=60, cwd=self.rel)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        return self.log.read_text().splitlines()
 
-    def test_nothing_is_done_when_the_languages_are_there(self):
-        out = self.run_block(fake_tesseract=self.fake("eng hin mar osd", self.tmp))
-        self.assertNotIn("note:", out)
-        self.assertNotIn("adding", out)
+    def test_the_wheel_is_installed_with_no_extra_packages_and_setup_does_the_rest(self):
+        calls = self.run_install()
+        installs = [c for c in calls if c.startswith("uv tool install")]
+        self.assertEqual(len(installs), 1)
+        self.assertNotIn("--with", installs[0])                       # every package is a dependency of the wheel
+        self.assertTrue(installs[0].endswith("rag_search-1.2.3-py3-none-any.whl"))
+        self.assertIn("--python 3.12", installs[0])
+        setups = [c for c in calls if c.startswith("rag-search") and " setup" in c]
+        self.assertEqual(setups, ["rag-search setup"])                # one call: models, reader, Tesseract, daemons, Claude
+        for old in ("models download", "doctor", "daemon start", "register"):
+            self.assertFalse([c for c in calls if c.startswith("rag-search " + old)], old)
 
-    def test_missing_language_data_is_reported_when_the_folder_cannot_be_written(self):
-        out = self.run_block(fake_tesseract=self.fake("eng", Path("/nonexistent/tessdata")))
-        self.assertIn("no 'mar' data", out)
-        self.assertIn("no 'hin' data", out)
+    def test_the_options_become_setup_options(self):
+        calls = self.run_install("--home", "/data/rag", "--models", "qwen3-small", "--no-tesseract", "--service",
+                                 "--tool-prefix", "x_", "--import-only", "--skip-models", "--no-register")
+        setup = [c for c in calls if " setup" in c][0]
+        self.assertTrue(setup.startswith("rag-search --home /data/rag setup"))
+        for part in ("--models qwen3-small", "--skip-models", "--skip-docling", "--no-tesseract", "--service",
+                     "--no-register", "--tool-prefix x_"):
+            self.assertIn(part, setup)
 
-    def test_a_missing_tesseract_without_homebrew_says_how_to_get_it(self):
-        out = self.run_block(fake_tesseract=None)
-        self.assertIn("Tesseract is not installed", out)
+    def test_no_mcp_is_no_registration(self):
+        setup = [c for c in self.run_install("--no-mcp") if " setup" in c][0]
+        self.assertIn("--no-register", setup)
 
-    def test_no_tesseract_skips_the_step(self):
-        out = self.run_block(fake_tesseract=None, extra_env={"NO_TESSERACT": "1"})
-        self.assertNotIn("Checking Tesseract", out)
-
-    def test_the_options_and_the_reader_models_are_in_the_installer(self):
-        text = SCRIPT.read_text(encoding="utf-8")
-        self.assertIn("--no-tesseract", text)
-        self.assertIn("models download --reader --repair", text)
+    def test_the_script_is_valid_shell_and_lists_no_packages(self):
         self.assertEqual(subprocess.run(["bash", "-n", str(SCRIPT)]).returncode, 0)
+        text = SCRIPT.read_text(encoding="utf-8")
+        for package in ("ocrmac", "mlx-vlm", "pillow-heif", "mcp>=", "numpy<2", "transformers>="):
+            self.assertNotIn(f'--with "{package}', text)
+            self.assertNotIn(f"--with {package}", text)
 
 
 if __name__ == "__main__":

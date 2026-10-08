@@ -19,7 +19,7 @@ Protocol: one JSON object per line on the child's stdin / stdout.
 the router can hand it the scanned pages of a PDF or the frames of an image file.  The reader is
 started when the first page is queued and kept for the rest of the run (``shared`` / ``close_shared``).
 
-Backends: ``mlx`` (mlx-vlm, Apple Silicon; the extra ``rag-search[mac-vlm]``) or ``module:attr`` of
+Backends: ``mlx`` (mlx-vlm, Apple Silicon; a dependency of rag-search there) or ``module:attr`` of
 your own class (the tests use ``tests.helpers:FakeVlmBackend``).  ``$RAG_SEARCH_VLM_BACKEND`` chooses.
 The real backend never downloads a model: one that is not on disk is reported, and the page is read
 by docling.
@@ -426,7 +426,7 @@ class VlmReader:
         import importlib.util
 
         if importlib.util.find_spec("mlx_vlm") is None:
-            raise ReaderUnavailable("mlx-vlm is not installed (pip install 'rag-search[mac-vlm]')")
+            raise ReaderUnavailable("mlx-vlm is not installed (rag-search models runtime install)")
         if not models.cache_state(self.model)["cached"]:
             raise ReaderUnavailable(f"the model {self.model} is not downloaded "
                                     f"(rag-search models download {self.model})")

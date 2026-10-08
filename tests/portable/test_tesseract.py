@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import stat
+import subprocess
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from tests.helpers import TempHome
@@ -74,6 +76,120 @@ class ModuleTests(TempHome):
 
 
 @unittest.skipUnless(HAVE_PDF, "needs pypdfium2 and Pillow")
+class EnsureInstalledTests(TempHome):
+    """``rag-search setup``'s Tesseract step, with stand-in programs and no network."""
+
+    def setUp(self):
+        super().setUp()
+        self.bindir = self.tmp / "bin"
+        self.bindir.mkdir()
+        self.said: list[str] = []
+        self.old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = str(self.bindir)                     # no tesseract, brew or curl from this machine
+        tesseract._langs_cache.clear()
+        self.addCleanup(self.restore)
+
+    def restore(self):
+        os.environ["PATH"] = self.old_path
+        tesseract._langs_cache.clear()
+
+    def exe(self, name: str, text: str) -> Path:
+        path = self.bindir / name
+        path.write_text(text)
+        path.chmod(path.stat().st_mode | stat.S_IXUSR)
+        return path
+
+    def fake_tesseract(self, langs: str, data_dir: Path) -> None:
+        self.exe("tesseract", '#!/bin/sh\nif [ "$1" = "--list-langs" ]; then\n'
+                 f'  echo \'List of available languages in "{data_dir}/" (2):\'\n'
+                 + "".join(f"  echo {x}\n" for x in langs.split()) + "fi\n")
+
+    def run_step(self, **kw):
+        tesseract.ensure_installed(self.said.append, **kw)
+        return "\n".join(self.said)
+
+    def test_nothing_is_done_when_the_languages_are_there(self):
+        self.fake_tesseract("eng hin mar osd", self.tmp)
+        out = self.run_step()
+        self.assertEqual(out, "")
+
+    def test_the_missing_language_data_is_downloaded_into_a_writable_folder(self):
+        data = self.tmp / "tessdata"
+        data.mkdir()
+        self.fake_tesseract("eng", data)
+        asked = []
+
+        class Resp:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *a):
+                return False
+
+            def read(self_inner):
+                return b"traineddata"
+
+        def opener(url, timeout=0):
+            asked.append(url)
+            return Resp()
+
+        with mock.patch.object(tesseract.urllib.request, "urlopen", opener):
+            out = self.run_step()
+        self.assertEqual(sorted(p.name for p in data.iterdir()), ["hin.traineddata", "mar.traineddata"])
+        self.assertEqual(len(asked), 2)
+        self.assertTrue(all("tessdata_best" in u for u in asked))
+        self.assertIn("adding the mar language data", out)
+
+    def test_a_failed_download_leaves_no_file_and_says_so(self):
+        data = self.tmp / "tessdata"
+        data.mkdir()
+        self.fake_tesseract("eng hin", data)
+        with mock.patch.object(tesseract.urllib.request, "urlopen", side_effect=OSError("offline")):
+            out = self.run_step()
+        self.assertEqual(list(data.iterdir()), [])
+        self.assertIn("could not download mar.traineddata", out)
+
+    def test_a_folder_that_cannot_be_written_is_reported(self):
+        self.fake_tesseract("eng", Path("/nonexistent/tessdata"))
+        out = self.run_step()
+        self.assertIn("no 'mar' data", out)
+        self.assertIn("no 'hin' data", out)
+
+    def test_only_looking_changes_nothing(self):
+        data = self.tmp / "tessdata"
+        data.mkdir()
+        self.fake_tesseract("eng", data)
+        with mock.patch.object(tesseract.urllib.request, "urlopen", side_effect=AssertionError("no network")):
+            out = self.run_step(install=False)
+        self.assertEqual(list(data.iterdir()), [])
+        self.assertIn("no 'mar' data", out)
+
+    def test_a_missing_tesseract_is_installed_with_homebrew_when_it_is_there(self):
+        calls = []
+        self.exe("brew", "#!/bin/sh\n")
+
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+            if cmd[:2] == ["brew", "install"]:
+                self.fake_tesseract("eng hin mar", self.tmp)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        with mock.patch.object(tesseract.subprocess, "run", fake_run):
+            out = self.run_step()
+        self.assertEqual(calls[0], ["brew", "install", "tesseract"])
+        self.assertIn("Installing Tesseract with Homebrew", out)
+        self.assertNotIn("warning", out)
+
+    def test_without_homebrew_it_says_how_to_get_tesseract(self):
+        with mock.patch.object(tesseract.sys, "platform", "darwin"):
+            out = self.run_step()
+        self.assertIn("Tesseract is not installed", out)
+        self.assertIn("brew install tesseract", out)
+        self.said.clear()
+        with mock.patch.object(tesseract.sys, "platform", "linux"):
+            self.assertIn("apt-get install -y tesseract-ocr", self.run_step())
+
+
 class LastResortTests(RoutedVlmBase):
     TEXT = ("Clause one binds the seller to deliver the property. Clause two binds the buyer to pay the sum "
             "agreed on the date named in the schedule below. " * 3)

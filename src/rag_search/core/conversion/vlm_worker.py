@@ -32,7 +32,7 @@ def rss_mb() -> float:
 
 
 class MlxBackend:
-    """mlx-vlm on Apple Silicon (``pip install 'rag-search[mac-vlm]'``).  Greedy decoding."""
+    """mlx-vlm on Apple Silicon (a dependency of rag-search).  Greedy decoding."""
 
     def __init__(self, model_id: str) -> None:
         try:
@@ -40,7 +40,7 @@ class MlxBackend:
             from mlx_vlm.prompt_utils import apply_chat_template
             from mlx_vlm.utils import load_config
         except ImportError as exc:
-            raise RuntimeError("mlx-vlm is not installed (pip install 'rag-search[mac-vlm]'; "
+            raise RuntimeError("mlx-vlm is not installed (rag-search models runtime install; "
                                f"Apple Silicon only): {exc}") from exc
         self._stream, self._template = stream_generate, apply_chat_template
         self.model, self.processor = load(model_id)

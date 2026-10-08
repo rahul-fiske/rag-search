@@ -250,8 +250,8 @@ collections it may use. The MCP adapter fixes it from `--profile NAME`; it is de
 
 `tests` check that importing the light modules never pulls in numpy/torch/docling/mcp, that
 only `rag_search/mcp/` imports `mcp`, and that the adapter can neither manage access nor reach
-collection management (`bundle`, `lifecycle`, location changes). The adapter is optional
-(`rag-search[mcp]`).
+collection management (`bundle`, `lifecycle`, location changes). The adapter is installed with the
+package (a dependency since 1.1; `rag-search register` adds it to Claude).
 
 ## 5. Indexing and search flows
 
@@ -650,7 +650,7 @@ EXIF orientation applied; HEIC with `pillow-heif`) and large pictures on text pa
   `{"ok":true,"md":...,"tokens":N,"seconds":S,"rss_mb":R}`, `{"op":"quit"}`); library output goes to stderr.
   The model's memory never sits in the indexer worker next to docling and torch, and goes back to the system
   when the child exits. A reader reading thread gives every wait a timeout.
-* **Backends.** `mlx` (mlx-vlm, Apple Silicon only, extra `rag-search[mac-vlm]`) or `module:attr` of your own
+* **Backends.** `mlx` (mlx-vlm, Apple Silicon only, a dependency of the package there) or `module:attr` of your own
   class (`RAG_SEARCH_VLM_BACKEND`; the tests use `tests.helpers:FakeVlmBackend`). The real backend **never
   downloads**: `VlmReader.preflight` reports a model that is not in the Hugging Face cache (the child runs with
   `HF_HUB_OFFLINE=1`), a missing mlx-vlm, or a machine that is not an Apple Silicon Mac.
@@ -699,7 +699,7 @@ EXIF orientation applied; HEIC with `pillow-heif`) and large pictures on text pa
   `tesseract` binary with `mar+hin+eng` (the installed subset; `RAG_SEARCH_TESSERACT_LANG`, `RAG_SEARCH_TESSERACT=off`),
   psm 4: plain text in reading order, no tables, 1 to 13 s a page, and it cannot loop. Kept only when it is real
   text and not a runaway; the page record says `tesseract` (branch `fallback`) and the note why. A missing
-  binary or language is a note, not a failure (`rag-search doctor` and `scripts/install.sh` check both).
+  binary or language is a note, not a failure (`rag-search doctor` checks both; `rag-search setup` installs them).
 * **Last resort: Apple Vision.** docling's OCR cannot read a photographed page (its layout model calls the
   whole photo one picture and drops the text inside it). When a `fallback` page comes back without real text
   (only `<!-- image -->` and a class label), or a document converted whole has no text at all, and this Mac
