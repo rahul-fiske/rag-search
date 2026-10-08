@@ -817,4 +817,4 @@ python -m unittest discover -s tests/portable -t .
 ```
 
 See `ARCHITECTURE.md` (design, on-disk format, protocol) and `CONTRIBUTING.md` (code map,
-conventions). No license has been chosen yet: all rights are reserved by the author.
+conventions). Released under the MIT License (see `LICENSE`).
