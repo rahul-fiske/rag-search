@@ -162,6 +162,10 @@ its Markdown (steps R0a and R0b of
 
 ## Building a release
 
+Releases are built and published by GitHub Actions: see `docs/RELEASING.md` (one-time setup, the steps, the version rule).
+The local build below is for trying a release folder (`install.sh`) on this machine only; never upload it.
+
+
 ```bash
 scripts/build_release.sh     # dist/rag-search-<version>/ (wheel, sdist, install.sh, SHA256SUMS) + .zip
 ```

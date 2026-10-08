@@ -1,0 +1,134 @@
+name: Release
+
+# A tag vX.Y.Z (on a commit whose package version is X.Y.Z) builds the package from a clean checkout, checks it,
+# publishes it to TestPyPI and, after an approval, to PyPI, then creates the GitHub Release.
+# Run by hand (Actions > Release > Run workflow) it builds and publishes to TestPyPI only.
+# No password or token is stored: PyPI trusted publishing (OIDC). See docs/RELEASING.md.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: The tag is the package version
+        if: github.ref_type == 'tag'
+        run: python3 scripts/check_release.py tag "$GITHUB_REF_NAME"
+      - run: uv build --out-dir dist
+      - run: uvx twine check dist/*
+      - run: python3 scripts/check_release.py dist dist
+      - name: Nothing private in the files
+        env:
+          RAG_SEARCH_RELEASE_DENY: ${{ secrets.RELEASE_DENY_WORDS }}
+        run: |
+          test -n "$RAG_SEARCH_RELEASE_DENY" || { echo "set the repository secret RELEASE_DENY_WORDS (comma-separated words that must not appear)"; exit 1; }
+          python3 scripts/release_guard.py dist/*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  # The built wheel installs on a Mac and on Linux, and says the version it is.
+  smoke:
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-latest]
+    steps:
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - name: "Install the wheel (CPU PyTorch on Linux, no CUDA download)"
+        run: uv tool install --python 3.12 --torch-backend cpu dist/*.whl
+      - name: It starts and its packages are there
+        run: |
+          VER="$(basename dist/*.whl | cut -d- -f2)"
+          test "$(rag-search --version)" = "rag-search $VER"
+          rag-search setup --help > /dev/null
+          PY="$(uv tool dir)/rag-search/bin/python"
+          "$PY" -c "import mcp, docling, sentence_transformers, pillow_heif"
+          if [ "$(uname -s)" = "Darwin" ]; then "$PY" -c "import ocrmac, mlx_vlm"; fi
+
+  testpypi:
+    needs: [build, smoke]
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/rag-search
+    permissions:
+      id-token: write
+    steps:
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - run: >
+          uv publish --trusted-publishing always
+          --publish-url https://test.pypi.org/legacy/
+          --check-url https://test.pypi.org/simple/
+          dist/*
+
+  pypi:
+    if: github.ref_type == 'tag'
+    needs: testpypi
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/rag-search
+    permissions:
+      id-token: write
+    steps:
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - run: uv publish --trusted-publishing always dist/*
+
+  # What a user does: install it from PyPI, on a Mac.
+  verify:
+    needs: pypi
+    runs-on: macos-14
+    steps:
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Install from PyPI (the index can take a minute to show a new release)
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            uv tool install --python 3.12 --refresh "rag-search==$VER" && break
+            echo "not on the index yet; waiting"; sleep 30
+          done
+          test "$(rag-search --version)" = "rag-search $VER"
+
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - name: The GitHub Release, with the files attached
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          FLAGS=""
+          case "$GITHUB_REF_NAME" in *a[0-9]*|*b[0-9]*|*rc[0-9]*) FLAGS="--prerelease";; esac
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "rag-search ${GITHUB_REF_NAME#v}" \
+            --generate-notes --verify-tag $FLAGS
