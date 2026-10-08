@@ -59,22 +59,22 @@ REL="$OUT/$NAME"
 # the dashboard shows README and ARCHITECTURE; ship exactly the current copies
 mkdir -p src/rag_search/ui/static/docs
 cp README.md ARCHITECTURE.md src/rag_search/ui/static/docs/
-rm -rf build src/*.egg-info "$REL" "$OUT/$NAME.zip" "$OUT"/rag_search-"$VER"-py3-none-any.whl "$OUT"/rag_search-"$VER".tar.gz
+rm -rf build src/*.egg-info "$REL" "$OUT/$NAME.zip" "$OUT"/rag_search_local-"$VER"-py3-none-any.whl "$OUT"/rag_search_local-"$VER".tar.gz
 mkdir -p "$REL"
 
 if command -v uv >/dev/null; then uv build --out-dir "$OUT" ${BUILD_ARGS:-}
 else python3 -m build --outdir "$OUT"; fi
-# older setuptools name the sdist after the project as written ("rag-search-…"); install.sh and
+# older setuptools name the sdist after the project as written ("rag-search-local-…"); install.sh and
 # SHA256SUMS expect the normalised name
-if [[ -f "$OUT/rag-search-$VER.tar.gz" && ! -f "$OUT/rag_search-$VER.tar.gz" ]]; then
-  mv "$OUT/rag-search-$VER.tar.gz" "$OUT/rag_search-$VER.tar.gz"
+if [[ -f "$OUT/rag-search-local-$VER.tar.gz" && ! -f "$OUT/rag_search_local-$VER.tar.gz" ]]; then
+  mv "$OUT/rag-search-local-$VER.tar.gz" "$OUT/rag_search_local-$VER.tar.gz"
 fi
 
-cp "$OUT"/rag_search-"$VER"-py3-none-any.whl "$OUT"/rag_search-"$VER".tar.gz "$REL"/
+cp "$OUT"/rag_search_local-"$VER"-py3-none-any.whl "$OUT"/rag_search_local-"$VER".tar.gz "$REL"/
 cp scripts/install.sh scripts/uninstall.sh scripts/run_sample.sh README.md ARCHITECTURE.md "$REL"/
 chmod +x "$REL"/*.sh
 ( cd "$REL"
-  if command -v shasum >/dev/null; then shasum -a 256 rag_search-* > SHA256SUMS; else sha256sum rag_search-* > SHA256SUMS; fi )
+  if command -v shasum >/dev/null; then shasum -a 256 rag_search_local-* > SHA256SUMS; else sha256sum rag_search_local-* > SHA256SUMS; fi )
 ( cd "$OUT" && zip -qr "$NAME.zip" "$NAME" )
 
 if [[ $EXTERNAL == 1 ]]; then

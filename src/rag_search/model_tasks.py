@@ -484,7 +484,7 @@ def install_command(reqs: list[str]) -> list[str]:
     quoted = " ".join(f'"{r}"' for r in reqs)
     raise TaskError("neither uv nor pip could be found for rag-search's Python environment (it was installed "
                     "with uv, which does not include pip, and uv is not in the dashboard's PATH). "
-                    f"In a terminal run:  uv pip install --python \"$(uv tool dir)/rag-search/bin/python\" {quoted}")
+                    f"In a terminal run:  uv pip install --python \"{sys.executable}\" {quoted}")
 
 
 def _stream(cmd: list[str], task: Task) -> int:

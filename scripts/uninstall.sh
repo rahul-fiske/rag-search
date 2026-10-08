@@ -20,7 +20,8 @@ if [[ -x "$EXE" ]]; then
   "$EXE" service uninstall || true   # also stops the daemons
   "$EXE" daemon stop || true
   DATA="$("$EXE" paths home)"
-  uv tool uninstall rag-search
+  uv tool uninstall rag-search-local
+  uv tool uninstall rag-search >/dev/null 2>&1 || true    # the name before 1.1
 else
   DATA="${HOME_OPT:-${RAG_SEARCH_HOME:-$HOME/Library/Application Support/rag-search}}"
 fi

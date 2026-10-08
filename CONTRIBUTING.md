@@ -87,7 +87,7 @@ and daemons use -- the `uv tool` environment -- not in a separate virtualenv or 
 ./install.sh --dev                       # from an unpacked release folder: installs the tool EDITABLE from a source tree
 # or, in this checkout (every package, including the Apple-only ones, is a dependency in pyproject.toml):
 uv tool install --force --python 3.12 --editable .
-PY="$(uv tool dir)/rag-search/bin/python"
+PY="$(uv tool dir)/rag-search-local/bin/python"
 "$PY" -c "import rag_search; print(rag_search.__version__, rag_search.__file__)"   # must be this checkout
 "$PY" scripts/sanity_check.py            # quick: environment, packages, MLX/GPU, models downloaded
 "$PY" scripts/sanity_check.py --all      # + Apple Vision, the document reader, docling, a Playground index, models verify

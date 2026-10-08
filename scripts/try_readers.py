@@ -3,7 +3,7 @@
 
 Run it with rag-search's own Python, so it sees the same packages the dashboard does:
 
-    "$(uv tool dir)/rag-search/bin/python" scripts/try_readers.py ~/Documents/passbook.pdf
+    "$(uv tool dir)/rag-search-local/bin/python" scripts/try_readers.py ~/Documents/passbook.pdf
     ... try_readers.py FILE --pages 1-2 --readers apple-vision,vlm      # a subset
     ... try_readers.py FILE --out /tmp/readers                          # where the results go
     ... try_readers.py FILE --readers vlm --pages 1 --show              # print the full text of the page

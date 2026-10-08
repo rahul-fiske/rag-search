@@ -4,7 +4,7 @@
 Run it with the Python of the installed tool (the one the dashboard and the daemons use), never with a
 system Python or a separate virtualenv -- the point is to test what the user's dashboard really runs:
 
-    "$(uv tool dir)/rag-search/bin/python" scripts/sanity_check.py              # quick: no model is loaded
+    "$(uv tool dir)/rag-search-local/bin/python" scripts/sanity_check.py              # quick: no model is loaded
     ... sanity_check.py --apple-vision      # + Apple Vision reads a generated image (Latin; Devanagari if a font exists)
     ... sanity_check.py --vlm               # + the document reader model reads a generated scan (loads the model)
     ... sanity_check.py --docling           # + docling converts a generated digital PDF (loads docling's models)
@@ -130,9 +130,9 @@ def check_python() -> tuple[str, str]:
     except (OSError, subprocess.SubprocessError):
         pass
     notes = [f"python {sys.version.split()[0]} at {exe}", f"rag_search {rag_search.__version__} from {where}"]
-    if "rag-search" not in exe.parts and not (tool and str(exe).startswith(tool)):
+    if "rag-search-local" not in exe.parts and not (tool and str(exe).startswith(tool)):
         return "FAIL", "; ".join(notes + ["this is not the installed tool's Python: run with "
-                                           '"$(uv tool dir)/rag-search/bin/python"'])
+                                           '"$(uv tool dir)/rag-search-local/bin/python"'])
     if SOURCE_INIT.exists():
         m = re.search(r'__version__\s*=\s*"([^"]+)"', SOURCE_INIT.read_text())
         if m and m.group(1) != rag_search.__version__:

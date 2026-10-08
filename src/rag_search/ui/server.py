@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from .. import __version__, access, api, catalog, model_tasks, models, playground_runs, policy, spec
+from .. import DIST_NAME, __version__, access, api, catalog, model_tasks, models, playground_runs, policy, spec
 from ..config import ConfigStore, update_config
 from ..paths import Paths, allow_cloud_files, detached_start, pasted_path, ensure_dirs, get_paths, parse_collections
 from . import info, markdown
@@ -46,7 +46,7 @@ def installed_version() -> str:
     now = time.monotonic()
     if now - _INSTALLED["at"] > 30:
         try:
-            version = importlib.metadata.version("rag-search")
+            version = importlib.metadata.version(DIST_NAME)
         except Exception:  # noqa: BLE001 - not installed as a package (source tree), or unreadable
             version = ""
         _INSTALLED.update(at=now, version=version)

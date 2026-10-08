@@ -96,9 +96,11 @@ if [[ -x "$OLD_EXE" ]]; then
 fi
 # Every Python package (the MCP adapter, Apple Vision OCR, the MLX document reader, HEIC support, the Intel-Mac pins)
 # is a dependency of the wheel itself (pyproject.toml, with platform markers): uv resolves them for this machine.
+# before 1.1 the tool environment was called rag-search (the PyPI name is rag-search-local): remove the old one
+uv tool list 2>/dev/null | grep -q '^rag-search ' && uv tool uninstall rag-search >/dev/null 2>&1 || true
 if [[ $DEV == 1 ]]; then
-  SDIST="$(ls "$HERE"/rag_search-*.tar.gz 2>/dev/null | head -1 || true)"
-  [[ -n "$SDIST" ]] || die "no rag_search-*.tar.gz next to install.sh"
+  SDIST="$(ls "$HERE"/rag_search_local-*.tar.gz 2>/dev/null | head -1 || true)"
+  [[ -n "$SDIST" ]] || die "no rag_search_local-*.tar.gz next to install.sh"
   DEV_DIR="${DEV_DIR:-$PWD/rag-search-src}"
   say "Unpacking source to $DEV_DIR"
   mkdir -p "$DEV_DIR"
@@ -106,15 +108,15 @@ if [[ $DEV == 1 ]]; then
   say "Installing editable from $DEV_DIR (Python $PY_VER)"
   uv tool install --force --python "$PY_VER" --editable "$DEV_DIR"
 else
-  WHEEL="$(ls "$HERE"/rag_search-*.whl 2>/dev/null | head -1 || true)"
-  [[ -n "$WHEEL" ]] || die "no rag_search-*.whl next to install.sh"
+  WHEEL="$(ls "$HERE"/rag_search_local-*.whl 2>/dev/null | head -1 || true)"
+  [[ -n "$WHEEL" ]] || die "no rag_search_local-*.whl next to install.sh"
   say "Installing $(basename "$WHEEL") (Python $PY_VER) - this downloads PyTorch and docling, a few GB"
   uv tool install --force --python "$PY_VER" "$WHEEL"
 fi
 
 BIN_DIR="$(uv tool dir --bin)"
 if [[ $DEV == 0 ]]; then
-  WANT="$(basename "$WHEEL" | sed -E 's/^rag_search-([^-]+)-.*/\1/')"
+  WANT="$(basename "$WHEEL" | sed -E 's/^rag_search_local-([^-]+)-.*/\1/')"
   GOT="$("$BIN_DIR/rag-search" --version 2>/dev/null | awk '{print $2}')"
   say "Installed rag-search $GOT (release $WANT)"
   [[ "$GOT" == "$WANT" ]] || die "installed version ($GOT) is not the release ($WANT): run  uv cache clean rag-search  and try again"
@@ -126,7 +128,7 @@ case ":$PATH:" in *":$BIN_DIR:"*) ;; *) echo "note: $BIN_DIR is not on your PATH
 HOME_ARGS=(); [[ -n "$HOME_OPT" ]] && HOME_ARGS=(--home "$HOME_OPT")
 
 # 4. first-time setup: models, the document reader, Tesseract, health check, daemons, Claude registration ------------
-# (the same steps as after `uv tool install rag-search`; see: rag-search setup --help)
+# (the same steps as after `uv tool install rag-search-local`; see: rag-search setup --help)
 SETUP_ARGS=()
 [[ -n "$MODELS_PRESET" ]] && SETUP_ARGS+=(--models "$MODELS_PRESET")
 [[ $SKIP_MODELS == 1 ]] && SETUP_ARGS+=(--skip-models)

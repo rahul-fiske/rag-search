@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import DIST_NAME
 from .paths import (DEFAULT_MODEL, DEFAULT_RERANK_MODEL, META_FILE, ALL_DIR, Paths, configured_model,
                     env_flag, read_json)
 
@@ -326,7 +327,7 @@ def runtime_requirements() -> list[str]:
     list when the metadata is not available."""
     wanted = {pkg for _m, pkg, _w, _r in RUNTIME_PACKAGES}
     try:
-        reqs = md.requires("rag-search") or []
+        reqs = md.requires(DIST_NAME) or []
     except md.PackageNotFoundError:
         reqs = []
     out = []

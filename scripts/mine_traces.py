@@ -4,7 +4,7 @@
 Step R0a of docs/design/conversion-routing-plan.md.  It reads; it converts, reads with a model and changes nothing.
 Run it with rag-search's own Python, so it sees the same packages and data folder the dashboard does:
 
-    "$(uv tool dir)/rag-search/bin/python" scripts/mine_traces.py
+    "$(uv tool dir)/rag-search-local/bin/python" scripts/mine_traces.py
     ... mine_traces.py --collection documents          # one collection
     ... mine_traces.py --sample 30 --seed 7                # more pages per check to look at
     ... mine_traces.py --time-gate 0                       # skip re-timing the gate checks

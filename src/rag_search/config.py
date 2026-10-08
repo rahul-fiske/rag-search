@@ -140,6 +140,8 @@ def _sane(data: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
                     and (key == "memory_limit_gb" or float(value).is_integer())
                 value = value if key == "memory_limit_gb" else (int(value) if ok else value)
             else:
+                if value == 0 and not isinstance(value, bool):       # older versions wrote 0 for "not set" in a text setting
+                    value = ""
                 ok = isinstance(value, str)
             if ok:
                 keep[key] = value

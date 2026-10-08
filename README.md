@@ -14,9 +14,9 @@ Needs a Mac with Apple Silicon (16 GB RAM, 15 GB free disk; see [Requirements](#
 [`uv`](https://docs.astral.sh/uv/) (`brew install uv`).
 
 ```bash
-uv tool install --python 3.12 rag-search     # installs the `rag-search` command and all its dependencies
-rag-search setup                             # once: models (about 5 GB), Tesseract, daemons, Claude registration
-rag-search ui                                # opens the dashboard
+uv tool install --python 3.12 rag-search-local   # installs the `rag-search` command and all its dependencies
+rag-search setup                                 # once: models (about 5 GB), Tesseract, daemons, Claude registration
+rag-search ui                                    # opens the dashboard
 ```
 
 In the dashboard, open **Collections** and add the folder with your documents, start a run on the **Indexing** tab,
@@ -69,19 +69,19 @@ not supported. Intel Macs (CPU only, no document reader) and Linux (no Apple Vis
 
 | From | Command |
 |---|---|
-| PyPI | `uv tool install --python 3.12 rag-search` |
+| PyPI | `uv tool install --python 3.12 rag-search-local` |
 | A clone | `git clone https://github.com/rahul-fiske/rag-search.git && uv tool install --python 3.12 ./rag-search` |
 | A release folder (no clone) | `scripts/build_release.sh` in a clone makes `dist/rag-search-<version>.zip`; unzip it and run `./install.sh` |
 
-Every Python package, including the Apple-only ones, is a dependency of the package, so all three give the same
+The PyPI package is called `rag-search-local` (`rag-search` was taken); the command is still `rag-search`. Every Python package, including the Apple-only ones, is a dependency of the package, so all three give the same
 installation. Then run **`rag-search setup`** once (again whenever something is missing). It creates the data folder
 (`~/Library/Application Support/rag-search`), downloads the models, installs Tesseract, checks the installation,
 starts the daemons and registers the adapter with Claude. Useful options: `--models PRESET`, `--skip-models`,
 `--no-tesseract`, `--no-register`, `--service` (daemons start at login); all of them: `rag-search setup --help`.
 `./install.sh` installs the wheel and calls `setup` with its own options (`--home`, `--python`, and the same flags).
 
-Upgrade: `uv tool upgrade rag-search` (or install again from the clone / release folder); data and indexes are kept.
-Uninstall: `rag-search unregister && rag-search service uninstall && uv tool uninstall rag-search` (your data stays;
+Upgrade: `uv tool upgrade rag-search-local` (or install again from the clone / release folder); data and indexes are kept.
+Uninstall: `rag-search unregister && rag-search service uninstall && uv tool uninstall rag-search-local` (your data stays;
 `./uninstall.sh --purge-data` removes it too). Self-test: `rag-search doctor --roundtrip`.
 
 ## Use
@@ -753,7 +753,7 @@ removes it from search after the next `index new`.
 * **"A module that was compiled using NumPy 1.x cannot be run in NumPy 2.x" / "Failed to initialize
   NumPy: _ARRAY_API not found"** – Intel Mac with NumPy 2 installed next to the old PyTorch. Install the current
   release again (the package pins `numpy<2`, `transformers<5` and `huggingface_hub<1` on Intel Macs), or by hand:
-  `uv tool install --force --python 3.12 --with "numpy<2" --with "transformers>=4.44,<5" --with "huggingface_hub>=0.30,<1" rag_search-*.whl`.
+  `uv tool install --force --python 3.12 --with "numpy<2" --with "transformers>=4.44,<5" --with "huggingface_hub>=0.30,<1" rag_search_local-*.whl`.
 * **"PyTorch >= 2.4 is required but found 2.2.2" / `import sentence_transformers` fails with
   `NameError: name 'nn' is not defined`** – Intel Mac with transformers 5. Same fix as above
   (release 0.2.1 or later does it automatically).

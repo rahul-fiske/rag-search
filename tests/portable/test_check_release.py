@@ -16,22 +16,34 @@ spec = importlib.util.spec_from_file_location("check_release", ROOT / "scripts" 
 cr = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cr)
 
-META = "Metadata-Version: 2.4\nName: rag-search\nVersion: {v}\nRequires-Dist: docling>=2\nRequires-Dist: torch>=2\nRequires-Dist: mcp<2,>=1\n"
+META = "Metadata-Version: 2.4\nName: rag-search-local\nVersion: {v}\nRequires-Dist: docling>=2\nRequires-Dist: torch>=2\nRequires-Dist: mcp<2,>=1\n"
 
 
 def make_dist(d: Path, v: str, *, extra_wheel=(), extra_sdist=(), license=True, wheel_version=None):
-    with zipfile.ZipFile(d / f"rag_search-{v}-py3-none-any.whl", "w") as z:
-        z.writestr(f"rag_search-{v}.dist-info/METADATA", META.format(v=wheel_version or v))
+    with zipfile.ZipFile(d / f"rag_search_local-{v}-py3-none-any.whl", "w") as z:
+        z.writestr(f"rag_search_local-{v}.dist-info/METADATA", META.format(v=wheel_version or v))
         if license:
-            z.writestr(f"rag_search-{v}.dist-info/licenses/LICENSE", "MIT")
+            z.writestr(f"rag_search_local-{v}.dist-info/licenses/LICENSE", "MIT")
         z.writestr("rag_search/__init__.py", "")
         for n in extra_wheel:
             z.writestr(n, "")
-    with tarfile.open(d / f"rag_search-{v}.tar.gz", "w:gz") as t:
-        for n in (f"rag_search-{v}/LICENSE" if license else f"rag_search-{v}/README.md", *extra_sdist):
+    with tarfile.open(d / f"rag_search_local-{v}.tar.gz", "w:gz") as t:
+        for n in (f"rag_search_local-{v}/LICENSE" if license else f"rag_search_local-{v}/README.md", *extra_sdist):
             info = tarfile.TarInfo(n)
             info.size = 0
             t.addfile(info, io.BytesIO(b""))
+
+
+class NameTests(unittest.TestCase):
+    def test_the_name_in_the_code_is_the_name_in_pyproject(self):
+        import tomllib
+
+        import rag_search
+
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+        self.assertEqual(rag_search.DIST_NAME, project["name"])
+        self.assertEqual(project["name"], "rag-search-local")
+        self.assertIn("rag-search", project["scripts"])             # the command keeps its name
 
 
 class TagTests(unittest.TestCase):

@@ -147,6 +147,11 @@ class ConfigFileTests(TempHome):
             self.assertIn(part, err)
         self.assertEqual(config.effective_jobs(cfg) in (1, 2), True)                  # the daemon can start a run
 
+    def test_a_zero_in_a_text_setting_is_the_old_way_to_say_not_set(self):
+        self.write({"search": {"stages": 0, "top_k": 7}, "indexer": {"ocr": 0}})
+        cfg, err = config.load_config(self.paths)
+        self.assertEqual((cfg["search"]["stages"], cfg["indexer"]["ocr"], cfg["search"]["top_k"], err), ("", "", 7, ""))
+
     def test_a_good_file_reports_nothing(self):
         self.write({"indexer": {"jobs": 2, "ocr_first": "auto"}})
         cfg, err = config.load_config(self.paths)

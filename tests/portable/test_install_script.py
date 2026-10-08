@@ -36,7 +36,7 @@ class InstallerTests(TempHome):
         self.rel = self.tmp / "release"
         self.rel.mkdir()
         shutil.copy(SCRIPT, self.rel / "install.sh")
-        (self.rel / "rag_search-1.2.3-py3-none-any.whl").write_bytes(b"not a wheel: the stand-in uv does not read it")
+        (self.rel / "rag_search_local-1.2.3-py3-none-any.whl").write_bytes(b"not a wheel: the stand-in uv does not read it")
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
         make_exe(self.bin / "uv", FAKE_UV)
@@ -55,7 +55,7 @@ class InstallerTests(TempHome):
         installs = [c for c in calls if c.startswith("uv tool install")]
         self.assertEqual(len(installs), 1)
         self.assertNotIn("--with", installs[0])                       # every package is a dependency of the wheel
-        self.assertTrue(installs[0].endswith("rag_search-1.2.3-py3-none-any.whl"))
+        self.assertTrue(installs[0].endswith("rag_search_local-1.2.3-py3-none-any.whl"))
         self.assertIn("--python 3.12", installs[0])
         setups = [c for c in calls if c.startswith("rag-search") and " setup" in c]
         self.assertEqual(setups, ["rag-search setup"])                # one call: models, reader, Tesseract, daemons, Claude

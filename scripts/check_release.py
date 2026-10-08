@@ -45,7 +45,7 @@ def check_dist(dist: Path, version: str) -> list[str]:
     errors = []
     wheels = sorted(dist.glob("*.whl"))
     sdists = sorted(dist.glob("*.tar.gz"))
-    want_wheel, want_sdist = f"rag_search-{version}-py3-none-any.whl", f"rag_search-{version}.tar.gz"
+    want_wheel, want_sdist = f"rag_search_local-{version}-py3-none-any.whl", f"rag_search_local-{version}.tar.gz"
     if [w.name for w in wheels] != [want_wheel]:
         errors.append(f"expected exactly {want_wheel} in {dist}, found {[w.name for w in wheels]}")
     if [s.name for s in sdists] != [want_sdist]:

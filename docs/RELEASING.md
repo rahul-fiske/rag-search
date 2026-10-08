@@ -9,7 +9,7 @@ does not equal the version.
 
 1. **PyPI and TestPyPI accounts** with two-factor authentication.
 2. **Trusted publishers** (no token is stored anywhere). On pypi.org and on test.pypi.org: *Your projects > Publishing >
-   Add a new pending publisher* with project `rag-search`, owner `rahul-fiske`, repository `rag-search`, workflow
+   Add a new pending publisher* with project `rag-search-local`, owner `rahul-fiske`, repository `rag-search`, workflow
    `release.yml` and environment `pypi` (on pypi.org) / `testpypi` (on test.pypi.org).
 3. **GitHub environments** (*Settings > Environments*): `testpypi`, and `pypi` with *Required reviewers* set to you, so
    that nothing reaches PyPI without a click.

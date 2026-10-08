@@ -7,7 +7,7 @@ pipeline that uses them.
 
 Run them with the Python of the installed tool, on the Mac:
 
-    PYTHONPATH=src "$(uv tool dir)/rag-search/bin/python" -m unittest discover -s tests/machine -t .
+    PYTHONPATH=src "$(uv tool dir)/rag-search-local/bin/python" -m unittest discover -s tests/machine -t .
 
 Each test is one check of the script: it generates its own documents (no personal data), downloads
 nothing, and reports a missing model or package as a failure with the script's own explanation.
