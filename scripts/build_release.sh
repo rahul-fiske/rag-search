@@ -35,7 +35,7 @@ if [[ $EXTERNAL == 1 ]]; then
   ( cd "$ROOT" && tar -cf - \
       --exclude=./dist --exclude=./build --exclude=./.git --exclude='*.egg-info' \
       --exclude=__pycache__ --exclude='*.pyc' --exclude=.DS_Store --exclude=./.ruff_cache --exclude=./.pytest_cache --exclude=./.venv \
-      --exclude=./.release-deny --exclude='./INTERNAL*.md' --exclude=./docs/design --exclude=./CLAUDE.md --exclude=./src/rag_search/ui/static/docs \
+      --exclude=./.release-deny --exclude='./INTERNAL*.md' --exclude=./docs/design --exclude=./src/rag_search/ui/static/docs \
       --exclude='./src/rag_search/hosts_*.py' --exclude='./tests/portable/test_hosts_*.py' . ) | tar -xf - -C "$SRC"
   # the installer's marked blocks are internal-only
   python3 - "$SRC" <<'PY'

@@ -9,7 +9,7 @@ uv run ruff check src tests
 ```
 
 On a Linux machine that is not the Mac (a cloud session, Cowork, CI), `scripts/cloud_setup.sh` does the same
-with CPU-only torch and installs tesseract; see "Working away from the Mac" in `CLAUDE.md`.
+with CPU-only torch and installs tesseract; see "Working away from the Mac" below.
 
 ## Tests: three tiers, chosen by what they need
 
@@ -46,6 +46,37 @@ routed pipeline that uses them, `models verify`. They are the checks of `scripts
 `tests/helpers.py` is shared; `TempHome.tearDown` stops any daemon a test left running in its temporary data
 folder. `tests/corpus.py` and `tests/data/` are the corpus (README there): one small synthetic file per kind of
 input, and what each must produce. `uv run rag-search doctor --roundtrip` is the quick real-model smoke test.
+
+## Working away from the Mac (a cloud session, Cowork, any other machine)
+
+Everything except Apple's hardware can be run there. One command sets a Linux machine up (a virtualenv with the
+real stack, tesseract for OCR; CPU-only torch when PyTorch's CPU index is reachable):
+
+```bash
+scripts/cloud_setup.sh          # from the repository root; `VENV=/some/path` to put the environment elsewhere
+```
+
+Then `.venv/bin/ruff check src tests scripts --select E4,E7,E9,F` and the tier A and B commands above (with
+`.venv/bin/python`). For tier A alone, `pip install numpy pypdfium2 pillow "mcp>=1.12,<2"` is enough.
+
+What a cloud session needs from its network policy: PyPI; for tier B also `huggingface.co` (and its CDN hosts,
+`*.hf.co`) for the small models and docling's own models (about 600 MB, once); and, to avoid 4 GB of CUDA
+libraries, `download.pytorch.org` and `download-r2.pytorch.org`. Without Hugging Face, tier B cannot run and tier A
+still can.
+
+In the result of a change, say which tiers ran. Tier A proves the framework's logic, tier B that the real docling,
+OCR and embedding work on the whole corpus, neither proves MLX, Apple Vision or the document reader: say so, and
+leave `tests/machine/` for the Mac, instead of assuming it works. Run A for every change, B when a change touches
+conversion, embedding, the daemons' real start-up or the packages' versions, C before trusting anything about MLX,
+Apple Vision or the document reader.
+
+## Rules for every change
+
+* Never copy personal data from test documents (account numbers, addresses, names) into docs, tests, commits or
+  outputs; tests use the synthetic corpus in `tests/data/` (see its README), not a file made up inline, unless the
+  test needs text that varies or geometry tied to a fake reader.
+* After editing `README.md` or `ARCHITECTURE.md`, copy both into `src/rag_search/ui/static/docs/` (a test compares them).
+* Read the relevant design notes first and keep them updated in the same change (`docs/design/README.md`).
 
 ## Dev loop: test in rag-search's own environment
 

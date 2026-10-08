@@ -56,7 +56,7 @@ moment.
 | 5 | Cut B's and the cloud's avoidable overhead: CPU torch when reachable, one setup script, verified from scratch | done (`scripts/cloud_setup.sh`; the small torch needs `download-r2.pytorch.org` reachable) |
 | 6 | C: only the Mac-only checks | done (5 tests; the docling check moved to B) |
 | 7 | Trim redundant tests in A | done as far as the evidence goes: 17 duplicates removed (assertions folded in first), 4 profiler tests replaced by the corpus; the rest each pin a distinct behaviour, so a bigger cut would lose coverage |
-| 8 | Notes: `CLAUDE.md`, `CONTRIBUTING.md`, this file | done |
+| 8 | Notes: `CONTRIBUTING.md`, this file | done |
 | 9 | Verify every tier as the rules above say; coverage figures | done: see below |
 
 ## Verification (all green)
@@ -92,4 +92,4 @@ Writing tests for the branches nobody exercised found three defects, each now pi
   to reach A's number. **Met (92 %).**
 * B passes in the cloud session with `scripts/cloud_setup.sh` and nothing else. **Met**, given Hugging Face is
   reachable.
-* `CLAUDE.md` tells a coding agent, in one place, which tier to run where and what each costs. **Met.**
+* `CONTRIBUTING.md` tells a contributor or a coding agent, in one place, which tier to run where and what each costs. **Met.**

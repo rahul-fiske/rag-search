@@ -12,7 +12,7 @@ this is the "what order do we actually do this in" layer.
 ## Since then
 
 - **0.8.1**: the design record moved into the repository (`docs/design/`, indexed by
-  `docs/design/README.md`; `CLAUDE.md` and `CONTRIBUTING.md` point to it). Per-collection details
+  `docs/design/README.md`; `CONTRIBUTING.md` points to it). Per-collection details
   were added: `rag-search collection info NAME` and the Collections tab's expanded row (state,
   counts, folders, sizes, dates, last run, documents needing attention), from the new
   `inventory.py` (`ARCHITECTURE.md` §5.5).
