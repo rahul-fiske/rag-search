@@ -8,6 +8,35 @@ any other MCP host — all of them share the same indexes and the same warm mode
 Everything runs on your machine. The only network traffic is the one-time download of the models
 from Hugging Face (about 5 GB) and of the Python packages at install time.
 
+## Quick start: build and install from a clone
+
+On a MacBook with Apple Silicon (M1 or newer, 16 GB RAM or more, about 15 GB of free disk; see
+[Hardware](#hardware)):
+
+```bash
+brew install uv                                   # once; uv fetches Python 3.12 itself
+git clone https://github.com/rahul-fiske/rag-search.git
+cd rag-search
+git checkout v1.0.0                               # the first good release (or stay on main for the latest work)
+
+scripts/build_release.sh                          # builds dist/rag-search-<version>/ and dist/rag-search-<version>.zip
+cd dist/rag-search-*/                             # the release folder (the newest, if there are several)
+./install.sh                                      # installs, downloads the models (about 5 GB), starts the daemons
+```
+
+Then check it and index a folder:
+
+```bash
+rag-search doctor --roundtrip                     # self-test with the real models and three tiny documents
+rag-search location add mydocs ~/Documents/some-folder
+rag-search index new --follow                     # converts, indexes and publishes new and changed documents
+rag-search search "what does the contract say about notice periods"
+rag-search ui                                     # the dashboard
+```
+
+`./install.sh` also registers the MCP adapter with Claude Desktop and Claude Code (fully quit and reopen Claude
+Desktop afterwards). More options, upgrading and uninstalling: [Install](#install).
+
 ## How it works
 
 ```
@@ -68,20 +97,9 @@ large run is going. 8 GB machines are not supported.
 
 ### From a git clone
 
-Build the release folder from the source and install it (a MacBook with Apple Silicon; see Requirements > Hardware):
+Build the release folder from the source and install it (a MacBook with Apple Silicon; see Hardware):
 
-```bash
-brew install uv                                   # once; uv fetches Python 3.12 itself
-git clone https://github.com/rahul-fiske/rag-search.git
-cd rag/rag-search
-git checkout rag_1.0                              # the branch the current version is on
-
-scripts/build_release.sh                          # builds dist/rag-search-<version>/ and dist/rag-search-<version>.zip
-cd dist/rag-search-*/                             # the release folder (the newest, if there are several)
-./install.sh                                      # installs, downloads the models (about 5 GB), starts the daemons
-```
-
-`scripts/build_release.sh` needs only `uv`; it writes the wheel, the source archive, `install.sh`, `uninstall.sh`
+The commands are in the [quick start](#quick-start-build-and-install-from-a-clone) above. `scripts/build_release.sh` needs only `uv`; it writes the wheel, the source archive, `install.sh`, `uninstall.sh`
 and `SHA256SUMS` into `dist/rag-search-<version>/` and zips that folder, which is what you hand to someone who has
 no clone. To upgrade, `git pull` and repeat the last three lines: the data folder and the indexes are kept. To work
 on the code instead (an editable install that runs the clone itself), see "Modify the source" below and

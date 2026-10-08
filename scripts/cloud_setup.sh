@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Set up a Linux machine (a cloud session) to run ALL of rag-search's tests except the Apple-only ones.
 #
-#   scripts/cloud_setup.sh            # from rag-search/: creates .venv, installs everything, checks it
+#   scripts/cloud_setup.sh            # from the repository root: creates .venv, installs everything, checks it
 #
 # What it installs, and why this is the smallest set that exercises the real tools:
 #   * the project and its real dependencies (docling, torch, sentence-transformers, mcp) into ./.venv
@@ -58,7 +58,7 @@ sys.exit(1 if gone else 0)
 EOF
 cat <<'EOF'
 
-Ready.  Run, from rag-search/ (with the environment above as $VENV, default .venv):
+Ready.  Run, from the repository root (with the environment above as $VENV, default .venv):
   .venv/bin/ruff check src tests scripts --select E4,E7,E9,F
   PYTHONPATH=src .venv/bin/python -m unittest discover -s tests/portable -t .   # tier A: fakes, ~4 min
   PYTHONPATH=src .venv/bin/python -m unittest discover -s tests/real -t .       # tier B: real tools, ~2 min

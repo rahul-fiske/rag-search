@@ -43,7 +43,7 @@ Everything except Apple's hardware can be run there. One command sets a Linux ma
 real stack, tesseract for OCR; CPU-only torch when PyTorch's CPU index is reachable):
 
 ```bash
-scripts/cloud_setup.sh          # from rag-search/; `VENV=/some/path` to put the environment elsewhere
+scripts/cloud_setup.sh          # from the repository root; `VENV=/some/path` to put the environment elsewhere
 ```
 
 Then `.venv/bin/ruff check src tests scripts --select E4,E7,E9,F` and the tier A and B commands above (with
