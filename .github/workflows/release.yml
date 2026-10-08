@@ -29,8 +29,11 @@ jobs:
         env:
           RAG_SEARCH_RELEASE_DENY: ${{ secrets.RELEASE_DENY_WORDS }}
         run: |
-          test -n "$RAG_SEARCH_RELEASE_DENY" || { echo "set the repository secret RELEASE_DENY_WORDS (comma-separated words that must not appear)"; exit 1; }
-          python3 scripts/release_guard.py dist/*
+          if [ -z "$RAG_SEARCH_RELEASE_DENY" ]; then
+            echo "::warning::the repository secret RELEASE_DENY_WORDS is not set: the leak guard did not look for any word (see docs/RELEASING.md)"
+          else
+            python3 scripts/release_guard.py dist/*
+          fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist

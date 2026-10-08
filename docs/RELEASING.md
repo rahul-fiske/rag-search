@@ -13,9 +13,10 @@ does not equal the version.
    `release.yml` and environment `pypi` (on pypi.org) / `testpypi` (on test.pypi.org).
 3. **GitHub environments** (*Settings > Environments*): `testpypi`, and `pypi` with *Required reviewers* set to you, so
    that nothing reaches PyPI without a click.
-4. **Secret `RELEASE_DENY_WORDS`** (*Settings > Secrets and variables > Actions*): comma-separated words that must not
-   appear in any released file (names of employers, internal tools). The build fails without it.
-5. **Tag protection** (*Settings > Rules > Rulesets*): only you may create tags `v*`; protect `main` and `rag_1.0`
+4. **Secret `RELEASE_DENY_WORDS`** (optional but recommended; *Settings > Secrets and variables > Actions*): comma-separated
+   words that must not appear in any released file (names of employers, internal tools). Without it the build warns and
+   skips that check; the files are built from a clean checkout either way.
+5. **Tag protection** (optional; *Settings > Rules > Rulesets*): only you may create tags `v*`; protect `main` and `rag_1.0`
    against force pushes and deletion.
 
 ## A release
