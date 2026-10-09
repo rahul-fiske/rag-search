@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -161,8 +162,11 @@ def apple_vision_possible() -> bool:
 
 
 def service_manager() -> str:
-    """The program that starts the daemons at login: ``launchd`` on a Mac, ``""`` where none is supported yet."""
-    return "launchd" if is_mac() else ""
+    """The program that starts the daemons at login: ``launchd`` on a Mac, ``systemd`` (a user service) on a Linux machine
+    that has ``systemctl``, ``""`` where none is supported."""
+    if is_mac():
+        return "launchd"
+    return "systemd" if is_linux() and shutil.which("systemctl") else ""
 
 
 def package_manager() -> str:

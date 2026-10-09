@@ -17,7 +17,7 @@ from unittest import mock
 
 from tests.helpers import TempHome
 
-from rag_search import models, paths, register, service
+from rag_search import machine, models, paths, register, service
 from rag_search.core import embedding
 from rag_search.core.conversion import applevision, repair, vlm
 
@@ -185,6 +185,12 @@ class PlacesTests(unittest.TestCase):
         for name, ok in (("apple_silicon", True), ("intel_mac", True), ("linux_cpu", False), ("linux_cuda", False)):
             with self.subTest(name), on(name):
                 self.assertEqual(service._require_macos() is None, ok)
+
+    def test_linux_with_systemctl_has_a_service_manager(self):
+        for name, manager in (("linux_cpu", "systemd"), ("apple_silicon", "launchd")):
+            with self.subTest(name), on(name), mock.patch("shutil.which", return_value="/usr/bin/systemctl"):
+                self.assertEqual(machine.service_manager(), manager)
+                self.assertIsNone(service._require_macos())
 
 
 class SetupPlanTests(unittest.TestCase):

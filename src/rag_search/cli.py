@@ -1896,7 +1896,7 @@ def _setup_plan(a: argparse.Namespace, apple: bool) -> tuple[list[tuple[str, str
         out.append("Tesseract: left out (" + ("--no-tesseract" if a.no_tesseract else "--skip-docling") + ")")
     plan.append(("doctor", "Checking the installation"))
     if a.service:
-        plan.append(("daemons", "Installing the start-at-login services (launchd)"))
+        plan.append(("daemons", "Installing the start-at-login services"))
     elif not a.no_start:
         plan.append(("daemons", "Starting the daemons"))
     else:
@@ -2770,7 +2770,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("action", choices=["status", "start", "stop", "restart", "run"])
     p.add_argument("which", nargs="?", default="all", help="search | indexer | all")
 
-    p = add("service", "start the daemons at login (macOS launchd)", _cmd_service)
+    p = add("service", "start the daemons at login (launchd on a Mac, systemd on Linux)", _cmd_service)
     p.add_argument("action", choices=["install", "uninstall", "status"])
 
     p = add("config", "show, create, or change production tunables in config.json", _cmd_config,
@@ -2849,7 +2849,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--skip-reader", action="store_true", help="do not download the document reader and the repair model")
     p.add_argument("--no-tesseract", action="store_true", help="do not check for or install Tesseract")
     p.add_argument("--no-start", action="store_true", help="do not start the daemons")
-    p.add_argument("--service", action="store_true", help="start the daemons at login (macOS launchd) instead of now")
+    p.add_argument("--service", action="store_true", help="start the daemons at login (launchd on a Mac, systemd on Linux) instead of now")
     p.add_argument("--no-register", action="store_true", help="do not touch the Claude Desktop / Claude Code configuration")
     p.add_argument("--tool-prefix", default="", metavar="P", help="prefix the MCP tool names (they already start with rag_)")
     p.add_argument("--minimal", action="store_true", help="only the folders and the two models (what setup did before 1.1)")

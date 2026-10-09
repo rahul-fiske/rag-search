@@ -1,6 +1,6 @@
-"""Run both daemons at login via launchd (macOS, stdlib only).
+"""Run both daemons at login via launchd (macOS) or a systemd user service (Linux); stdlib only.
 
-`rag-search service install` writes one LaunchAgent per daemon.  The daemons are
+`rag-search service install` writes one LaunchAgent (or one systemd user unit) per daemon.  The daemons are
 always-on by design; launchd just makes sure they are up after a login or a crash
 (KeepAlive restarts on failure, not on a clean `daemon stop`).  Without the service
 the daemons still start on demand the first time anything talks to them.
@@ -12,6 +12,7 @@ import os
 import plistlib
 import subprocess
 import sys
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -78,7 +79,48 @@ def _launchctl(*args: str) -> subprocess.CompletedProcess:
 
 
 def _require_macos() -> str | None:
-    return None if machine.service_manager() == "launchd" else "launchd services are macOS-only"
+    """None when the machine has a service manager rag-search can use (launchd, systemd), else the reason."""
+    return None if machine.service_manager() else "start-at-login services need launchd (macOS) or systemd (Linux)"
+
+
+# ── systemd (a user service per daemon) ──────────────────────────────────────────────────────────────────────────
+
+def unit_name(kind: str) -> str:
+    return f"rag-search-{kind}.service"
+
+
+def unit_dir() -> Path:
+    base = os.environ.get("XDG_CONFIG_HOME")
+    return (Path(base).expanduser() if base else Path.home() / ".config") / "systemd" / "user"
+
+
+def unit_path(kind: str) -> Path:
+    return unit_dir() / unit_name(kind)
+
+
+def _q(value: str, command: bool = False) -> str:
+    """A value inside double quotes in a unit file (``%`` is expanded everywhere, ``$`` in a command line only)."""
+    value = value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    return value.replace("$", "$$") if command else value
+
+
+def unit_text(paths: Paths, kind: str, python: str | None = None) -> str:
+    env = {"RAG_SEARCH_HOME": str(paths.home)}
+    env.update({k: os.environ[k] for k in PASS_ENV if os.environ.get(k)})
+    lines = ["[Unit]", f"Description=rag-search {kind} daemon", "", "[Service]",
+             f'ExecStart="{_q(python or sys.executable, True)}" -m {client.DAEMON_MODULES[kind]}',
+             f'WorkingDirectory={paths.home}', "Restart=on-failure", "RestartSec=5",
+             f"StandardOutput=append:{paths.log_file(kind)}", f"StandardError=append:{paths.log_file(kind)}"]
+    lines += [f'Environment="{_q(k)}={_q(v)}"' for k, v in sorted(env.items())]
+    return "\n".join(lines + ["", "[Install]", "WantedBy=default.target", ""])
+
+
+def _systemctl(*args: str) -> subprocess.CompletedProcess:
+    cmd = [shutil.which("systemctl") or "systemctl", "--user", *args]
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return subprocess.CompletedProcess(cmd, 124, "", f"systemctl did not answer: {exc}")
 
 
 def install(paths: Paths, python: str | None = None) -> list[str]:
@@ -87,9 +129,19 @@ def install(paths: Paths, python: str | None = None) -> list[str]:
     from .paths import ensure_dirs
 
     ensure_dirs(paths)
-    agents_dir().mkdir(parents=True, exist_ok=True)
     out = []
-    api.daemon_stop(paths, "all")  # hand over from on-demand daemons to launchd
+    api.daemon_stop(paths, "all")  # hand over from on-demand daemons to the service manager
+    if machine.service_manager() == "systemd":
+        unit_dir().mkdir(parents=True, exist_ok=True)
+        for kind in api.KINDS:
+            unit_path(kind).write_text(unit_text(paths, kind, python), encoding="utf-8")
+        _systemctl("daemon-reload")
+        for kind in api.KINDS:
+            proc = _systemctl("enable", "--now", unit_name(kind))
+            out.append(f"{kind}: {'installed and started' if proc.returncode == 0 else 'FAILED'} ({unit_path(kind)})"
+                       + ("" if proc.returncode == 0 else f"\n  {proc.stderr.strip()}"))
+        return out
+    agents_dir().mkdir(parents=True, exist_ok=True)
     for kind in api.KINDS:
         pf = plist_path(kind)
         _launchctl("bootout", f"{_domain()}/{label(kind)}")  # ignore "not loaded"
@@ -106,6 +158,17 @@ def uninstall(paths: Paths) -> list[str]:
     if (msg := _require_macos()):
         return [msg]
     out = []
+    if machine.service_manager() == "systemd":
+        for kind in api.KINDS:
+            if not unit_path(kind).exists():
+                out.append(f"{kind}: not installed")
+                continue
+            _systemctl("disable", "--now", unit_name(kind))
+            unit_path(kind).unlink()
+            out.append(f"{kind}: removed")
+        _systemctl("daemon-reload")
+        api.daemon_stop(paths, "all")
+        return out
     for kind in api.KINDS:
         pf = plist_path(kind)
         if not pf.exists():
@@ -123,10 +186,13 @@ def uninstall(paths: Paths) -> list[str]:
 def status(paths: Paths) -> dict[str, Any]:
     res: dict[str, Any] = {}
     for kind in api.KINDS:
-        entry: dict[str, Any] = {"plist": str(plist_path(kind)),
-                                 "installed": plist_path(kind).exists()}
-        if machine.service_manager() == "launchd":
-            entry["loaded"] = _launchctl("print", f"{_domain()}/{label(kind)}").returncode == 0
+        if machine.service_manager() == "systemd":
+            entry: dict[str, Any] = {"unit": str(unit_path(kind)), "installed": unit_path(kind).exists()}
+            entry["loaded"] = _systemctl("is-active", unit_name(kind)).returncode == 0
+        else:
+            entry = {"plist": str(plist_path(kind)), "installed": plist_path(kind).exists()}
+            if machine.service_manager() == "launchd":
+                entry["loaded"] = _launchctl("print", f"{_domain()}/{label(kind)}").returncode == 0
         info = client.ping(paths, kind)
         entry["running"] = bool(info)
         if info:

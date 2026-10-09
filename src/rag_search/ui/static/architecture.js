@@ -320,7 +320,7 @@ serving/                                  what the search daemon reads
     const KINDS = [
       ['apple_silicon', 'Apple Silicon Mac', ['Apple GPU (Metal), half precision', 'Reader: MLX (Qwen3-VL, PaddleOCR-VL)', 'Scans: reader, Apple Vision, docling OCR, Tesseract', 'Start at login: launchd', 'Data: ~/Library/Application Support']],
       ['intel_mac', 'Intel Mac', ['CPU, full precision (int8 opt-in)', 'Reader: none yet (CPU reader planned)', 'Scans: Apple Vision, docling OCR, Tesseract', 'Start at login: launchd', 'Older stack: torch 2.2, docling 2.7x']],
-      ['linux', 'Linux (prepared)', ['CPU, or a CUDA card (RAG_SEARCH_DEVICE=cuda)', 'Reader: none yet (CPU reader planned)', 'Scans: docling OCR, Tesseract', 'Start at login: systemd (planned)', 'Data: $XDG_DATA_HOME or ~/.local/share']]];
+      ['linux', 'Linux (prepared)', ['CPU, or a CUDA card (RAG_SEARCH_DEVICE=cuda)', 'Reader: none yet (CPU reader planned)', 'Scans: docling OCR, Tesseract', 'Start at login: systemd (user service)', 'Data: $XDG_DATA_HOME or ~/.local/share']]];
     const W = 900, bw = 280, gap = 30, x0 = 10, y1 = 120;
     const here = KINDS.find(k => k[0] === m.kind);
     const kids = [

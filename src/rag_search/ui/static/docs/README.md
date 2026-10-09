@@ -69,7 +69,7 @@ not supported. Also needed: [`uv`](https://docs.astral.sh/uv/). Optional: Claude
 | Status | full | works, slower | being prepared |
 | Models run on | Apple GPU | CPU | CPU (CUDA card with `RAG_SEARCH_DEVICE=cuda`) |
 | Document reader (MLX) | yes | no: scans are read by Apple Vision, docling OCR or Tesseract | no |
-| Start at login | launchd | launchd | not yet |
+| Start at login | launchd | launchd | systemd user service |
 
 On an Intel Mac the models run on the CPU, so indexing and reranking are several times slower than on an Apple Silicon
 Mac; the package picks older, compatible versions of PyTorch and docling there by itself. `rag-search doctor` and the
@@ -121,7 +121,7 @@ rag-search trace COLLECTION/DOC [--page N] [--md]              how a document wa
 rag-search index cache [--clear]                               the page cache (pages already read): size, empty it
 rag-search index cancel | publish | foreground                 stop / publish now / run without daemon
 rag-search daemon status|start|stop|restart [search|indexer]   state, warm-up time and memory; control
-rag-search service install|uninstall|status                    launchd: daemons start at login
+rag-search service install|uninstall|status                    launchd or systemd: daemons start at login
 rag-search config show|init|path                               settings file (see below)
 rag-search doctor [--roundtrip] | setup | paths [name] | convert FILE
 rag-search location list|add NAME FOLDER|remove NAME [-y]     register the folders documents are read from

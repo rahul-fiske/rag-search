@@ -48,7 +48,7 @@
 <rect x="436" y="418" width="254" height="50" rx="6" fill="var(--ok)" stroke="#8a96a8"/>
 <text x="563.0" y="447.0" text-anchor="middle">launchd</text>
 <rect x="698" y="418" width="254" height="50" rx="6" fill="var(--warn)" stroke="#8a96a8"/>
-<text x="825.0" y="447.0" text-anchor="middle">systemd (planned)</text>
+<text x="825.0" y="447.0" text-anchor="middle">systemd (user service)</text>
 <text x="20" y="501.0" class="t">Data folder</text>
 <rect x="174" y="476" width="254" height="50" rx="6" fill="var(--ok)" stroke="#8a96a8"/>
 <text x="301.0" y="505.0" text-anchor="middle">~/Library/Application Support</text>
