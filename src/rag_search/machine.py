@@ -136,6 +136,13 @@ def weight_bytes(device: str) -> int:
     return 2 if device in ("mps", "cuda") else 4
 
 
+def quantize_default() -> str:
+    """Should a model that runs on the CPU use 8-bit weights unless told otherwise?  ``int8`` or ``off``.  Measured
+    (scripts/retrieval_parity.py, docs/design/platform-support-plan.md): rankings move and the speed gain is unproven
+    on real Intel hardware, so every machine keeps full precision; ``models.quantize=int8`` is an opt-in."""
+    return "off"
+
+
 def unified_memory() -> bool:
     """Do the CPU and the GPU share one memory (so the models' size counts against the same RAM)?"""
     return apple_silicon()

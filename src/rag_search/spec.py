@@ -442,6 +442,18 @@ TUNABLES: tuple[Tunable, ...] = (
                 "mps": "Apple GPU acceleration via Metal Performance Shaders; macOS on Apple "
                        "Silicon (M-series) only.",
             }),
+    Tunable("models", "quantize", "choice", "", "Quantization (CPU only)",
+            "Run the embedder and the reranker with 8-bit weights (int8) on the CPU: about twice as fast and a quarter "
+            "of the memory, with a small change in the scores. Only used when the models run on the CPU. Blank = "
+            "chosen for this computer.",
+            "Switching it changes the vectors of new documents very slightly (cosine similarity above 0.99 to the "
+            "full-precision ones), so the existing index stays valid and nothing is re-embedded; the ranking of the "
+            "search results can differ in the last places.",
+            RESTART, "--quantize", ("off", "int8"), "RAG_SEARCH_QUANTIZE",
+            default_label="chosen for this computer", choice_help={
+                "off": "Full precision on the CPU: the most exact, the slowest.",
+                "int8": "8-bit weights on the CPU (PyTorch dynamic quantization): faster and smaller.",
+            }),
 )
 
 TUNABLES_BY_KEY: dict[str, Tunable] = {t.key: t for t in TUNABLES}

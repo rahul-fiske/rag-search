@@ -12,7 +12,7 @@ Example ``config.json`` (every key is optional):
                    "stall_timeout": 0, "doc_timeout": 0, "docling_batch": 0},
       "models":  {"embedding": "", "reranker": "", "reader": "", "repair": "", "memory_limit_gb": 0,
                    "embed_batch": 0, "max_seq": 0, "dtype": "", "rerank_batch": 0,
-                   "rerank_max_len": 0, "device": ""}
+                   "rerank_max_len": 0, "device": "", "quantize": ""}
     }
 
 Which clients may use which collections is not configured here: see ``policy.py`` and
@@ -59,7 +59,7 @@ DEFAULTS: dict[str, Any] = {
     "models": {
         "embedding": "", "reranker": "", "reader": "", "repair": "", "memory_limit_gb": 0,
         "embed_batch": 0, "max_seq": 0, "dtype": "", "rerank_batch": 0, "rerank_max_len": 0,
-        "device": "",
+        "device": "", "quantize": "",
     },
 }
 

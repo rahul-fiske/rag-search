@@ -5,6 +5,7 @@ are batched, what is refused (NaN, wrong output), how a cross-encoder's raw scor
 
 from __future__ import annotations
 
+import os
 import sys
 import types
 import unittest
@@ -248,3 +249,44 @@ class LoadingFallbackTests(TempHome):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QuantizeTests(unittest.TestCase):
+    """8-bit weights for a model that runs on the CPU (the mechanism; tests/real checks it on real PyTorch)."""
+
+    def setUp(self):
+        self.saved = os.environ.pop("RAG_SEARCH_QUANTIZE", None)
+        self.addCleanup(lambda: self.saved is None or os.environ.__setitem__("RAG_SEARCH_QUANTIZE", self.saved))
+
+    def test_the_mode(self):
+        self.assertEqual(embedding.quantize_mode("cpu"), "off")                     # until it has been measured
+        for value, device, want in (("int8", "cpu", "int8"), ("INT8", "cpu", "int8"), ("off", "cpu", "off"),
+                                    ("int8", "mps", "off"), ("int8", "cuda", "off"), ("nonsense", "cpu", "off")):
+            with mock.patch.dict(os.environ, {"RAG_SEARCH_QUANTIZE": value}):
+                self.assertEqual(embedding.quantize_mode(device), want, (value, device))
+        with mock.patch.object(embedding.machine, "quantize_default", return_value="int8"):
+            self.assertEqual(embedding.quantize_mode("cpu"), "int8")
+            self.assertEqual(embedding.quantize_mode("mps"), "off")
+
+    def test_the_linear_layers_are_quantized_in_place_and_only_on_request(self):
+        calls = []
+
+        class Module:
+            pass
+
+        quantized = types.SimpleNamespace(supported_engines=["none", "qnnpack"], engine="none")
+        torch = types.SimpleNamespace(
+            nn=types.SimpleNamespace(Module=Module, Linear="Linear"), qint8="qint8",
+            backends=types.SimpleNamespace(quantized=quantized),
+            ao=types.SimpleNamespace(quantization=types.SimpleNamespace(
+                quantize_dynamic=lambda m, layers, dtype, inplace: calls.append((m, layers, dtype, inplace)))))
+        st, cross = Module(), types.SimpleNamespace(model=Module())                  # SentenceTransformer, CrossEncoder
+        with mock.patch.dict(sys.modules, {"torch": torch}):
+            self.assertIs(embedding.quantize_model(st, "cpu"), st)                    # off: untouched
+            self.assertEqual(calls, [])
+            with mock.patch.dict(os.environ, {"RAG_SEARCH_QUANTIZE": "int8"}):
+                self.assertIs(embedding.quantize_model(st, "cpu"), st)
+                self.assertIs(embedding.quantize_model(cross, "cpu"), cross)
+                embedding.quantize_model(st, "mps")                                   # a GPU: never
+        self.assertEqual(calls, [(st, {"Linear"}, "qint8", True), (cross.model, {"Linear"}, "qint8", True)])
+        self.assertEqual(quantized.engine, "qnnpack")                                 # an engine was selected

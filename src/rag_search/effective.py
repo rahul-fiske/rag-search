@@ -72,6 +72,7 @@ READ_BY: dict[str, tuple[str, str, str]] = {
     "models.max_seq": ("rag_search.core.embedding", "Embedder", "longest passage the embedder reads, in tokens"),
     "models.dtype": ("rag_search.core.embedding", "torch_dtype", "weight precision of the embedder and the reranker"),
     "models.device": ("rag_search.core.embedding", "pick_device", "where the embedder and the reranker run"),
+    "models.quantize": ("rag_search.core.embedding", "quantize_mode", "8-bit weights of the embedder and the reranker on the CPU"),
     "indexer.auto_publish": ("rag_search.core.indexer_daemon", "IndexerDaemon", "publish after a successful run"),
     "search.retrieval_pool": ("rag_search.core.search", "SearchEngine", "candidates per retriever per collection"),
     "search.rrf_k": ("rag_search.core.search", "SearchEngine", "reciprocal rank fusion constant"),
@@ -168,7 +169,7 @@ def _value(setting: str, t: spec.Tunable | None, cfg: Mapping[str, Any], env: Ma
         if key in defaults:
             name, dflt = defaults[key]
             return _int(env, name, dflt)
-        if key in ("dtype", "device"):
+        if key in ("dtype", "device", "quantize"):
             return (env.get(t.env, "").strip().lower() if t else "") or "chosen for this computer"
         if key == "embedding":
             return env.get("RAG_SEARCH_MODEL") or scfg.get("embedding") or DEFAULT_MODEL

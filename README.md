@@ -705,6 +705,7 @@ diff force.md smart.md | head -50
 | `RAG_SEARCH_BENCH_ENGINES` | – | extra page readers for `rag-search bench run`, comma-separated `package.module:attr` (an object with `read_pages(src, pages)`) |
 | `RAG_SEARCH_MODEL` / `RAG_SEARCH_RERANK_MODEL` | from `config.json`, else bge-m3 / bge-reranker-v2-m3 | model ids; they override `models set` |
 | `RAG_SEARCH_DTYPE` | auto | force the weight precision: `float32`, `float16` or `bfloat16` |
+| `RAG_SEARCH_QUANTIZE` (setting `models.quantize`) | auto | `int8`: 8-bit weights for the embedder and the reranker when they run on the CPU (about twice as fast, a quarter of the memory, a small change in the scores); `off`: full precision. Never used on a GPU |
 | `RAG_SEARCH_DOCLING_PYTHON` | unset | python of a separate environment that has docling |
 
 The daemons started on demand inherit the environment of whoever starts them; with

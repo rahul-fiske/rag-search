@@ -148,8 +148,8 @@ INDEXING: tuple[Stage, ...] = (
           settings=("indexer.chunk_size", "indexer.chunk_overlap")),
     Stage("5", "embed", "Embed", RUN, GPU,
           "turn every new passage into a vector; the model is loaded once per run, after all documents are converted",
-          settings=("models.embedding", "models.embed_batch", "models.max_seq", "models.dtype", "models.device"),
-          also_used_by={"models.dtype": ("S3", "S5"), "models.device": ("S3", "S5"), "models.embedding": ("S3",),
+          settings=("models.embedding", "models.embed_batch", "models.max_seq", "models.dtype", "models.device", "models.quantize"),
+          also_used_by={"models.dtype": ("S3", "S5"), "models.device": ("S3", "S5"), "models.quantize": ("S3", "S5"), "models.embedding": ("S3",),
                         "models.max_seq": ("S3",), "models.embed_batch": ("S3",)}),
     Stage("6", "write", "Write", DOCUMENT, CPU,
           "nodes.json and embeddings.npy, then index.meta.json last, so a half-written document is never taken "

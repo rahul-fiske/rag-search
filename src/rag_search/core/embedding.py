@@ -62,6 +62,37 @@ def pick_device() -> str:
     return machine.probe_device(torch)
 
 
+def quantize_mode(device: str = "cpu") -> str:
+    """``int8`` or ``off``: 8-bit weights for a model that runs on the CPU (``RAG_SEARCH_QUANTIZE``; blank = what
+    machine.py says for this kind of computer).  Never on a GPU: half precision is its speed-up."""
+    if device != "cpu":
+        return "off"
+    forced = os.environ.get("RAG_SEARCH_QUANTIZE", "").strip().lower()
+    if forced in ("int8", "off"):
+        return forced
+    return machine.quantize_default()
+
+
+def quantize_model(model: Any, device: str) -> Any:
+    """*model* with 8-bit weights when ``quantize_mode`` says so (PyTorch dynamic quantization of the Linear layers; the
+    work stays on the CPU).  A sentence-transformers or cross-encoder model is changed in place."""
+    if quantize_mode(device) != "int8":
+        return model
+    import torch
+
+    target = model if isinstance(model, torch.nn.Module) else getattr(model, "model", None)
+    if target is None:
+        return model
+    quantized = torch.backends.quantized                  # the engine that runs the 8-bit layers: fbgemm / x86 on an Intel
+    for engine in ("fbgemm", "x86", "qnnpack"):          # CPU, qnnpack on an Arm CPU (a build may leave none selected)
+        if engine in quantized.supported_engines:
+            quantized.engine = engine
+            break
+    torch.ao.quantization.quantize_dynamic(target, {torch.nn.Linear}, dtype=torch.qint8, inplace=True)
+    log.info("8-bit weights (int8) on the CPU")
+    return model
+
+
 def release_memory() -> None:
     """Give memory of a model that was just dropped back (Python, then the GPU cache)."""
     gc.collect()
@@ -285,7 +316,7 @@ class Embedder:
                 self.name, device=self.device, **kwargs, **kw))
             self.revision = model_revision(self.name)
             model.max_seq_length = self.max_seq_length
-            self._model = model
+            self._model = quantize_model(model, self.device)
         return self._model
 
     def memory_bytes(self) -> int | None:
@@ -347,6 +378,7 @@ class Reranker:
                     self.name, device=self.device, max_length=self.max_length,
                     trust_remote_code=True, **kw))
                 self._needs_sigmoid = True
+            quantize_model(self._model, self.device)
         return self._model
 
     def memory_bytes(self) -> int | None:
