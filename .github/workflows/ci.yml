@@ -67,4 +67,10 @@ jobs:
       - name: Tier B on Intel (real docling, real small models, the whole test corpus)
         run: |
           PY="$(uv tool dir)/rag-search-local/bin/python"
-          PYTHONPATH=src "$PY" -m unittest discover -s tests/real -t .
+          set +e
+          PYTHONPATH=src "$PY" -m unittest discover -s tests/real -t . 2>&1 | tee tierb.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then   # the failure text as an annotation (readable without the log)
+            grep -A14 -E "^(FAIL|ERROR):" tierb.log | head -80 | python3 -c "import sys; t = sys.stdin.read().replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'); print('::error title=tier B failures::' + t)"
+          fi
+          exit "$rc"
