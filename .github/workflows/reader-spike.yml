@@ -1,0 +1,27 @@
+name: Reader spike
+
+# By hand: does the CPU document reader (transformers backend, Granite-Docling) work on a real Intel Mac and on Linux, and
+# how fast?  Downloads the model (about 0.5 GB).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  spike:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - run: uv build --wheel --out-dir dist
+      - run: uv tool install --python 3.12 --no-build-package docling-parse --no-build-package cryptography dist/*.whl
+        if: runner.os == 'macOS'
+      - run: uv tool install --python 3.12 dist/*.whl
+        if: runner.os != 'macOS'
+      - run: "$(uv tool dir)/rag-search-local/bin/python" scripts/reader_spike.py

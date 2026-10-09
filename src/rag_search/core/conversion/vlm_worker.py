@@ -80,6 +80,20 @@ class MlxBackend:
             pass
 
 
+DOCTAGS_PROMPT = "Convert this page to docling."
+
+
+def doctags_to_markdown(tags: str, image: Any) -> str:
+    """Markdown (tables as pipe tables) from the DocTags a Docling-family model writes."""
+    from docling_core.types.doc import DoclingDocument
+    from docling_core.types.doc.document import DocTagsDocument
+
+    tags = tags.replace("<|end_of_text|>", "").strip()
+    doc = DoclingDocument.load_from_doctags(DocTagsDocument.from_doctags_and_image_pairs([tags], [image]),
+                                            document_name="page")
+    return doc.export_to_markdown()
+
+
 class TransformersBackend:
     """Hugging Face transformers on the CPU or a CUDA card (any machine; torch is a dependency of rag-search).  Greedy
     decoding.  For image-text-to-text models (Granite-Docling and the like); slower than MLX on a Mac, usable elsewhere."""
@@ -91,6 +105,7 @@ class TransformersBackend:
         except ImportError as exc:
             raise RuntimeError(f"transformers is not installed: {exc}") from exc
         self._torch = torch
+        self.model_id = model_id
         self.device = machine.probe_device(torch)
         if self.device == "mps":                           # half precision on MPS is not what this backend is for
             self.device = "cpu"
@@ -106,7 +121,9 @@ class TransformersBackend:
 
         torch = self._torch
         image = Image.open(image_path).convert("RGB")
-        messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]}]
+        doctags = "docling" in self.model_id.lower()        # these models answer in DocTags, to their own prompt
+        messages = [{"role": "user", "content": [{"type": "image"},
+                                                 {"type": "text", "text": DOCTAGS_PROMPT if doctags else prompt}]}]
         text = self.processor.apply_chat_template(messages, add_generation_prompt=True)
         inputs = self.processor(text=text, images=[image], return_tensors="pt").to(self.device)
         kw: dict[str, Any] = {"max_new_tokens": max_tokens, "do_sample": False}
@@ -115,7 +132,10 @@ class TransformersBackend:
         with torch.inference_mode():
             out = self.model.generate(**inputs, **kw)
         new = out[:, inputs["input_ids"].shape[1]:]
-        md = self.processor.batch_decode(new, skip_special_tokens=True)[0]
+        if doctags:
+            md = doctags_to_markdown(self.processor.batch_decode(new, skip_special_tokens=False)[0], image)
+        else:
+            md = self.processor.batch_decode(new, skip_special_tokens=True)[0]
         n = int(new.shape[1])
         return {"md": md, "tokens": n, "stopped": "loop" if degenerate.looping(md) else ""}
 
