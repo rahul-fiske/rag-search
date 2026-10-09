@@ -10,7 +10,7 @@ from Hugging Face (about 5 GB) and of the Python packages at install time.
 
 ## Quick start
 
-Needs a Mac with Apple Silicon (16 GB RAM, 15 GB free disk; see [Requirements](#requirements)) and
+Needs a Mac (Apple Silicon recommended; Intel Macs work on the CPU) with 16 GB RAM and 15 GB free disk (see [Requirements](#requirements)) and
 [`uv`](https://docs.astral.sh/uv/) (`brew install uv`).
 
 ```bash
@@ -62,8 +62,18 @@ Installing from a clone instead of PyPI: `git clone https://github.com/rahul-fis
 
 Tested on an M4 Max with 36 GB: a full rebuild of 2,100 documents (20,000 pages) took about 1.5 hours, an update run
 takes seconds to minutes, and a search a fraction of a second. On 16 GB indexing is slower (one conversion worker); 8 GB is
-not supported. Intel Macs (CPU only, no document reader) and Linux (no Apple Vision or MLX) work with less. Also needed:
-[`uv`](https://docs.astral.sh/uv/). Optional: Claude Desktop or Claude Code (any MCP host works).
+not supported. Also needed: [`uv`](https://docs.astral.sh/uv/). Optional: Claude Desktop or Claude Code (any MCP host works).
+
+| | Apple Silicon Mac | Intel Mac | Linux |
+|---|---|---|---|
+| Status | full | works, slower | being prepared |
+| Models run on | Apple GPU | CPU | CPU (CUDA card with `RAG_SEARCH_DEVICE=cuda`) |
+| Document reader (MLX) | yes | no: scans are read by Apple Vision, docling OCR or Tesseract | no |
+| Start at login | launchd | launchd | not yet |
+
+On an Intel Mac the models run on the CPU, so indexing and reranking are several times slower than on an Apple Silicon
+Mac; the package picks older, compatible versions of PyTorch and docling there by itself. `rag-search doctor` and the
+dashboard's Models tab show what your computer can do. [The picture](docs/design/platforms.svg) shows the differences.
 
 ## Install
 

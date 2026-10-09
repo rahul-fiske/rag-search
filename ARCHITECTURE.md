@@ -253,6 +253,24 @@ only `rag_search/mcp/` imports `mcp`, and that the adapter can neither manage ac
 collection management (`bundle`, `lifecycle`, location changes). The adapter is installed with the
 package (a dependency since 1.1; `rag-search register` adds it to Claude).
 
+### Platforms and capabilities
+
+The picture: [what each kind of machine gets](docs/design/platforms.svg) (the dashboard's Architecture tab has the same as a live view of this computer).
+
+rag-search runs on an Apple Silicon Mac, an Intel Mac and (being prepared) Linux. The code does not ask "which
+operating system?": `machine.py` (stdlib only, imports nothing heavy) is the one place that asks, and answers in terms of
+what the machine has: `light_device()` / `probe_device(torch)` (Apple GPU, CUDA, CPU), `mlx_possible()`,
+`apple_vision_possible()`, `reader_backends()`, `service_manager()` (launchd, none yet), `package_manager()` (brew, apt),
+`data_home()` (Library/Application Support, or XDG), `physical_cores()` (CPU thread defaults), `available_memory_gb()`.
+Answers are computed at every call (tests make the machine pretend to be another one); `RAG_SEARCH_DEVICE` forces the
+device. `describe()` is what the dashboard and `doctor` show. A new kind of machine is a new answer in that file.
+
+Two tests keep it that way: `tests/portable/test_platform_profiles.py` pins what four machine profiles (Apple Silicon,
+Intel Mac, Linux CPU, Linux CUDA) get, and `tests/portable/test_machine_layer.py` fails when any other module queries
+`sys.platform` / `platform.*` / `os.uname` itself. Intel Macs are also tested on a real Intel runner (CI job `intel`,
+tier B), and `scripts/check_wheels.py` tells which dependencies have wheels for a platform (the Intel-only version
+limits in `pyproject.toml` come from it). Decisions and measurements: `docs/design/platform-support-plan.md`.
+
 ## 5. Indexing and search flows
 
 ### 5.0 The numbered pipeline (`stages.py`)
@@ -650,10 +668,12 @@ EXIF orientation applied; HEIC with `pillow-heif`) and large pictures on text pa
   `{"ok":true,"md":...,"tokens":N,"seconds":S,"rss_mb":R}`, `{"op":"quit"}`); library output goes to stderr.
   The model's memory never sits in the indexer worker next to docling and torch, and goes back to the system
   when the child exits. A reader reading thread gives every wait a timeout.
-* **Backends.** `mlx` (mlx-vlm, Apple Silicon only, a dependency of the package there) or `module:attr` of your own
-  class (`RAG_SEARCH_VLM_BACKEND`; the tests use `tests.helpers:FakeVlmBackend`). The real backend **never
+* **Backends.** `mlx` (mlx-vlm, Apple Silicon only, a dependency of the package there), `transformers` (Hugging
+  Face transformers on the CPU or a CUDA card; Docling-family models answer in DocTags, converted to Markdown by
+  `vlm_worker.doctags_to_markdown`; no catalog model uses it until `scripts/reader_spike.py` has been run on real
+  Intel and Linux machines) or `module:attr` of your own class (`RAG_SEARCH_VLM_BACKEND`; the tests use `tests.helpers:FakeVlmBackend`). The real backend **never
   downloads**: `VlmReader.preflight` reports a model that is not in the Hugging Face cache (the child runs with
-  `HF_HUB_OFFLINE=1`), a missing mlx-vlm, or a machine that is not an Apple Silicon Mac.
+  `HF_HUB_OFFLINE=1`), a missing mlx-vlm or transformers, or (for `mlx`) a machine that is not an Apple Silicon Mac.
 * **Lifecycle.** `vlm.shared()` is one reader per process, created on first use (`RAG_SEARCH_VLM=off` gives
   none), its process is started when the first page is queued and kept for the run (`close_shared` at the end
   of `run_index` and at exit; a closed pipe also stops it). With `jobs > 1` every worker has its own reader.

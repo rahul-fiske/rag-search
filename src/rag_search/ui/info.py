@@ -171,6 +171,7 @@ def architecture(paths: Paths) -> dict[str, Any]:
         "hosts": [{"name": h.NAME, "label": h.LABEL} for h in register.shown_hosts()],
         "python": platform.python_version(),
         "platform": f"{machine.system()} {machine.arch()}",
+        "machine": machine.describe(),
         "models": {
             "embedding": {
                 "name": str(val["models.embedding"]), "serving": models.serving_model(paths),

@@ -4,7 +4,7 @@
 (function () {
   let A = null, refs = {}, section = 'system', docLoaded = false;
   const SECTIONS = [['system', 'System overview'], ['indexing', 'Indexing pipeline'], ['format', 'Index files'], ['search', 'Search pipeline'],
-    ['daemons', 'Daemons & clients'], ['doc', 'Full document']];
+    ['daemons', 'Daemons & clients'], ['platform', 'This computer'], ['doc', 'Full document']];
 
   const node = (title, text, opts) => {
     opts = opts || {};
@@ -314,6 +314,39 @@ serving/                                  what the search daemon reads
       p({ class: 'small muted' }, 'The wire protocol, the error codes and the access rules in full are in the ', h('a', { href: '#/architecture/doc' }, 'full document'), '.')];
   }
 
+  /* ---------- 6b. platforms: what each kind of machine gets, this one highlighted ---------- */
+  function platformView() {
+    const m = (A && A.machine) || {};
+    const KINDS = [
+      ['apple_silicon', 'Apple Silicon Mac', ['Apple GPU (Metal), half precision', 'Reader: MLX (Qwen3-VL, PaddleOCR-VL)', 'Scans: reader, Apple Vision, docling OCR, Tesseract', 'Start at login: launchd', 'Data: ~/Library/Application Support']],
+      ['intel_mac', 'Intel Mac', ['CPU, full precision (int8 opt-in)', 'Reader: none yet (CPU reader planned)', 'Scans: Apple Vision, docling OCR, Tesseract', 'Start at login: launchd', 'Older stack: torch 2.2, docling 2.7x']],
+      ['linux', 'Linux (prepared)', ['CPU, or a CUDA card (RAG_SEARCH_DEVICE=cuda)', 'Reader: none yet (CPU reader planned)', 'Scans: docling OCR, Tesseract', 'Start at login: systemd (planned)', 'Data: $XDG_DATA_HOME or ~/.local/share']]];
+    const W = 900, bw = 280, gap = 30, x0 = 10, y1 = 120;
+    const here = KINDS.find(k => k[0] === m.kind);
+    const kids = [
+      dhead(10, 18, 'ONE CODE BASE, THREE KINDS OF MACHINE'),
+      dbox(x0, 30, W - 20, 56, 'machine.py: the one place that asks what machine this is',
+        ['decisions by capability (GPU, MLX, Apple Vision, CUDA, service manager, data folder), worked out at every call'], 'store')];
+    KINDS.forEach(([id, title, lines], i) => {
+      const x = x0 + i * (bw + gap), on = id === m.kind;
+      kids.push(dedge('pl', `M${x + bw / 2},86 L${x + bw / 2},${y1 - 2}`, null));
+      kids.push(dbox(x, y1, bw, 150, title + (on ? '  (this computer)' : ''), lines, on ? 'hl' : ''));
+    });
+    const svg = dsvg('pl', W, 290, 'What each kind of machine gets', kids,
+      dhead(10, 296, 'THE SAME ON EVERY MACHINE'),
+      sv('text', { x: 10, y: 316, class: 's' }, 'indexing, BM25 + dense + rerank search, the dashboard, the MCP server, docling reading of text, Office files and PDFs with a text layer'));
+    svg.setAttribute('viewBox', `0 0 ${W} 330`);
+    const row = (k, v) => [k, String(v == null || v === '' ? '-' : v)];
+    return [
+      card('What this computer is', 'from rag-search’s machine layer (machine.py)', figure(svg, here ? here[1] + ' is highlighted.' : 'This kind of machine is not one of the three.')),
+      card('This computer, in numbers', null, table(['', ''], [
+        row('Kind', m.kind), row('System', (m.system || '') + ' ' + (m.arch || '')), row('Memory', m.ram_gb ? m.ram_gb + ' GB' : ''),
+        row('Models run on', m.device), row('Bytes per weight', m.weight_bytes), row('CPU cores (physical)', m.cpu_cores),
+        row('Reader backends', (m.reader_backends || []).join(', ') || 'none'), row('Apple Vision', m.apple_vision ? 'yes' : 'no'),
+        row('Service manager', m.service_manager || 'none yet'), row('Package manager', m.package_manager || '-')])),
+      m.note ? p({ class: 'small muted' }, m.note) : null];
+  }
+
   /* ---------- 7. full document ---------- */
   async function docView() {
     const box = refs.body;
@@ -327,7 +360,7 @@ serving/                                  what the search daemon reads
     docLoaded = true;
   }
 
-  const BUILD = { system: sysView, indexing: idxView, format: fmtView, search: searchView, daemons: daemonsView };
+  const BUILD = { system: sysView, indexing: idxView, format: fmtView, search: searchView, daemons: daemonsView, platform: platformView };
 
   function refreshLive() {
     const s = searchStatus(), i = indexerStatus();
