@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+_which = shutil.which                  # a name of its own so that tests can say what is installed
 APPLE_SILICON, INTEL_MAC, LINUX, OTHER = "apple_silicon", "intel_mac", "linux", "other"
 DEVICES = ("cpu", "mps", "cuda")
 
@@ -166,7 +167,7 @@ def service_manager() -> str:
     that has ``systemctl``, ``""`` where none is supported."""
     if is_mac():
         return "launchd"
-    return "systemd" if is_linux() and shutil.which("systemctl") else ""
+    return "systemd" if is_linux() and _which("systemctl") else ""
 
 
 def package_manager() -> str:

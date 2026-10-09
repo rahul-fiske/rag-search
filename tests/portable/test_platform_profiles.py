@@ -53,6 +53,7 @@ class on:
             mock.patch("platform.machine", return_value=self.machine),
             mock.patch.object(os, "sysconf", side_effect=lambda name: sysconf[name]),
             mock.patch.dict(sys.modules, {"torch": fake_torch(self.gpu)}),
+            mock.patch.object(machine, "_which", return_value=None),          # no systemctl, whatever this machine has
             mock.patch.dict(os.environ, {}, clear=False),
         ]
         for p in patches:
@@ -188,7 +189,7 @@ class PlacesTests(unittest.TestCase):
 
     def test_linux_with_systemctl_has_a_service_manager(self):
         for name, manager in (("linux_cpu", "systemd"), ("apple_silicon", "launchd")):
-            with self.subTest(name), on(name), mock.patch("shutil.which", return_value="/usr/bin/systemctl"):
+            with self.subTest(name), on(name), mock.patch.object(machine, "_which", return_value="/usr/bin/systemctl"):
                 self.assertEqual(machine.service_manager(), manager)
                 self.assertIsNone(service._require_macos())
 

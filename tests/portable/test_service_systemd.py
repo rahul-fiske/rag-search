@@ -11,7 +11,7 @@ from unittest import mock
 from tests.helpers import TempHome
 from tests.portable.test_platform_profiles import on
 
-from rag_search import service
+from rag_search import machine, service
 
 
 def ok(*a, **k):
@@ -44,7 +44,7 @@ class SystemdTests(TempHome):
             calls.append(args)
             return ok()
 
-        with on("linux_cpu"), mock.patch("shutil.which", return_value="/usr/bin/systemctl"), \
+        with on("linux_cpu"), mock.patch.object(machine, "_which", return_value="/usr/bin/systemctl"), \
                 mock.patch.object(service, "_systemctl", side_effect=fake), mock.patch.object(service.api, "daemon_stop"):
             out = service.install(self.paths, "/opt/py/bin/python")
             self.assertTrue(all("installed and started" in line for line in out), out)
