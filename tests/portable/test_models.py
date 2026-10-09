@@ -890,6 +890,37 @@ class CliTests(TempHome):
         rc, tess = run("--minimal")
         self.assertEqual(chained, [])
 
+    def test_setup_numbers_its_steps_and_summarises_them(self):
+        import contextlib
+        import io
+
+        from rag_search.core import diagnostics
+        from rag_search.core.conversion import tesseract
+
+        def run(*flags):
+            out = io.StringIO()
+            with mock.patch.object(diagnostics, "download_models", return_value=["x"]), \
+                    mock.patch.object(tesseract, "ensure_installed"), \
+                    mock.patch.object(cli, "main", side_effect=SystemExit(0)), \
+                    mock.patch("platform.system", return_value="Darwin"), mock.patch("platform.machine", return_value="arm64"), \
+                    contextlib.redirect_stdout(out):
+                rc = cli._cmd_setup(cli.build_parser().parse_args(["setup", *flags]))
+            return rc, out.getvalue()
+
+        rc, out = run()
+        self.assertEqual(rc, 0)
+        steps = [line for line in out.splitlines() if line.startswith("[")]
+        self.assertEqual([line[:5] for line in steps], [f"[{i}/7]" for i in range(1, 8)])
+        self.assertRegex(steps[1], r"search models .*GB")                  # what is downloaded and how much
+        self.assertRegex(steps[2], r"document reader and the repair model, about \d+\.\d GB")
+        self.assertIn("Summary:", out)
+        rc, out = run("--skip-models", "--no-tesseract", "--no-start", "--no-register")
+        steps = [line for line in out.splitlines() if line.startswith("[")]
+        self.assertEqual([line[:5] for line in steps], ["[1/2]", "[2/2]"])    # the data folder and the check
+        for left in ("models: left out (--skip-models)", "Tesseract: left out (--no-tesseract)",
+                     "daemons: not started (--no-start)", "Claude: not registered (--no-register)"):
+            self.assertIn(left, out)
+
     def test_a_step_that_fails_does_not_stop_the_setup(self):
         from rag_search.core import diagnostics
         from rag_search.core.conversion import tesseract

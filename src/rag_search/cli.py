@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -1837,7 +1838,78 @@ def _cmd_convert(a: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+class _SetupSteps:
+    """The numbered steps of ``rag-search setup``: a header before each ("[2/6] ... (about 4 GB)"), how long it took, and a
+    summary at the end that also names the steps that were left out and why."""
+
+    def __init__(self, plan: list[tuple[str, str]]):
+        self.plan = plan                                  # (key, title) of the steps that will run, in order
+        self.results: list[tuple[str, str, float]] = []   # (title, outcome, seconds)
+        self._t0 = 0.0
+        self._title = ""
+
+    def begin(self, title: str) -> None:
+        n = len(self.results) + 1
+        self._title = title
+        print(f"\n[{n}/{len(self.plan)}] {title} ...", flush=True)
+        self._t0 = time.monotonic()
+
+    def end(self, outcome: str = "done") -> None:
+        took = time.monotonic() - self._t0
+        self.results.append((self._title, outcome, took))
+        print(f"    {outcome} in {_dur(took)}", flush=True)
+
+    def summary(self, left_out: list[str]) -> None:
+        print("\nSummary:")
+        for title, outcome, took in self.results:
+            print(f"  {'ok  ' if outcome == 'done' else '!!  '}{title}: {outcome} ({_dur(took)})")
+        for line in left_out:
+            print(f"  --  {line}")
+
+
+def _setup_plan(a: argparse.Namespace, apple: bool) -> tuple[list[tuple[str, str]], list[str]]:
+    """The steps ``setup`` will run, with what each downloads, and the steps it leaves out (with the option that did it)."""
+    from . import models
+
+    emb, rer = (models.selection(k)[0] for k in models.KINDS)
+    weights = sum(models.spec_for(k, m).mem_gb for k, m in (("embedding", emb), ("reranker", rer))) * 2   # fp32 on disk
+    conversion = not a.skip_docling
+    plan, out = [("folder", "Creating the data folder")], []
+    if a.skip_models:
+        out.append("models: left out (--skip-models); each downloads on first use")
+    else:
+        plan.append(("models", f"Downloading the search models ({emb}, {rer})"
+                               + (" and docling's layout and table models" if conversion else "")
+                               + f", about {weights + (0.6 if conversion else 0):.1f} GB"))
+    if a.skip_models or not conversion or a.skip_reader or not apple:
+        why = ("--skip-docling" if not conversion else "--skip-reader" if a.skip_reader
+               else "--skip-models" if a.skip_models else "this is not an Apple Silicon Mac")
+        out.append(f"document reader and repair model: left out ({why})")
+    else:
+        rd, rp = (models.vlm_selection(k)[0] for k in (models.READER, models.REPAIR))
+        gb = sum(x.mem_gb for x in (models.vlm_find(models.READER, rd), models.vlm_find(models.REPAIR, rp)) if x)
+        plan.append(("reader", f"Downloading the document reader and the repair model, about {gb:.1f} GB"))
+    if conversion and not a.no_tesseract:
+        plan.append(("tesseract", "Checking Tesseract (the last-resort page reader) and its Marathi and Hindi data"))
+    elif a.no_tesseract or not conversion:
+        out.append("Tesseract: left out (" + ("--no-tesseract" if a.no_tesseract else "--skip-docling") + ")")
+    plan.append(("doctor", "Checking the installation"))
+    if a.service:
+        plan.append(("daemons", "Installing the start-at-login services (launchd)"))
+    elif not a.no_start:
+        plan.append(("daemons", "Starting the daemons"))
+    else:
+        out.append("daemons: not started (--no-start)")
+    if not a.no_register:
+        plan.append(("register", "Registering the adapter with Claude"))
+    else:
+        out.append("Claude: not registered (--no-register)")
+    return plan, out
+
+
 def _cmd_setup(a: argparse.Namespace) -> int:
+    import platform
+
     from . import models
     from .core import diagnostics
 
@@ -1857,40 +1929,44 @@ def _cmd_setup(a: argparse.Namespace) -> int:
         if rx["documents"]:
             print(f"note: {rx['documents']} indexed document(s) use another embedding model; search "
                   "keeps using them until you run `rag-search index new` (it re-embeds them).")
-    if not a.skip_models:
-        for m in diagnostics.download_models(skip_docling=a.skip_docling):
-            print("  " + m)
     if a.minimal:
+        if not a.skip_models:
+            for m in diagnostics.download_models(skip_docling=a.skip_docling):
+                print("  " + m)
         print("\nSetup complete. Next: rag-search register   (then restart Claude Desktop)")
         return EXIT_OK
 
-    import platform
+    apple = platform.system() == "Darwin" and platform.machine() == "arm64"
+    plan, left_out = _setup_plan(a, apple)
+    steps = _SetupSteps(plan)
+    for key, title in plan:
+        steps.begin(title)
+        outcome = "done"
+        if key == "models":
+            for m in diagnostics.download_models(skip_docling=a.skip_docling):
+                print("    " + m)
+        elif key == "reader":
+            if _chain(["models", "download", "--reader", "--repair"]):
+                outcome = "failed (run: rag-search models download --reader --repair)"
+        elif key == "tesseract":
+            from .core.conversion import tesseract
 
-    conversion = not a.skip_docling                   # the steps that only indexing your own documents needs
-    if conversion and not a.skip_models and not a.skip_reader and platform.system() == "Darwin" \
-            and platform.machine() == "arm64":
-        print("\nDownloading the document reader and the repair model (about 3 GB and 6 GB, once) ...")
-        if _chain(["models", "download", "--reader", "--repair"]):
-            _err("warning: the reader models were not downloaded; run: rag-search models download --reader --repair")
-    if conversion and not a.no_tesseract:
-        print("\nChecking Tesseract (the last-resort page reader) ...")
-        from .core.conversion import tesseract
-
-        tesseract.ensure_installed(print)
-    print("\nHealth check ...")
-    if _chain(["doctor"]):
-        print("doctor reported problems (see above)")
-    if a.service:
-        print("\nInstalling the start-at-login services (launchd) ...")
-        _chain(["service", "install"])
-    elif not a.no_start:
-        print("\nStarting the daemons (always on until stopped; --service makes them start at login) ...")
-        _chain(["daemon", "start"])
+            tesseract.ensure_installed(lambda m: print("    " + m))
+        elif key == "doctor":
+            if _chain(["doctor"]):
+                outcome = "reported problems (see above)"
+        elif key == "daemons":
+            if _chain(["service", "install"] if a.service else ["daemon", "start"]):
+                outcome = "failed"
+        elif key == "register":
+            if _chain(["register"] + (["--tool-prefix", a.tool_prefix] if a.tool_prefix else [])):
+                outcome = "failed"
+        steps.end(outcome)
+    steps.summary(left_out)
     if not a.no_register:
-        print("\nRegistering with Claude ...")
-        _chain(["register"] + (["--tool-prefix", a.tool_prefix] if a.tool_prefix else []))
-    print("\nSetup complete. Fully quit and reopen Claude Desktop (Cmd-Q), then ask: \"list my document collections\".\n"
-          "Next: rag-search location add NAME FOLDER, then rag-search index new --follow, then rag-search search \"...\".")
+        print("\nFully quit and reopen Claude Desktop (Cmd-Q), then ask: \"list my document collections\".")
+    print("Next: open the dashboard with  rag-search ui  and add your folder under Collections "
+          "(or: rag-search location add NAME FOLDER, then rag-search index new --follow).")
     return EXIT_OK
 
 

@@ -76,7 +76,7 @@ not supported. Intel Macs (CPU only, no document reader) and Linux (no Apple Vis
 The PyPI package is called `rag-search-local` (`rag-search` was taken); the command is still `rag-search`. Every Python package, including the Apple-only ones, is a dependency of the package, so all three give the same
 installation. Then run **`rag-search setup`** once (again whenever something is missing). It creates the data folder
 (`~/Library/Application Support/rag-search`), downloads the models, installs Tesseract, checks the installation,
-starts the daemons and registers the adapter with Claude. Useful options: `--models PRESET`, `--skip-models`,
+starts the daemons and registers the adapter with Claude. It prints numbered steps (`[2/7] Downloading the search models ... about 5 GB`), the time each took and a summary at the end. Useful options: `--models PRESET`, `--skip-models`,
 `--no-tesseract`, `--no-register`, `--service` (daemons start at login); all of them: `rag-search setup --help`.
 `./install.sh` installs the wheel and calls `setup` with its own options (`--home`, `--python`, and the same flags).
 
