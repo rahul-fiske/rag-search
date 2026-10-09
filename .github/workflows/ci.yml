@@ -47,3 +47,20 @@ jobs:
       - run: uv build --out-dir dist
       - run: uvx twine check dist/*
       - run: python3 scripts/check_release.py dist dist
+
+  # A real Intel Mac (GitHub's macos-15-intel): the wheel must install without compiling anything heavy, and start.
+  intel:
+    runs-on: macos-15-intel
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - run: uv build --wheel --out-dir dist
+      - name: Install (no source builds of the packages that have no Intel wheel)
+        run: uv tool install --python 3.12 --no-build-package docling-parse --no-build-package cryptography dist/*.whl
+      - name: It starts and its packages are there
+        run: |
+          rag-search --version
+          PY="$(uv tool dir)/rag-search-local/bin/python"
+          "$PY" -c "import platform, torch, docling, sentence_transformers, mcp, ocrmac; print(platform.machine(), torch.__version__)"
+          rag-search doctor

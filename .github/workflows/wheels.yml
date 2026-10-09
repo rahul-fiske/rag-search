@@ -1,0 +1,26 @@
+name: Wheels
+
+# Upstream releases change which packages have a wheel for which machine (docling-parse and cryptography stopped
+# publishing Intel Mac wheels in 2026).  Weekly, and when the dependencies change: does every package still have one?
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+  push:
+    paths: ["pyproject.toml", "scripts/check_wheels.py"]
+
+permissions:
+  contents: read
+
+jobs:
+  wheels:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - run: python3 scripts/check_wheels.py --python-version ${{ matrix.python }}
