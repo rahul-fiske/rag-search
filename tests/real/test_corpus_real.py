@@ -11,7 +11,14 @@ from pathlib import Path
 from tests import corpus
 from tests.real import RealCase
 
-from rag_search import api
+from rag_search import api, machine
+
+
+def needle_of(e: dict) -> str:
+    """The needle of a corpus entry on this machine: text inside a large picture is found by the document reader only."""
+    if e.get("needle_needs_reader") and not machine.mlx_possible():
+        return ""
+    return e.get("needle", "")
 
 
 class CorpusRunTests(RealCase):
@@ -60,7 +67,7 @@ class CorpusRunTests(RealCase):
                 bad.append(f"{key} {got.get(key)!r}, expected {want[key]!r}")
         if "gate" in want and got.get("gate") != sorted(want["gate"]):
             bad.append(f"failed checks {got.get('gate')!r}, expected {want['gate']!r}")
-        if got["status"] == "indexed" and e.get("needle") and e["needle"].lower() not in got["markdown"].lower():
+        if got["status"] == "indexed" and needle_of(e) and e["needle"].lower() not in got["markdown"].lower():
             bad.append(f"the Markdown lacks the needle {e['needle']!r}; it holds {got['markdown'][:400]!r}; "
                        f"notes {got.get('notes')!r}")
         if want.get("remembered"):
@@ -93,7 +100,7 @@ class CorpusRunTests(RealCase):
         think, so this tests the index and the search path, not model quality.  A file whose text is
         also in another file (manual.docx repeats report.docx) is found in either."""
         for e in corpus.entries(has="real"):
-            if not e.get("needle") or e["real"]["status"] != "indexed" or e.get("known_issue"):
+            if not needle_of(e) or e["real"]["status"] != "indexed" or e.get("known_issue"):
                 continue
             with self.subTest(e["path"]):
                 r = api.search(self.paths, e["needle"], top_k=3, wait_s=300, stages=["bm25"])

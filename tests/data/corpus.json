@@ -33,7 +33,7 @@
      "real": {"status": "indexed", "strip": "d2f2", "outcomes": {"pass": 2, "no_text": 2}, "gate": ["coverage", "low_resolution"]}, "needle": "alpha"},
     {"path": "pdf/picture-on-text.pdf", "kind": "pdf", "shows": "a text page with a large picture that holds text of its own (3.2c)",
      "route": {"pages": 1, "branches": ["digital"], "profile": {"big_pics": 1}},
-     "real": {"status": "indexed", "strip": "d1", "outcomes": {"pass": 1}}, "needle": "jade compass receipt"},
+     "real": {"status": "indexed", "strip": "d1", "outcomes": {"pass": 1}}, "needle": "jade compass receipt", "needle_needs_reader": true},
     {"path": "pdf/hidden-ocr-layer.pdf", "kind": "pdf", "shows": "a searchable scan: full-page picture with an invisible text layer",
      "route": {"pages": 1, "branches": ["digital"], "profile": {"hidden_ocr_layer": true}},
      "real": {"status": "indexed", "strip": "d1", "outcomes": {"pass": 1}}, "needle": "copper willow invoice"},
