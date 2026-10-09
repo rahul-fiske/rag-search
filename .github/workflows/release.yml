@@ -63,7 +63,8 @@ jobs:
           rag-search setup --help > /dev/null
           PY="$(uv tool dir)/rag-search-local/bin/python"
           "$PY" -c "import mcp, docling, sentence_transformers, pillow_heif"
-          if [ "$(uname -s)" = "Darwin" ]; then "$PY" -c "import ocrmac, mlx_vlm"; fi
+          if [ "$(uname -s)" = "Darwin" ]; then "$PY" -c "import ocrmac"; fi
+          if [ "$(uname -s)-$(uname -m)" = "Darwin-arm64" ]; then "$PY" -c "import mlx_vlm"; fi   # Apple Silicon only
 
   testpypi:
     needs: [build, smoke]
