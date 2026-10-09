@@ -497,12 +497,15 @@ class ServiceTests(TempHome):
         finally:
             del os.environ["RAG_SEARCH_DEVICE"]
 
-    @unittest.skipIf(sys.platform == "darwin", "would touch real launchd")
-    def test_install_is_macos_only(self):
-        self.assertEqual(service.install(self.paths), ["launchd services are macOS-only"])
-        self.assertEqual(service.uninstall(self.paths), ["launchd services are macOS-only"])
-        st = service.status(self.paths)
-        self.assertFalse(st["search"]["installed"])
+    def test_install_needs_a_service_manager(self):
+        """A machine with neither launchd nor systemd (never touches the real ones: the manager is faked)."""
+        from rag_search import machine
+
+        msg = "start-at-login services need launchd (macOS) or systemd (Linux)"
+        with mock.patch.object(machine, "service_manager", return_value=""):
+            self.assertEqual(service.install(self.paths), [msg])
+            self.assertEqual(service.uninstall(self.paths), [msg])
+            self.assertNotIn("loaded", service.status(self.paths)["search"])     # nothing was asked of a manager
 
 
 if __name__ == "__main__":
