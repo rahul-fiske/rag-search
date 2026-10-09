@@ -43,6 +43,7 @@ class CorpusRunTests(RealCase):
         pages = json.loads(tr.read_text())["pages"] if tr.exists() else []
         return {"status": "indexed", "strip": conv.get("strip"), "outcomes": conv.get("outcomes"),
                 "tables": conv.get("tables"), "src": meta.get("src_path"),
+                "notes": [p.get("note") for p in pages if p.get("note")],
                 "gate": sorted({c["name"] for p in pages for c in (p.get("gate") or {}).get("checks", [])}),
                 "reconcile": [p["reconcile"]["role"] for p in pages if p.get("reconcile")],
                 "markdown": (self.paths.markup / coll / (doc + ".md")).read_text(encoding="utf-8")}
@@ -60,7 +61,8 @@ class CorpusRunTests(RealCase):
         if "gate" in want and got.get("gate") != sorted(want["gate"]):
             bad.append(f"failed checks {got.get('gate')!r}, expected {want['gate']!r}")
         if got["status"] == "indexed" and e.get("needle") and e["needle"].lower() not in got["markdown"].lower():
-            bad.append(f"the Markdown lacks the needle {e['needle']!r}")
+            bad.append(f"the Markdown lacks the needle {e['needle']!r}; it holds {got['markdown'][:400]!r}; "
+                       f"notes {got.get('notes')!r}")
         if want.get("remembered"):
             coll, doc = corpus.doc_name(e["path"])
             if not (self.paths.index / coll / doc / "outcome.json").exists():
