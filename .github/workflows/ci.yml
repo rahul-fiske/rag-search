@@ -37,7 +37,14 @@ jobs:
       - run: |
           uv venv --python ${{ matrix.python }} .venv
           uv pip install --python .venv/bin/python numpy pypdfium2 pillow "mcp>=1.12,<2"
-      - run: PYTHONPATH=src .venv/bin/python -m unittest discover -s tests/portable -t .
+      - run: |
+          set +e
+          PYTHONPATH=src .venv/bin/python -m unittest discover -s tests/portable -t . 2>&1 | tee tiera.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then   # the failure text as an annotation (readable without the log)
+            grep -A14 -E "^(FAIL|ERROR):" tiera.log | head -80 | python3 -c "import sys; t = sys.stdin.read().replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'); print('::error title=tier A failures::' + t)"
+          fi
+          exit "$rc"
 
   build:
     runs-on: ubuntu-latest
