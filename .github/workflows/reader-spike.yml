@@ -24,4 +24,4 @@ jobs:
         if: runner.os == 'macOS'
       - run: uv tool install --python 3.12 dist/*.whl
         if: runner.os != 'macOS'
-      - run: "$(uv tool dir)/rag-search-local/bin/python" scripts/reader_spike.py
+      - run: '"$(uv tool dir)/rag-search-local/bin/python" scripts/reader_spike.py'
