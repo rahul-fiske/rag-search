@@ -52,7 +52,7 @@ class CorpusRunTests(RealCase):
         bad = []
         if got["status"] != want["status"]:
             return [f"status {got['status']!r} ({got.get('message', '')[:200]}), expected {want['status']!r}"]
-        if "message" in want and want["message"].lower() not in got.get("message", "").lower():
+        if "message" in want and not any(m.lower() in got.get("message", "").lower() for m in want["message"].split("|")):
             bad.append(f"message {got.get('message', '')[:200]!r} lacks {want['message']!r}")
         for key in ("strip", "outcomes", "tables", "reconcile"):
             if key in want and got.get(key) != want[key]:

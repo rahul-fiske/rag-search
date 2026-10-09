@@ -188,6 +188,23 @@ class LaneFlowTests(TempHome):
         self.assertEqual((rt["runway"], rt["final"]), ("b", "b"))
         self.assertIn("no document reader", rt["reasons"][0])
 
+    def test_a_scan_that_ocr_reads_badly_is_kept_and_flagged_when_there_is_no_document_reader(self):
+        """An Intel Mac, a Linux machine: lane b is the only reader of a scan.  The gate doubts the reading; there is
+        nowhere to send the page, so it stays, flagged low, once (no second reading, no error)."""
+        reads = []
+
+        class Counting(FakeReader):
+            def read(s, src, first, last, mode):
+                reads.append((first, last, mode))
+                return super().read(src, first, last, mode)
+
+        res = self.convert(Counting(bad={3: GIBBERISH}), None)
+        rec = self.rec(res, 3)
+        self.assertEqual((rec["route"]["runway"], rec["route"]["final"]), ("b", "b"))
+        self.assertEqual(rec["outcome"], "low")
+        self.assertNotIn("escalated_from", rec["route"])
+        self.assertEqual([r for r in reads if r[2] == "scan"], [(3, 3, "scan")])           # read once
+
     def test_a_region_the_text_layer_does_not_explain_makes_the_page_lane_c(self):
         os.environ["RAG_SEARCH_RESIDUE"] = "auto"
         v = PicVlm(self.tmp)

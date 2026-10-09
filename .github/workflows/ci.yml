@@ -51,7 +51,7 @@ jobs:
   # A real Intel Mac (GitHub's macos-15-intel): the wheel must install without compiling anything heavy, and start.
   intel:
     runs-on: macos-15-intel
-    timeout-minutes: 40
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
@@ -64,3 +64,7 @@ jobs:
           PY="$(uv tool dir)/rag-search-local/bin/python"
           "$PY" -c "import platform, torch, docling, sentence_transformers, mcp, ocrmac; print(platform.machine(), torch.__version__)"
           rag-search doctor
+      - name: Tier B on Intel (real docling, real small models, the whole test corpus)
+        run: |
+          PY="$(uv tool dir)/rag-search-local/bin/python"
+          PYTHONPATH=src "$PY" -m unittest discover -s tests/real -t .

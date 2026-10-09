@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import __version__, api, spec
+from . import __version__, api, machine, spec
 from .paths import DEFAULT_TOP_K, allow_cloud_files, ensure_dirs, get_paths
 
 EXIT_OK, EXIT_FAIL, EXIT_USAGE, EXIT_UNAVAILABLE = 0, 1, 2, 3
@@ -1830,7 +1830,7 @@ def _cmd_convert(a: argparse.Namespace) -> int:
                      ("RAG_SEARCH_OCR_ENGINE", a.engine), ("RAG_SEARCH_TABLE_MODE", a.table)):
         if val:
             os.environ[var] = val
-    os.environ.setdefault("RAG_SEARCH_THREADS", str(min(os.cpu_count() or 4, 8)))
+    os.environ.setdefault("RAG_SEARCH_THREADS", str(min(machine.physical_cores(), 8)))
     src = Path(a.file).expanduser()
     out = Path(a.output).expanduser() if a.output else Path.cwd() / (src.stem + ".md")
     info = convert_file(src, out, ocr=True if a.ocr else None)

@@ -51,7 +51,7 @@
      "real": {"status": "error", "message": "password-protected PDF", "remembered": true}},
     {"path": "pdf/damaged.pdf", "kind": "pdf", "shows": "a truncated PDF: an error for this document, the run goes on",
      "route": {"pages": 0, "error": "Failed to load document"},
-     "real": {"status": "error", "message": "could not load document"}},
+     "real": {"status": "error", "message": "could not load document|is not valid"}},
 
     {"path": "office/report.docx", "kind": "office", "shows": "Word document with headings, a table and a picture",
      "route": {"pages": 1, "branches": ["office"]},

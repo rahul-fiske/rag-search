@@ -195,6 +195,24 @@ class ConvertFileTests(TempHome):
         self.assertEqual(info["pages"], 1)
         self.assertIn("<!-- page 1 -->", out.read_text())
 
+    def test_asciidoc_that_docling_cannot_read_is_indexed_as_text_but_a_pdf_is_not(self):
+        src = self.tmp / "deploy.adoc"
+        src.write_text("= Deploy\n\nNeedle: azure quarry deployment.\n\n* one\n* two\n", encoding="utf-8")
+        out = self.tmp / "out" / "deploy.md"
+        with mock.patch.object(dc, "_convert_document", side_effect=RuntimeError("Pipeline SimplePipeline failed")):
+            info = dc.convert_file(src, out)
+            self.assertEqual(info["pages"], 1)
+            self.assertTrue(out.read_text(encoding="utf-8").startswith("<!-- page 1 -->\n\n= Deploy"))
+            self.assertIn("azure quarry deployment", out.read_text(encoding="utf-8"))
+            empty = self.tmp / "empty.adoc"
+            empty.write_text("  \n", encoding="utf-8")
+            with self.assertRaises(dc.NoTextError):
+                dc.convert_file(empty, self.tmp / "out" / "empty.md")
+            pdf = self.tmp / "x.pdf"
+            pdf.write_bytes(b"%PDF-1.4")
+            with self.assertRaises(RuntimeError):                          # no fallback for a format that is not text
+                dc.convert_file(pdf, self.tmp / "out" / "x.md")
+
     def test_pages_of_placeholders_only_are_not_text(self):
         doc = FakeDoc([1, 2])
         doc.markdown = {1: "<!-- image -->\n\nOther", 2: "<!-- image -->"}

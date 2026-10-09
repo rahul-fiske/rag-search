@@ -29,7 +29,7 @@ from typing import Any
 
 import numpy as np
 
-from .. import stages
+from .. import machine, stages
 from ..locations import ScanPlan, index_is_imported, scan_tree, workspace_excludes
 from ..paths import (
     ALL_DIR,
@@ -1452,7 +1452,7 @@ def run_index(
         # conversions instead (an explicit RAG_SEARCH_THREADS wins).  Children inherit this.
         if _USER_THREADS is None:          # recomputed per run (a long-lived process runs many)
             os.environ["RAG_SEARCH_THREADS"] = str(
-                max(2, min(os.cpu_count() or 4, 8) // max(1, min(jobs, total))))
+                max(2, min(machine.physical_cores(), 8) // max(1, min(jobs, total))))
         emit({"phase": "convert", "done": 0, "total": total, "message": f"{total} file(s)"})
         _sink({"phase_event": {"phase": "convert", "status": "start", "total": total,
                                "workers": min(jobs, total) if total else 0}})

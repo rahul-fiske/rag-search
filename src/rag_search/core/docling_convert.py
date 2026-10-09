@@ -48,6 +48,7 @@ from typing import Any
 
 PASSTHROUGH = {".md", ".txt"}
 RTF_EXTENSIONS = {".rtf"}                 # read here, with the standard library (docling needs an office suite installed for RTF)
+TEXT_FALLBACK = {".adoc"}                # plain text that a docling of another version may not read: then it is read as text
 MACRO_WORD_EXTENSIONS = {".docm"}         # a .docx with another content type: docling's Word reader refuses it as it is
 IMAGES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 
@@ -1015,6 +1016,15 @@ def convert_file(src: Path, out_md: Path, ocr: bool | None = None) -> dict:
     except ConversionTimeout:
         raise
     except Exception as exc:  # noqa: BLE001
+        if suffix in TEXT_FALLBACK:           # e.g. AsciiDoc with the older docling an Intel Mac gets: index the text
+            print(f"note: {src.name}: docling could not read it ({describe_error(exc)}); indexed as plain text",
+                  file=sys.stderr)
+            md = read_text_file(src)
+            if not has_real_text(md):
+                raise NoTextError(f"no text extracted from {src.name}") from exc
+            tmp.write_text("<!-- page 1 -->\n\n" + md, encoding="utf-8")
+            os.replace(tmp, out_md)
+            return {"pages": 1, "seconds": round(time.perf_counter() - t0, 2)}
         reason = protected_pdf_reason(src) if suffix == ".pdf" else ""
         if reason:
             raise ProtectedPdfError(reason) from exc
