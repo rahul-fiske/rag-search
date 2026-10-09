@@ -19,6 +19,8 @@ import sys
 import time
 from pathlib import Path
 
+from . import machine
+
 SERVER_NAME = "rag-search"
 
 
@@ -197,13 +199,7 @@ def _remove(path: Path, label: str) -> str:
 # ── Claude Desktop ───────────────────────────────────────────────────────────
 
 def desktop_config_path() -> Path:
-    if sys.platform == "darwin":
-        return (Path.home() / "Library" / "Application Support" / "Claude"
-                / "claude_desktop_config.json")
-    if sys.platform.startswith("win"):
-        return Path(os.environ.get("APPDATA", "~")).expanduser() / "Claude" / \
-            "claude_desktop_config.json"
-    return Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+    return machine.claude_desktop_config()
 
 
 def register_desktop(home: str | None = None, tool_prefix: str = "") -> str:

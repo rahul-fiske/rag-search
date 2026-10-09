@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from . import api, client
+from . import api, client, machine
 from .paths import Paths
 
 LABEL_PREFIX = "io.rag-search"
@@ -78,7 +78,7 @@ def _launchctl(*args: str) -> subprocess.CompletedProcess:
 
 
 def _require_macos() -> str | None:
-    return None if sys.platform == "darwin" else "launchd services are macOS-only"
+    return None if machine.service_manager() == "launchd" else "launchd services are macOS-only"
 
 
 def install(paths: Paths, python: str | None = None) -> list[str]:
@@ -125,7 +125,7 @@ def status(paths: Paths) -> dict[str, Any]:
     for kind in api.KINDS:
         entry: dict[str, Any] = {"plist": str(plist_path(kind)),
                                  "installed": plist_path(kind).exists()}
-        if sys.platform == "darwin":
+        if machine.service_manager() == "launchd":
             entry["loaded"] = _launchctl("print", f"{_domain()}/{label(kind)}").returncode == 0
         info = client.ping(paths, kind)
         entry["running"] = bool(info)

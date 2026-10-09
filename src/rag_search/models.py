@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import importlib.metadata as md
 import os
-import platform
 import re
 import time
 from dataclasses import dataclass
@@ -29,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from . import DIST_NAME
+from . import machine as host
 from .paths import (DEFAULT_MODEL, DEFAULT_RERANK_MODEL, META_FILE, ALL_DIR, Paths, configured_model,
                     env_flag, read_json)
 
@@ -467,7 +467,7 @@ def _installed(module: str) -> bool:
 
 
 def _apple_silicon() -> bool:
-    return platform.system() == "Darwin" and platform.machine() == "arm64"
+    return host.apple_silicon()
 
 
 def set_memory_limit(paths: Paths, gb: float) -> None:
@@ -503,20 +503,9 @@ def brief(paths: Paths) -> dict[str, Any]:
 # ── this machine ─────────────────────────────────────────────────────────────
 
 def machine_info() -> dict[str, Any]:
-    try:
-        ram = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
-    except (ValueError, OSError, AttributeError):
-        ram = 0
-    system, arch = platform.system(), platform.machine()
-    forced = os.environ.get("RAG_SEARCH_DEVICE", "")
-    if forced:
-        device = forced
-    elif system == "Darwin" and arch == "arm64":
-        device = "mps"                     # Apple GPU
-    else:
-        device = "cpu"                     # Intel Macs, plain Linux (a CUDA card is not assumed)
-    return {"ram_gb": round(ram / 1024 ** 3, 1), "system": system, "arch": arch, "device": device,
-            "weight_bytes": 2 if device in ("mps", "cuda") else 4}
+    device = host.light_device()                    # the Apple GPU on Apple Silicon, else the CPU (see machine.py)
+    return {"ram_gb": host.ram_gb(), "system": host.system(), "arch": host.arch(), "device": device,
+            "weight_bytes": host.weight_bytes(device)}
 
 
 def budget_gb(machine: dict[str, Any], limit_gb: float = 0.0) -> float:

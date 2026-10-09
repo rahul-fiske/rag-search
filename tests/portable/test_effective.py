@@ -50,6 +50,7 @@ class ReadByTests(unittest.TestCase):
             texts = [inspect.getsource(importlib.import_module(m)) for m in {mod, family.get(mod, mod),
                                                                               "rag_search.core.docling_convert",
                                                                               "rag_search.core.embedding",
+                                                                              "rag_search.machine",
                                                                               "rag_search.models"}]
             self.assertTrue(any(t.env in x for x in texts), f"{t.env} is not read where {t.key} says")
 

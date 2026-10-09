@@ -1753,13 +1753,14 @@ def _cmd_ui(a: argparse.Namespace) -> int:
 def _compare_variants(cur: dict[str, Any]) -> list[tuple[str, dict[str, str]]]:
     """The settings worth timing against the current ones (only those that differ)."""
     import importlib.util
-    import platform
+
+    from . import machine
 
     variants: list[tuple[str, dict[str, str]]] = [("current settings", {})]
     smart: dict[str, str] = {"RAG_SEARCH_OCR": "smart"}
     if cur["ocr"] != "smart":
         variants.append(("OCR smart", dict(smart)))
-    if platform.system() == "Darwin" and importlib.util.find_spec("ocrmac") and cur["engine"] != "ocrmac":
+    if machine.apple_vision_possible() and importlib.util.find_spec("ocrmac") and cur["engine"] != "ocrmac":
         variants.append(("OCR smart + Apple Vision", {**smart, "RAG_SEARCH_OCR_ENGINE": "ocrmac"}))
     if cur["table"] != "fast":
         variants.append(("OCR smart + fast tables", {**smart, "RAG_SEARCH_TABLE_MODE": "fast"}))
@@ -1908,9 +1909,7 @@ def _setup_plan(a: argparse.Namespace, apple: bool) -> tuple[list[tuple[str, str
 
 
 def _cmd_setup(a: argparse.Namespace) -> int:
-    import platform
-
-    from . import models
+    from . import machine, models
     from .core import diagnostics
 
     paths = get_paths()
@@ -1936,7 +1935,7 @@ def _cmd_setup(a: argparse.Namespace) -> int:
         print("\nSetup complete. Next: rag-search register   (then restart Claude Desktop)")
         return EXIT_OK
 
-    apple = platform.system() == "Darwin" and platform.machine() == "arm64"
+    apple = machine.mlx_possible()
     plan, left_out = _setup_plan(a, apple)
     steps = _SetupSteps(plan)
     for key, title in plan:

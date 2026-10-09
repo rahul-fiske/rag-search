@@ -12,10 +12,11 @@ the page record says which reader produced the text (``apple-vision``).  Everyth
 from __future__ import annotations
 
 import importlib.util
-import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+
+from ... import machine
 
 ID = "apple-vision"
 LONG_SIDE = 2600                     # px: enough for dot-matrix and small print, still quick
@@ -23,7 +24,7 @@ LONG_SIDE = 2600                     # px: enough for dot-matrix and small print
 
 def why_not() -> str:
     """"" when Apple Vision can read pages here, otherwise the reason."""
-    if sys.platform != "darwin":
+    if not machine.apple_vision_possible():
         return "Apple Vision needs a Mac"
     if importlib.util.find_spec("ocrmac") is None:
         return "ocrmac is not installed (Models tab: install the document reader runtime)"

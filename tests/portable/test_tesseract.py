@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import stat
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -181,12 +182,12 @@ class EnsureInstalledTests(TempHome):
         self.assertNotIn("warning", out)
 
     def test_without_homebrew_it_says_how_to_get_tesseract(self):
-        with mock.patch.object(tesseract.sys, "platform", "darwin"):
+        with mock.patch.object(sys, "platform", "darwin"):
             out = self.run_step()
         self.assertIn("Tesseract is not installed", out)
         self.assertIn("brew install tesseract", out)
         self.said.clear()
-        with mock.patch.object(tesseract.sys, "platform", "linux"):
+        with mock.patch.object(sys, "platform", "linux"):
             self.assertIn("apt-get install -y tesseract-ocr", self.run_step())
 
 

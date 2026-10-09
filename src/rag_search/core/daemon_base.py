@@ -14,12 +14,11 @@ import os
 import signal
 import socket
 import subprocess
-import sys
 import threading
 import time
 from typing import Any
 
-from .. import __version__, protocol
+from .. import __version__, machine, protocol
 from ..paths import Paths, allow_cloud_files, ensure_dirs
 
 log = logging.getLogger("rag_search.daemon")
@@ -43,7 +42,7 @@ def process_memory() -> dict[str, int]:
         import resource
 
         ru = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        peak = ru if sys.platform == "darwin" else ru * 1024       # macOS: bytes, Linux: KiB
+        peak = int(machine.rss_mb(ru) * 1024 * 1024)                 # macOS reports bytes, Linux KiB
     except (ImportError, OSError, ValueError):
         peak = 0
     return {"rss_bytes": rss, "peak_rss_bytes": max(peak, rss)}

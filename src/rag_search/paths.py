@@ -28,7 +28,6 @@ import hashlib
 import json
 import os
 import re
-import sys
 import tempfile
 import threading
 import time
@@ -36,6 +35,8 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from . import machine
 
 DEFAULT_MODEL = "BAAI/bge-m3"
 DEFAULT_RERANK_MODEL = "BAAI/bge-reranker-v2-m3"
@@ -66,11 +67,7 @@ def default_home() -> Path:
     env = os.environ.get("RAG_SEARCH_HOME")
     if env:
         return Path(env).expanduser().absolute()
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "rag-search"
-    xdg = os.environ.get("XDG_DATA_HOME")
-    base = Path(xdg).expanduser() if xdg else Path.home() / ".local" / "share"
-    return base / "rag-search"
+    return machine.data_home()
 
 
 KINDS = ("search", "indexer")
@@ -539,7 +536,7 @@ def allow_cloud_files() -> bool:
     if "on" in _CLOUD_FILES:
         return _CLOUD_FILES["on"]
     ok = False
-    if sys.platform == "darwin":
+    if machine.is_mac():
         try:
             import ctypes
 

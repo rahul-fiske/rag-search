@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -57,7 +58,7 @@ class PathHelperTests(TempHome):
     def test_experiment_names_are_checked_and_the_default_home_is_the_macs_application_support(self):
         with self.assertRaises(ValueError):
             paths_mod.validate_experiment_name("../escape")
-        with mock.patch.object(paths_mod.sys, "platform", "darwin"):
+        with mock.patch.object(sys, "platform", "darwin"):
             os.environ.pop("RAG_SEARCH_HOME")
             self.assertEqual(paths_mod.default_home().parts[-3:], ("Library", "Application Support", "rag-search"))
 
@@ -88,7 +89,7 @@ class PathHelperTests(TempHome):
             paths_mod.SourceRoots.of(self.tmp)
 
     def test_asking_the_os_to_fetch_cloud_files_is_harmless_where_it_cannot(self):
-        with mock.patch.object(paths_mod.sys, "platform", "darwin"), mock.patch("ctypes.CDLL", side_effect=OSError("no libc")):
+        with mock.patch.object(sys, "platform", "darwin"), mock.patch("ctypes.CDLL", side_effect=OSError("no libc")):
             paths_mod.allow_cloud_files()                       # must not raise
 
 

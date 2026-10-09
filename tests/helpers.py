@@ -291,11 +291,11 @@ def no_real_reader(case) -> None:
     """Make the MLX document reader unavailable for one test, on any machine: the code under test
     then sees "not an Apple Silicon Mac", which is what a test about the fallback path needs.  Without
     it such a test passes in the cloud and fails on a Mac that has the reader and its model."""
-    import types
     from unittest import mock
 
-    p = mock.patch("os.uname", return_value=types.SimpleNamespace(
-        sysname="Linux", nodename="test", release="0", version="0", machine="x86_64"))
+    from rag_search import machine
+
+    p = mock.patch.object(machine, "mlx_possible", return_value=False)
     p.start()
     case.addCleanup(p.stop)
 

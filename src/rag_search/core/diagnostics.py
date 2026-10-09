@@ -14,7 +14,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from .. import api, client, models
+from .. import api, client, machine, models
 from ..config import ConfigStore
 from ..paths import Paths, default_home, ensure_dirs, get_paths, read_json
 
@@ -95,7 +95,7 @@ def run_checks(paths: Paths) -> list[tuple[str, str, str]]:
     v = sys.version_info
     out.append(_line(OK if (3, 11) <= v[:2] < (3, 13) else WARN, "python",
                      f"{platform.python_version()} ({sys.executable})"))
-    out.append(_line(OK, "platform", f"{platform.system()} {platform.machine()}"))
+    out.append(_line(OK, "platform", f"{machine.system()} {machine.arch()}"))
     from .docling_convert import convert_profile
     out.append(_line(OK, "conversion settings", convert_profile()))
     from .. import __version__
@@ -146,7 +146,7 @@ def run_checks(paths: Paths) -> list[tuple[str, str, str]]:
                   f"{', '.join(engines) or 'none found'}; threads {cs['threads'] or 'docling default'}, "
                   f"time limit {int(cs['timeout']) or 'none'}{'s' if cs['timeout'] else ''} per docling call")
         slow = False
-        if platform.system() == "Darwin" and "ocrmac (Apple Vision)" not in engines and cs["ocr"] != "off":
+        if machine.apple_vision_possible() and "ocrmac (Apple Vision)" not in engines and cs["ocr"] != "off":
             detail += ("; Apple's on-device OCR is not installed, so scanned PDFs and photographed "
                        "documents will fail to index (not just run slower): re-run install.sh (it "
                        "now installs ocrmac on macOS automatically), or add it by hand with "
@@ -183,7 +183,7 @@ def run_checks(paths: Paths) -> list[tuple[str, str, str]]:
     except Exception as exc:  # noqa: BLE001
         out.append(_line(WARN, "Conversion lanes", f"{type(exc).__name__}: {exc}"))
     try:
-        if platform.system() == "Darwin" and platform.machine() == "arm64" and importlib.util.find_spec("mlx_vlm"):
+        if machine.mlx_possible() and importlib.util.find_spec("mlx_vlm"):
 
             for kind, what in ((models.READER, "document reader"), (models.REPAIR, "repair model (re-reads flagged pages)")):
                 mid = models.vlm_selection(kind)[0]

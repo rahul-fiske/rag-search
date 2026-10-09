@@ -40,6 +40,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ... import machine
 from . import degenerate
 
 DEFAULT_BACKEND = "mlx"
@@ -97,32 +98,7 @@ class ReaderCrashed(ReaderError):
 def available_memory_gb() -> float | None:
     """Memory that can be given to a new process without swapping, in GB; None when unknown.
     ``$RAG_SEARCH_VLM_FREE_GB`` overrides (tests, or a machine where the figure is misleading)."""
-    env = os.environ.get("RAG_SEARCH_VLM_FREE_GB")
-    if env:
-        try:
-            return float(env)
-        except ValueError:
-            pass
-    try:                                                      # Linux
-        with open("/proc/meminfo", encoding="utf-8") as fh:
-            for line in fh:
-                if line.startswith("MemAvailable:"):
-                    return int(line.split()[1]) / 1024 / 1024
-    except (OSError, ValueError, IndexError):
-        pass
-    if sys.platform == "darwin":                              # macOS: free + inactive + speculative
-        try:
-            out = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=5).stdout
-            page = int(out.split("page size of")[1].split()[0])
-            n = 0
-            for line in out.splitlines():
-                key, _, val = line.partition(":")
-                if key.strip() in ("Pages free", "Pages inactive", "Pages speculative", "Pages purgeable"):
-                    n += int(val.strip().rstrip("."))
-            return n * page / 1024 ** 3
-        except (OSError, ValueError, IndexError, subprocess.SubprocessError):
-            pass
-    return None
+    return machine.available_memory_gb()
 
 
 def memory_guard(need_gb: float) -> None:
@@ -421,7 +397,7 @@ class VlmReader:
             return
         from ... import models
 
-        if sys.platform != "darwin" or os.uname().machine != "arm64":
+        if not machine.mlx_possible():
             raise ReaderUnavailable("the MLX document reader needs an Apple Silicon Mac")
         import importlib.util
 

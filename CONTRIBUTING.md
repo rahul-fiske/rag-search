@@ -110,6 +110,7 @@ in the same change -- see `docs/design/README.md`.
 | Module | Responsibility |
 |---|---|
 | `paths.py`, `config.py` | folder layout and env, `config.json` + defaults |
+| `machine.py` | **the only place that asks what machine this is** (Apple Silicon, Intel Mac, Linux): device, memory, what it can run (MLX, Apple Vision), where things live, service manager. Nothing else may call `sys.platform` or `platform.machine()`: `tests/portable/test_machine_layer.py` fails if it does. A new kind of machine is a new answer here |
 | `policy.py`, `access.py` | per-client collection access: rules + enforcement helpers (used by daemons/api), and the `rag-search access` management code (CLI only; the MCP adapter must never import it) |
 | `protocol.py`, `client.py` | wire format; sockets, on-demand daemon start (`spawn`, `request_sync`, `stop`) |
 | `api.py` | high-level operations shared by CLI and MCP (search, grep, list, index_*, daemon_*, publish_and_reload) |

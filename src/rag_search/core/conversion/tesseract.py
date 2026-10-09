@@ -18,10 +18,11 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 import urllib.request
 from pathlib import Path
+
+from ... import machine
 
 ID = "tesseract"
 DEFAULT_LANGS = "mar+hin+eng"
@@ -92,7 +93,7 @@ def ensure_installed(say=print, *, install: bool = True) -> None:
             exe = binary()
             if not exe:
                 say("warning: 'brew install tesseract' failed; pages the reader cannot read will stay flagged")
-        elif sys.platform.startswith("linux"):
+        elif machine.is_linux():
             say("note: Tesseract is not installed; install it with:  sudo apt-get install -y tesseract-ocr   "
                 "(then run: rag-search setup)")
         else:

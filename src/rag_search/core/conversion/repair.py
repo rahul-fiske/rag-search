@@ -31,12 +31,12 @@ import difflib
 import importlib
 import os
 import re
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from ... import machine
 from . import degenerate, tables, validators
 
 MAX_CELLS = 10                       # cells tried per page
@@ -82,7 +82,7 @@ class OcrMacSecond:
     id = "ocrmac"
 
     def why_not(self) -> str:
-        if sys.platform != "darwin":
+        if not machine.apple_vision_possible():
             return "ocrmac (Apple Vision) needs a Mac"
         import importlib.util
 

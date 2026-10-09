@@ -9,9 +9,10 @@ Energy is not measured: on macOS that needs root (``powermetrics``).
 
 from __future__ import annotations
 
-import sys
 import time
 from typing import Any
+
+from ... import machine
 
 try:                                   # not on Windows
     import resource
@@ -24,7 +25,7 @@ def peak_rss_mb() -> float:
     if resource is None:
         return 0.0
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return peak / (1024 * 1024) if sys.platform == "darwin" else peak / 1024      # bytes vs KB
+    return machine.rss_mb(peak)
 
 
 def children_cpu_s() -> float:

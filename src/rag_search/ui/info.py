@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .. import __version__, api, effective, locations, models, register, spec
+from .. import __version__, api, effective, locations, machine, models, register, spec
 from ..core.chunker import CHUNKER_VERSION
 from ..paths import DEFAULT_TOP_K, INDEX_FORMAT, Paths, env_flag
 from ..publish import KEEP_GENERATIONS
@@ -170,7 +170,7 @@ def architecture(paths: Paths) -> dict[str, Any]:
         "stages": pipe["stages"],            # the numbered pipeline with the values in effect (see stages.py)
         "hosts": [{"name": h.NAME, "label": h.LABEL} for h in register.shown_hosts()],
         "python": platform.python_version(),
-        "platform": f"{platform.system()} {platform.machine()}",
+        "platform": f"{machine.system()} {machine.arch()}",
         "models": {
             "embedding": {
                 "name": str(val["models.embedding"]), "serving": models.serving_model(paths),

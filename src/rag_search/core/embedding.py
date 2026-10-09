@@ -26,7 +26,7 @@ from typing import Any, Callable, Iterator
 
 import numpy as np
 
-from .. import models
+from .. import machine, models
 from ..paths import env_int, model_name, rerank_model_name
 from ..spec import EMBED_BATCH, EMBED_MAX_SEQ, RERANK_BATCH, RERANK_MAX_LEN
 
@@ -55,20 +55,11 @@ def _param_bytes(model) -> int | None:
 
 def pick_device() -> str:
     prepare_environment()
-    forced = os.environ.get("RAG_SEARCH_DEVICE")
-    if forced:
-        return forced
-    import platform
-
+    if machine.forced_device():
+        return machine.forced_device()
     import torch
 
-    intel_mac = platform.system() == "Darwin" and platform.machine() == "x86_64"
-    # Intel Macs report MPS for AMD/Intel GPUs, but fp16 there is slow or wrong: use the CPU
-    if not intel_mac and torch.backends.mps.is_available():
-        return "mps"
-    if torch.cuda.is_available():
-        return "cuda"
-    return "cpu"
+    return machine.probe_device(torch)
 
 
 def release_memory() -> None:

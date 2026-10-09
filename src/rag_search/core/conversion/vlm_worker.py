@@ -21,6 +21,8 @@ import sys
 import time
 from typing import Any
 
+from ... import machine
+
 
 LOOP_CHECK_EVERY = 64                # tokens between two looks at the text for a loop
 
@@ -28,7 +30,7 @@ LOOP_CHECK_EVERY = 64                # tokens between two looks at the text for 
 def rss_mb() -> float:
     """Peak resident memory of this process, MB (ru_maxrss is bytes on macOS, KB on Linux)."""
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return round(peak / (1024 * 1024) if sys.platform == "darwin" else peak / 1024, 1)
+    return round(machine.rss_mb(peak), 1)
 
 
 class MlxBackend:
