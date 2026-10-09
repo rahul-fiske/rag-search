@@ -3,7 +3,6 @@ import io
 import json
 import os
 import plistlib
-import sys
 import unittest
 from unittest import mock
 from pathlib import Path
