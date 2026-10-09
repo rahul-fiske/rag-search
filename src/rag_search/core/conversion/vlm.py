@@ -19,7 +19,7 @@ Protocol: one JSON object per line on the child's stdin / stdout.
 the router can hand it the scanned pages of a PDF or the frames of an image file.  The reader is
 started when the first page is queued and kept for the rest of the run (``shared`` / ``close_shared``).
 
-Backends: ``mlx`` (mlx-vlm, Apple Silicon; a dependency of rag-search there) or ``module:attr`` of
+Backends: ``mlx`` (mlx-vlm, Apple Silicon; a dependency of rag-search there), ``transformers`` (CPU or CUDA) or ``module:attr`` of
 your own class (the tests use ``tests.helpers:FakeVlmBackend``).  ``$RAG_SEARCH_VLM_BACKEND`` chooses.
 The real backend never downloads a model: one that is not on disk is reported, and the page is read
 by docling.
@@ -171,7 +171,7 @@ class Worker:
         env = dict(os.environ)
         env["PYTHONPATH"] = os.pathsep.join(p for p in sys.path if p)
         env["PYTHONUNBUFFERED"] = "1"
-        if self.backend == "mlx":
+        if self.backend in ("mlx", "transformers"):
             env["HF_HUB_OFFLINE"] = "1"                   # a reader never downloads by itself
         cmd = [self.python, "-m", "rag_search.core.conversion.vlm_worker",
                "--backend", self.backend, "--model", self.model]
@@ -393,16 +393,19 @@ class VlmReader:
     def preflight(self) -> None:
         """The cheap checks before a process is started.  The real backend never downloads: a model
         that is not on disk is reported (models are fetched only when you ask for them)."""
-        if self.backend != "mlx":
+        if self.backend not in ("mlx", "transformers"):
             return
         from ... import models
 
-        if not machine.mlx_possible():
-            raise ReaderUnavailable("the MLX document reader needs an Apple Silicon Mac")
         import importlib.util
 
-        if importlib.util.find_spec("mlx_vlm") is None:
-            raise ReaderUnavailable("mlx-vlm is not installed (rag-search models runtime install)")
+        if self.backend == "mlx":
+            if not machine.mlx_possible():
+                raise ReaderUnavailable("the MLX document reader needs an Apple Silicon Mac")
+            if importlib.util.find_spec("mlx_vlm") is None:
+                raise ReaderUnavailable("mlx-vlm is not installed (rag-search models runtime install)")
+        elif importlib.util.find_spec("transformers") is None:
+            raise ReaderUnavailable("transformers is not installed")
         if not models.cache_state(self.model)["cached"]:
             raise ReaderUnavailable(f"the model {self.model} is not downloaded "
                                     f"(rag-search models download {self.model})")
