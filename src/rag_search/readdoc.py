@@ -135,6 +135,8 @@ def read(markup_root: Path | None, collection: str, docs: list[dict[str, Any]], 
     extra: dict[str, Any] = {}
     if pages and pages.strip():
         text, extra = page_slice(text, pages)
+        if not text:
+            extra["note"] = "no text was read from these pages (a blank page, or a picture without text)"
     try:
         offset, max_chars = int(offset), int(max_chars)
     except (TypeError, ValueError) as exc:

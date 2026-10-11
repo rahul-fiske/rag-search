@@ -168,6 +168,14 @@ class ReadTests(Base):
             with self.subTest(bad), self.assertRaises(readdoc.DocError):
                 readdoc.page_slice(doc, bad)
 
+    def test_a_page_without_text_says_so(self):
+        gen = self.paths.live_markup() / "garmin" / "gappy.md"
+        gen.write_text("<!-- page 1 -->\n\none\n\n<!-- page 3 -->\n\nthree\n", encoding="utf-8")
+        docs = [{"name": "gappy", "source": "gappy.pdf"}]
+        res = readdoc.read(self.paths.live_markup(), "garmin", docs, "gappy", pages="2")
+        self.assertEqual((res["text"], res["total_pages"]), ("", 3))
+        self.assertIn("no text", res["note"])
+
     def test_a_markdown_source_is_one_page(self):
         res = self.text_of("index", pages="1")
         self.assertEqual((res["text"], res["total_pages"]), ("# Index\n\nstart here\n", 1))
