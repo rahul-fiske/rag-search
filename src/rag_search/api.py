@@ -14,7 +14,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from . import client as client_mod
-from . import descriptions, jobs, policy, protocol, publish
+from . import descriptions, jobs, policy, protocol, publish, readdoc
 from .catalog import collection_names, known_names, list_view, live_catalog
 from .grep import grep_isolated
 from .paths import SUPPORTED_EXTENSIONS, Paths, is_plain_name, parse_collections, read_json
@@ -146,6 +146,51 @@ def local_grep(paths: Paths, pattern: str, collections: list[str] | str | None,
         return protocol.error(protocol.BAD_REQUEST, err)
     res = grep_isolated(paths.live_markup(), pattern, scope, context_lines, max_matches)
     return {"ok": True, "source": "local", "result": res}
+
+
+def _one_collection(paths: Paths, collection: str, client: str) -> tuple[str, list[dict[str, Any]], dict[str, Any] | None]:
+    """(the collection's real name, its catalogue entries, None) or ("", [], an error reply): exactly one collection,
+    one *client* may use.  Same wording as search and grep for a name that is unknown or not allowed."""
+    if "," in (collection or ""):
+        return "", [], protocol.error(protocol.BAD_REQUEST, "give one collection name, not a list")
+    if not (collection or "").strip():
+        return "", [], protocol.error(protocol.BAD_REQUEST, "which collection? pass its exact name "
+                                      "(rag_list_collections shows them)")
+    cat = live_catalog(paths)
+    scope, err = policy.resolve_scope(policy.current_rules(paths), client, [collection.strip()], collection_names(cat))
+    if err:
+        return "", [], protocol.error(protocol.BAD_REQUEST, err)
+    docs = next((c.get("documents", []) for c in cat.get("collections", []) if c["collection"] == scope[0]), [])
+    return scope[0], docs, None
+
+
+def read_document(paths: Paths, collection: str, doc: str, *, offset: int = 0,
+                  max_chars: int = readdoc.DEFAULT_MAX_CHARS, pages: str = "",
+                  client: str | None = None) -> dict[str, Any]:
+    """A document's converted Markdown, whole or a slice (``offset`` / ``next_offset``), after search or grep found it.
+    Read from the published generation; needs no daemon and no models."""
+    name, docs, err = _one_collection(paths, collection, _client(client))
+    if err:
+        return err
+    try:
+        return {"ok": True, "source": "local", "result": readdoc.read(
+            paths.live_markup(), name, docs, doc, offset=offset, max_chars=max_chars, pages=pages)}
+    except readdoc.DocError as exc:
+        return protocol.error(protocol.BAD_REQUEST, str(exc))
+
+
+def list_documents(paths: Paths, collection: str, *, prefix: str = "", glob: str = "",
+                   limit: int = readdoc.DEFAULT_LIST_LIMIT, offset: int = 0,
+                   client: str | None = None) -> dict[str, Any]:
+    """The documents of one collection whose name starts with *prefix* (and matches *glob*): name, source, size, time."""
+    name, docs, err = _one_collection(paths, collection, _client(client))
+    if err:
+        return err
+    try:
+        return {"ok": True, "source": "local", "result": readdoc.list_documents(
+            paths.live_markup(), name, docs, prefix=prefix, glob=glob, limit=limit, offset=offset)}
+    except readdoc.DocError as exc:
+        return protocol.error(protocol.BAD_REQUEST, str(exc))
 
 
 # ── indexing side ────────────────────────────────────────────────────────────

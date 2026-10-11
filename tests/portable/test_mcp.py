@@ -45,7 +45,7 @@ class ToolFunctionTests(McpCase):
         agent = mcp_server.make_tools("agent")
         self.assertEqual(sorted(claude), sorted([
             "rag_list_collections", "rag_describe_collection", "rag_search", "rag_grep",
-            "rag_index_update", "rag_index_rebuild", "rag_index_status", "rag_index_cancel"]))
+            "rag_read_document", "rag_list_documents", "rag_index_update", "rag_index_rebuild", "rag_index_status", "rag_index_cancel"]))
 
         async def scenario():
             started = json.loads(await claude["rag_index_update"]())
@@ -145,7 +145,7 @@ class StdioTests(McpCase):
                     await s.initialize()
                     names = sorted(t.name for t in (await s.list_tools()).tools)
                     self.assertIn("kb_rag_search", names)
-                    self.assertEqual(len(names), 8)
+                    self.assertEqual(len(names), 10)
 
                     async def call(name, **kw):
                         res = await s.call_tool(name, kw)

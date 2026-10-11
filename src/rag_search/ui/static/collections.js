@@ -246,6 +246,29 @@
       run.errors.length ? h('ul', { class: 'cd-errors' }, run.errors.map(e => h('li', null, h('code', null, e.source), h('span', { class: 'muted small' }, '  ' + e.message)))) : null);
   }
 
+  /* The reader: one whole converted document, a slice at a time (the same text rag_read_document gives an agent). */
+  async function readDoc(coll, name) {
+    const pre = h('pre', { class: 'reader', style: { maxHeight: '60vh', overflow: 'auto', whiteSpace: 'pre-wrap', margin: 0, fontSize: '12px' } });
+    const info = h('div', { class: 'muted small', style: { margin: '6px 0' } });
+    const more = h('button', { class: 'btn', type: 'button' }, 'Load more');
+    let next = 0;
+    async function load() {
+      more.disabled = true;
+      const r = await api('read', { collection: coll, doc: name, offset: next, max_chars: 20000 });
+      if (r.ok === false) { info.textContent = r.error || 'cannot read this document'; return false; }
+      const res = r.result || {};
+      pre.append(document.createTextNode(res.text || ''));
+      next = res.next_offset;
+      info.textContent = `${num((res.offset || 0) + (res.text || '').length)} of ${num(res.total_chars)} characters` + (res.indexed_at ? ` · indexed ${clock(res.indexed_at)}` : '');
+      more.classList.toggle('hidden', next === null || next === undefined);
+      more.disabled = false;
+      return true;
+    }
+    more.addEventListener('click', load);
+    if (!(await load())) { toast(info.textContent, 'bad'); return; }
+    dialog(`${coll} / ${name}`, h('div', null, info, pre, h('div', { style: { marginTop: '8px' } }, more)), { okText: 'Close', noCancel: true });
+  }
+
   function documentsTable(row, coll) {
     const c = row.info;
     const docs = (c && c.documents) || [];
@@ -258,7 +281,7 @@
       h('div', { class: 'table-wrap' }, h('table', null,
         h('thead', null, h('tr', null, ['Document', 'Chunks', 'Indexed', 'Convert', 'Embed', 'Total', 'Index size'].map((t, i) => h('th', { class: i > 0 && i !== 2 ? 'num' : '' }, t)))),
         h('tbody', null, shown.map(d => h('tr', null,
-          h('td', null, d.name, d.source && d.source !== d.name ? h('span', { class: 'muted small' }, '  ' + d.source) : null), h('td', { class: 'num' }, num(d.chunks)),
+          h('td', null, h('a', { href: '#/collections', title: 'read this whole document', on: { click: e => { e.preventDefault(); e.stopPropagation(); readDoc(coll, d.name); } } }, d.name), d.source && d.source !== d.name ? h('span', { class: 'muted small' }, '  ' + d.source) : null), h('td', { class: 'num' }, num(d.chunks)),
           h('td', { class: 'nowrap muted' }, clock(d.indexed_at)), h('td', { class: 'num' }, d.convert_s !== null && d.convert_s !== undefined ? dur(d.convert_s) : '–'),
           h('td', { class: 'num' }, d.embed_s !== null && d.embed_s !== undefined ? dur(d.embed_s) : '–'), h('td', { class: 'num' }, d.build_s !== null && d.build_s !== undefined ? dur(d.build_s) : '–'),
           h('td', { class: 'num' }, bytes(d.index_bytes))))))),

@@ -406,6 +406,7 @@ class SearchEngine:
                 "collection": coll,
                 "file": m.get("file_name", ""),
                 "source": m.get("source_name", ""),
+                "doc": m.get("doc_path") or m.get("file_name", ""),    # the name rag_read_document takes
                 "page": m.get("page_label", "?"),
                 "heading": m.get("heading", ""),
                 "text": text if len(text) <= SNIPPET_CHARS else text[:SNIPPET_CHARS] + " …",

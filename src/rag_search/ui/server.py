@@ -481,7 +481,7 @@ class Handler(BaseHTTPRequestHandler):
     # -- POST API ---------------------------------------------------------------
     def _api_post(self, name: str, body: dict[str, Any]) -> None:
         app, paths = self.app, self.app.paths
-        readonly_ok = {"search", "grep", "doctor", "playground/search", "playground/compare",
+        readonly_ok = {"search", "grep", "read", "documents", "doctor", "playground/search", "playground/compare",
                       "playground/list", "playground/preview", "playground/run", "playground/runs",
                       "playground/settings", "conversion/estimate"}
         if app.read_only and name not in readonly_ok:
@@ -518,6 +518,15 @@ class Handler(BaseHTTPRequestHandler):
                                            context_lines=int(body.get("context_lines", 2)),
                                            max_matches=int(body.get("max_matches", 20)),
                                            client=view_as, origin="ui"))
+            if name == "read":                    # one whole document, in slices (the Collections tab's reader)
+                return self._json(api.read_document(paths, text("collection"), text("doc"),
+                                                    offset=int(body.get("offset", 0)),
+                                                    max_chars=int(body.get("max_chars", 20000)),
+                                                    pages=text("pages"), client=view_as))
+            if name == "documents":
+                return self._json(api.list_documents(paths, text("collection"), prefix=text("prefix"), glob=text("glob"),
+                                                     limit=int(body.get("limit", 200)), offset=int(body.get("offset", 0)),
+                                                     client=view_as))
             if name == "conversion/estimate":     # a dry run: reads the sources, converts nothing
                 r = api.conversion_estimate(paths, text("target"), budget_s=30.0)
                 return self._json(r) if r.get("ok") else self._error(400, r.get("error", "failed"))

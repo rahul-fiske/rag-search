@@ -396,6 +396,45 @@ def _cmd_grep(a: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_read(a: argparse.Namespace) -> int:
+    offset, parts = a.offset, []
+    while True:
+        r = api.read_document(get_paths(), a.collection, a.doc, offset=offset, max_chars=a.max_chars,
+                              pages=a.pages, client=a.client)
+        if not r.get("ok"):
+            return _fail(r)
+        res = r["result"]
+        parts.append(res)
+        if not a.all or res["next_offset"] is None:
+            break
+        offset = res["next_offset"]
+    if a.json:
+        if len(parts) > 1:
+            res = dict(parts[-1], text="".join(x["text"] for x in parts), offset=a.offset, truncated=False)
+        _json(res)
+        return EXIT_OK
+    sys.stdout.write("".join(x["text"] for x in parts))      # the document as indexed: nothing added to stdout
+    if res["next_offset"] is not None:
+        _err(f"\n-- {res['total_chars'] - res['next_offset']} more characters: --offset {res['next_offset']} (or --all)")
+    return EXIT_OK
+
+
+def _cmd_docs(a: argparse.Namespace) -> int:
+    r = api.list_documents(get_paths(), a.collection, prefix=a.prefix, glob=a.glob, limit=a.limit,
+                           offset=a.offset, client=a.client)
+    if not r.get("ok"):
+        return _fail(r)
+    res = r["result"]
+    if a.json:
+        _json(res)
+        return EXIT_OK
+    for d in res["documents"]:
+        print(f"{d['name']}  {d['chars'] if d['chars'] is not None else '?'} chars  {d['indexed_at'] or ''}")
+    more = f"; next --offset {res['next_offset']}" if res["next_offset"] is not None else ""
+    print(f"{res['returned']} of {res['total_matches']} document(s){more}")
+    return EXIT_OK
+
+
 def _cmd_list(a: argparse.Namespace) -> int:
     r = api.list_collections(get_paths(), client=a.client, full=True)
     if not r.get("ok"):
@@ -2431,6 +2470,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max", type=int, default=20)
 
     add("list", "list published collections and documents", _cmd_list)
+
+    p = add("read", "print one whole document as indexed (after search or grep found it)", _cmd_read)
+    p.add_argument("collection")
+    p.add_argument("doc", help="the document's name: `doc` from search/grep, or a name `docs` lists")
+    p.add_argument("--offset", type=int, default=0, help="character to start at")
+    p.add_argument("--max-chars", type=int, default=20000, help="most characters per slice (at most 40000)")
+    p.add_argument("--pages", default="", help="a page range of a paged document: 3, 2-4 or 3-")
+    p.add_argument("--all", action="store_true", help="print the whole document, slice after slice")
+
+    p = add("docs", "list the documents of one collection by folder prefix or pattern", _cmd_docs)
+    p.add_argument("collection")
+    p.add_argument("--prefix", default="", help="names starting with this, e.g. rollups/")
+    p.add_argument("--glob", default="", help="a pattern on the name, e.g. '*2026-10*'")
+    p.add_argument("--limit", type=int, default=200)
+    p.add_argument("--offset", type=int, default=0)
 
     p = add("trace", "how a document was converted: branch, outcome and checks per page", _cmd_trace)
     p.add_argument("target", help="COLLECTION/DOCUMENT (the path `list` shows, without extension)")

@@ -258,6 +258,19 @@ class ActionTests(UiBase):
         st, js, _, _ = self.dash.req("POST", "/api/grep", {"pattern": "Parental", "client": "claude"})
         self.assertTrue(js["result"]["matches"])
 
+    def test_reading_a_document_follows_the_access_rules_and_works_read_only_too(self):
+        from rag_search import access
+        access.restrict(self.paths, "hr", ["claude"])
+        st, js, _, _ = self.dash.req("POST", "/api/documents", {"collection": "hr", "client": "claude"})
+        self.assertEqual(st, 200, js)
+        name = js["result"]["documents"][0]["name"]
+        st, js, _, _ = self.dash.req("POST", "/api/read", {"collection": "hr", "doc": name, "client": "claude"})
+        self.assertTrue(js["ok"] and js["result"]["text"], js)
+        st, js, _, _ = self.dash.req("POST", "/api/read", {"collection": "hr", "doc": name, "client": "agent"})
+        self.assertFalse(js["ok"])
+        st, js, _, _ = self.dash.req("POST", "/api/read", {"collection": "hr", "doc": "../x", "client": "claude"})
+        self.assertFalse(js["ok"])
+
     def test_search_stage_and_pool_overrides_from_the_dashboard(self):
         st, js, _, _ = self.dash.req("POST", "/api/search", {"query": "parental leave", "client": "cli",
                                      "stages": ["bm25"], "retrieval_pool": 8, "rerank_pool": 6, "rrf_k": 15})
@@ -421,6 +434,8 @@ class ReadOnlyTests(UiBase):
         st, js, _, _ = self.dash.req("POST", "/api/search", {"query": "leave"})
         self.assertEqual(st, 200)
         st, js, _, _ = self.dash.req("POST", "/api/grep", {"pattern": "Parental"})
+        self.assertEqual(st, 200)
+        st, js, _, _ = self.dash.req("POST", "/api/documents", {"collection": "hr"})
         self.assertEqual(st, 200)
         _, s, _, _ = self.dash.req("GET", "/api/state")
         self.assertTrue(s["catalog"]["read_only"])

@@ -100,7 +100,7 @@ def make_tools(client: str) -> dict[str, Callable[..., Awaitable[str]]]:
             top_k: Number of passages to return (1-25). Leave unset to use the production
                 default (`rag-search config set` / the dashboard's Settings tab; 5 otherwise).
 
-        Returns JSON {results: [{rank, score, collection, file, source, page, heading,
+        Returns JSON {results: [{rank, score, collection, file, source, doc, page, heading,
         text}], timing: {total_ms, embed_query_ms, keyword_ms, dense_ms, rerank_ms, queue_ms,
         server_ms, round_trip_ms, ...}}. `score` is the reranker relevance in [0, 1]. `page`
         is the page number in the source document - use it as the citation. A result with
@@ -132,6 +132,53 @@ def make_tools(client: str) -> dict[str, Callable[..., Awaitable[str]]]:
         r = await asyncio.to_thread(api.grep, get_paths(), pattern, collections=collection,
                                     context_lines=context_lines, max_matches=max_matches,
                                     client=client)
+        return _json(r["result"]) if r.get("ok") else _error(r)
+
+    async def rag_read_document(collection: str, doc: str, offset: int = 0, max_chars: int = 20000,
+                                pages: str = "") -> str:
+        """Read one whole document as Markdown, exactly as indexed -- after rag_search or rag_grep found it.
+
+        Search and grep return passages and single lines, which break a table apart (the header row and most
+        rows are lost). Use this to read the document whole and quote exact figures instead of estimating.
+        A Markdown or text source comes back verbatim (tables, front matter and relative links intact); a
+        converted one (PDF, Word ...) comes back as the converted Markdown, with `<!-- page N -->` markers.
+        Does not need the embedding models, so it works while the search engine is still starting.
+
+        Args:
+            collection: Exact collection name.
+            doc: The document's name: `doc` from rag_search or rag_grep, or `name` from rag_list_documents /
+                rag_list_collections(documents=true), e.g. "activities/2026-10-11-123". A source file name
+                ("2026-10-11-123.md") works when only one document has it.
+            offset: Character to start at (0 = the beginning); pass the previous `next_offset` to continue.
+            max_chars: Most characters to return (default 20000, at most 40000).
+            pages: Optional page range for a paged document: "3", "2-4" or "3-". Offsets then count within it.
+
+        Returns JSON {collection, doc, source, text, offset, next_offset, total_chars, truncated, indexed_at}
+        (+ pages, total_pages when `pages` is used). `next_offset` is null at the end; while it is a number,
+        call again with offset=next_offset: the slices join exactly, with no gap or overlap.
+        """
+        r = await asyncio.to_thread(api.read_document, get_paths(), collection, doc, offset=offset,
+                                    max_chars=max_chars, pages=pages, client=client)
+        return _json(r["result"]) if r.get("ok") else _error(r)
+
+    async def rag_list_documents(collection: str, prefix: str = "", glob: str = "", limit: int = 200,
+                                 offset: int = 0) -> str:
+        """List the documents of one collection by name -- a folder (prefix) or a pattern (glob) at a time.
+
+        Lighter than rag_list_collections(documents=true) for a collection with many files.
+
+        Args:
+            collection: Exact collection name.
+            prefix: Names starting with this, e.g. "rollups/" or "activities/2026-". Empty = all.
+            glob: Optional pattern on the name or source path, e.g. "*2026-10*" ("*" matches across folders).
+            limit: Most documents returned (1-1000, default 200).
+            offset: Skip this many matches (use the previous `next_offset`).
+
+        Returns JSON {collection, total_matches, returned, next_offset, documents: [{name, source, chars,
+        indexed_at}]}. `name` is what rag_read_document takes; `chars` is its length.
+        """
+        r = await asyncio.to_thread(api.list_documents, get_paths(), collection, prefix=prefix, glob=glob,
+                                    limit=limit, offset=offset, client=client)
         return _json(r["result"]) if r.get("ok") else _error(r)
 
     async def _start(mode: str, path: str, restart: bool, rebuild: bool = False) -> str:
@@ -203,7 +250,7 @@ def make_tools(client: str) -> dict[str, Callable[..., Awaitable[str]]]:
         r = await asyncio.to_thread(api.index_cancel, get_paths(), client=client)
         return _json({k: v for k, v in r.items() if k != "ok"}) if r.get("ok") else _error(r)
 
-    fns = [rag_list_collections, rag_describe_collection, rag_search, rag_grep,
+    fns = [rag_list_collections, rag_describe_collection, rag_search, rag_grep, rag_read_document, rag_list_documents,
            rag_index_update, rag_index_rebuild, rag_index_status, rag_index_cancel]
     return {f.__name__: f for f in fns}
 

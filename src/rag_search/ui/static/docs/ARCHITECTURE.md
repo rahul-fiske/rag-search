@@ -244,7 +244,7 @@ collections it may use. The MCP adapter fixes it from `--profile NAME`; it is de
 
 | Layer | Modules | May import |
 |---|---|---|
-| light (stdlib) | `paths config policy access descriptions locations bundle lifecycle inventory spec protocol client jobs publish catalog grep api service register cli models model_tasks`, `ui/*`, `core/daemon_base`, `core/indexer_daemon`, `core/conversion/{trace,costs,router,profiler,records,runview,estimate,pageimage}` | stdlib only (`profiler` and `pageimage` import pypdfium2 / Pillow inside functions) |
+| light (stdlib) | `paths config policy access descriptions locations bundle lifecycle inventory spec protocol client jobs publish catalog grep readdoc api service register cli models model_tasks`, `ui/*`, `core/daemon_base`, `core/indexer_daemon`, `core/conversion/{trace,costs,router,profiler,records,runview,estimate,pageimage}` | stdlib only (`profiler` and `pageimage` import pypdfium2 / Pillow inside functions) |
 | core (heavy) | `core/{bm25,chunker,embedding,indexer,search,search_daemon,worker,docling_convert,diagnostics,playground}` | numpy, torch, docling (lazily) |
 | adapter | `mcp/*` | the `mcp` package, light layer |
 
@@ -917,6 +917,17 @@ cosine similarity is `[0, 1]`). The cross-encoder is too slow to run on every ch
 re-orders the few dozen candidates that survived fusion. `rag_grep` / `rag-search grep` is a
 separate path: a regular-expression scan of the converted Markdown (in an isolated child process
 with a timeout), for exact text.
+
+**Search, then read.** Passages and grep lines cut a table apart, so `rag_read_document` /
+`rag-search read` (`readdoc.py`, no models, no daemon) returns a whole document's converted Markdown from the
+published generation, in slices of at most 40,000 characters (`offset` / `next_offset`; the slices join
+exactly). A `.md` / `.txt` source is copied into the Markdown folder as it is (only a byte-order mark is dropped),
+so it is read back unchanged. A document is named by its catalogue name (`rag_grep` `doc`, `rag_search` `doc`,
+`rag_list_documents` `name`: the path inside the collection without extension, folders included); the
+source file name, with or without extension, works when only one document has it. A name is only looked up in the
+catalogue, the file path is built from the catalogue's entry, and a link or a path outside the collection's folder is
+refused; the collection must be one the client may use (`policy.resolve_scope`, the same wording as search).
+`rag_list_documents` lists by prefix or pattern, a page at a time.
 
 **Troubleshooting/tuning knobs** (`rag-search search --stages/--retrieval-pool/--rerank-pool/--rrf-k
 --explain`, and the dashboard's Search tab): every one of the overrides above is optional and

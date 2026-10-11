@@ -108,6 +108,8 @@ Uninstall: `rag-search unregister && rag-search service uninstall && uv tool uni
 rag-search search "query" [-c collection] [-k 5] [--json]     meaning-based search, cites file + page
   [--stages bm25,dense,rerank] [--retrieval-pool N] [--rerank-pool N] [--rrf-k N] [--explain]
 rag-search grep "regex" [-c collection]                        exact text / IDs / numbers
+rag-search read COLLECTION DOC [--offset N] [--max-chars N] [--pages 2-4] [--all]   print one whole document as indexed
+rag-search docs COLLECTION [--prefix rollups/] [--glob '*2026-10*'] [--limit N]       list a collection's documents by name
 rag-search list [--client NAME]                               what is published: sizes, when built, build time
 rag-search describe [COLLECTION [TEXT|--clear]]                view or set a collection's short description
 rag-search access [restrict|grant COLLECTION CLIENT...]        who may use which collection (see "Access per client")
@@ -284,8 +286,10 @@ sandbox — nothing in production is ever touched.
 |---|---|
 | `rag_list_collections(documents=false)` | What is indexed, per collection: name, description, document count, sizes. Pass `documents=true` for the full per-document listing |
 | `rag_describe_collection(collection, description)` | Set (or, with `description=""`, clear) a collection's short description |
-| `rag_search(query, collection="", top_k=5)` | Hybrid search + rerank; returns file, page, heading, text (and `"confidence": "low"` for a hit on a page the converter could not fully verify) |
+| `rag_search(query, collection="", top_k=5)` | Hybrid search + rerank; returns file, `doc` (the name to read it with), page, heading, text (and `"confidence": "low"` for a hit on a page the converter could not fully verify) |
 | `rag_grep(pattern, collection="", context_lines=2, max_matches=20)` | Regex over the converted Markdown, with page numbers |
+| `rag_read_document(collection, doc, offset=0, max_chars=20000, pages="")` | Read one whole document as indexed (a Markdown source verbatim, others as converted Markdown), in slices: `next_offset` says where to continue. Use after search or grep found it, to quote a table's exact figures. Needs no models |
+| `rag_list_documents(collection, prefix="", glob="", limit=200, offset=0)` | A collection's documents by folder prefix or pattern: `name`, `source`, `chars`, `indexed_at` (lighter than `documents=true`) |
 | `rag_index_update(path="", restart=false, rebuild=false)` | Incremental indexing in the indexer daemon (idempotent while a run is active) |
 | `rag_index_rebuild(path="", confirm=false, restart=false)` | Wipe and rebuild (needs `confirm=true`) |
 | `rag_index_status(job_id="", wait_seconds=0)` | Progress / result of the current or a given run |

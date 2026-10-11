@@ -32,7 +32,11 @@ Workflow:
 2. rag_search - meaning-based search (BM25 + embeddings + reranker). Results carry the
    source file and PAGE NUMBER; cite them.
 3. rag_grep - exact strings / IDs / numbers / regexes when semantic search is the wrong tool.
-4. To add documents: put files in a registered source folder, then rag_index_update (a background run in
+4. rag_read_document - read a whole document found by 1-3 (pass its `doc`): passages and grep lines break
+   tables apart, so for exact figures search or grep to locate the file, then read it whole and quote it.
+   rag_list_documents lists a collection's documents by folder prefix or pattern; page through long documents
+   with offset / next_offset.
+5. To add documents: put files in a registered source folder, then rag_index_update (a background run in
    the indexer daemon) and poll rag_index_status. New documents become searchable
    automatically when the run finishes. Only one indexing run exists at a time; calling
    rag_index_update again reports the active one, and restart=true starts it over.
