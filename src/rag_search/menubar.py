@@ -244,7 +244,6 @@ def run(paths: Paths | None = None) -> int:
         print("the menu-bar item is already running", file=sys.stderr)
         return 0
     try:
-        import objc
         from AppKit import (NSAlert, NSApplication, NSApplicationActivationPolicyAccessory, NSEvent,
                             NSEventMaskLeftMouseUp, NSEventMaskRightMouseUp, NSEventModifierFlagControl,
                             NSEventTypeRightMouseUp, NSImage, NSMenu, NSMenuItem, NSStatusBar,
@@ -347,7 +346,6 @@ def run(paths: Paths | None = None) -> int:
     delegate = App.alloc().init()
     app.setDelegate_(delegate)
     signal.signal(signal.SIGTERM, lambda *_: (pid_file(paths).unlink(missing_ok=True), os._exit(0)))
-    objc.setVerbose(False)
     app.run()
     return 0
 
