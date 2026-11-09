@@ -71,6 +71,10 @@ Changelog = "https://github.com/rahul-fiske/rag-search/releases"
 [project.scripts]
 rag-search = "rag_search.cli:main"
 rag-search-mcp = "rag_search.mcp.server:main"
+# the login services run these (macOS lists a login item by its program name: three "python" entries say nothing)
+rag-search-searchd = "rag_search.core.search_daemon:main"
+rag-search-indexerd = "rag_search.core.indexer_daemon:main"
+rag-search-menubar = "rag_search.menubar:main"
 
 [dependency-groups]
 # coverage: measuring the tests; reportlab and pillow-heif: only to rebuild / read the test corpus (tests/data/)

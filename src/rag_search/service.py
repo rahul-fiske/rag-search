@@ -51,6 +51,17 @@ def _module(kind: str) -> str:
     return MENUBAR_MODULE if kind == MENUBAR else client.DAEMON_MODULES[kind]
 
 
+SCRIPTS = {"search": "rag-search-searchd", "indexer": "rag-search-indexerd", MENUBAR: "rag-search-menubar"}
+
+
+def program(kind: str, python: str | None = None) -> list[str]:
+    """The command a login service runs.  The named command next to the Python (``rag-search-searchd`` ...) when the
+    install has it, so macOS lists the login item by that name and not as "python"; else ``python -m module``."""
+    py = python or sys.executable
+    script = Path(py).parent / SCRIPTS[kind]
+    return [str(script)] if script.is_file() else [py, "-m", _module(kind)]
+
+
 def label(kind: str) -> str:
     return f"{LABEL_PREFIX}.{kind}"
 
@@ -69,7 +80,7 @@ def plist_dict(paths: Paths, kind: str, python: str | None = None) -> dict[str, 
     env.update({k: os.environ[k] for k in PASS_ENV if os.environ.get(k)})
     return {
         "Label": label(kind),
-        "ProgramArguments": [python or sys.executable, "-m", _module(kind)],
+        "ProgramArguments": program(kind, python),
         "EnvironmentVariables": env,
         "WorkingDirectory": str(paths.home),
         "RunAtLoad": True,
@@ -122,7 +133,7 @@ def unit_text(paths: Paths, kind: str, python: str | None = None) -> str:
     env = {"RAG_SEARCH_HOME": str(paths.home)}
     env.update({k: os.environ[k] for k in PASS_ENV if os.environ.get(k)})
     lines = ["[Unit]", f"Description=rag-search {kind} daemon", "", "[Service]",
-             f'ExecStart="{_q(python or sys.executable, True)}" -m {client.DAEMON_MODULES[kind]}',
+             (lambda cmd: f'ExecStart="{_q(cmd[0], True)}"' + "".join(f" {a}" for a in cmd[1:]))(program(kind, python)),
              f'WorkingDirectory={paths.home}', "Restart=on-failure", "RestartSec=5",
              f"StandardOutput=append:{paths.log_file(kind)}", f"StandardError=append:{paths.log_file(kind)}"]
     lines += [f'Environment="{_q(k)}={_q(v)}"' for k, v in sorted(env.items())]

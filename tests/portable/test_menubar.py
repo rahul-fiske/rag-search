@@ -190,6 +190,27 @@ class ServiceTests(TempHome):
         self.assertTrue(d["RunAtLoad"])
         self.assertNotIn("LimitLoadToSessionType", service.plist_dict(self.paths, "search"))
 
+    def test_the_services_run_the_named_commands_when_the_install_has_them(self):
+        bindir = self.tmp / "venv" / "bin"
+        bindir.mkdir(parents=True)
+        py = bindir / "python"
+        py.write_text("")
+        for kind, name in (("search", "rag-search-searchd"), ("indexer", "rag-search-indexerd"), ("menubar", "rag-search-menubar")):
+            self.assertEqual(service.program(kind, str(py)), [str(py), "-m", service._module(kind)])      # not installed yet
+            (bindir / name).write_text("#!/bin/sh\n")
+            self.assertEqual(service.program(kind, str(py)), [str(bindir / name)])
+            self.assertEqual(service.plist_dict(self.paths, kind, str(py))["ProgramArguments"], [str(bindir / name)])
+        self.assertIn(f'ExecStart="{bindir / "rag-search-searchd"}"', service.unit_text(self.paths, "search", str(py)))
+
+    def test_the_commands_are_declared_by_the_package(self):
+        import tomllib
+        from pathlib import Path as P
+
+        scripts = tomllib.loads((P(__file__).parents[2] / "pyproject.toml").read_text())["project"]["scripts"]
+        for kind, name in service.SCRIPTS.items():
+            module, _, func = scripts[name].partition(":")
+            self.assertEqual((module, func), (service._module(kind), "main"))
+
     def test_install_writes_three_agents_on_a_mac(self):
         agents = self.tmp / "LaunchAgents"
         fake = mock.Mock(returncode=0, stderr="", stdout="")
