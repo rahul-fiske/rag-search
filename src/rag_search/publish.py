@@ -144,10 +144,13 @@ def _collect(paths: Paths) -> list[dict[str, Any]]:
             })
         if len(models) > 1 or len(dims) > 1:
             raise _mixed_models_error(paths, f"collection {cdir.name!r}", models, dims)
-        index_bytes = 0
+        index_bytes = chunk_bytes = vector_bytes = 0
         for fname in (NODES_FILE, EMB_FILE, MERGE_MANIFEST):
             with contextlib.suppress(OSError):
-                index_bytes += (all_dir / fname).stat().st_size
+                size = (all_dir / fname).stat().st_size
+                index_bytes += size
+                chunk_bytes += size if fname == NODES_FILE else 0
+                vector_bytes += size if fname == EMB_FILE else 0
         out.append({
             "collection": cdir.name, "manifest_sha": manifest.get("sha256", ""),
             "chunks": manifest.get("nodes", 0), "documents": docs,
@@ -157,6 +160,8 @@ def _collect(paths: Paths) -> list[dict[str, Any]]:
             "origin": "imported" if index_is_imported(paths.index, cdir.name) else "generated",
             # sizes and timings, for `rag-search list`
             "index_bytes": index_bytes,          # the searchable index (chunks + vectors)
+            "chunk_bytes": chunk_bytes,          # of which the chunk text and its details (nodes.json)
+            "vector_bytes": vector_bytes,        # and the vectors (embeddings.npy); BM25 is built in memory, not stored
             "markdown_bytes": md_bytes,          # converted Markdown, used by grep
             "source_bytes": src_bytes,           # the original files
             "built_at": max((d["indexed_at"] for d in docs if d["indexed_at"]), default=""),

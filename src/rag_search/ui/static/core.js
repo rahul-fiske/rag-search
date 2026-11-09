@@ -85,7 +85,7 @@ function toDate(t) {
 }
 function clock(t) {
   const d = toDate(t); if (!d) return '–';
-  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true }).replace(/\b(am|pm)\b/gi, m => m.toUpperCase());
 }
 function ago(t) {
   const d = toDate(t); if (!d) return '–';
@@ -98,9 +98,9 @@ function ago(t) {
    with how long ago as the tooltip.  For tables and cards where "375h 56m ago" says little. */
 function stamp(t) {
   const d = toDate(t); if (!d) return h('span', null, '–');
-  const opt = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+  const opt = { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true };
   if (d.getFullYear() !== new Date().getFullYear()) opt.year = 'numeric';
-  return h('span', { title: ago(t) + ' \u00b7 ' + clock(t) }, d.toLocaleString(undefined, opt));
+  return h('span', { title: ago(t) + ' \u00b7 ' + clock(t) }, d.toLocaleString(undefined, opt).replace(/\b(am|pm)\b/gi, m => m.toUpperCase()));
 }
 function since(t) { const d = toDate(t); return d ? dur(Math.max(0, (Date.now() - d.getTime()) / 1000)) : '–'; }
 function num(n) { return n === null || n === undefined ? '–' : Number(n).toLocaleString(); }

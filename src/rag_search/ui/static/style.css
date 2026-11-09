@@ -411,3 +411,8 @@ table.plain tr:hover td { background: var(--panel-2); }
 .step.picked { outline: 2px solid var(--accent); outline-offset: 1px; }
 details.fold { margin-top: 16px; } details.fold > summary { cursor: pointer; font-weight: 600; padding: 8px 2px; color: var(--muted); }
 details.fold[open] > summary { margin-bottom: 8px; }
+
+/* the collections table: columns in groups (Sources | Markdown | Search index | Indexing) */
+table th.grp, table td.grp { border-left: 1px solid var(--line); }
+tr.grouphead th { text-align: center; border-bottom: 0; padding-bottom: 2px; }
+tr.grouphead th[rowspan] { text-align: left; vertical-align: bottom; }

@@ -246,6 +246,11 @@ class PipelineTests(TempHome):
         view = list_view(self.paths, Rules(), "cli", full=True)
         c = view["collections"][0]
         self.assertGreater(c["index_bytes"], 0)
+        # the searchable index is the chunk text plus the vectors (plus a tiny manifest); BM25 is built in memory
+        self.assertGreater(c["chunk_bytes"], 0)
+        self.assertGreater(c["vector_bytes"], 0)
+        self.assertLessEqual(c["chunk_bytes"] + c["vector_bytes"], c["index_bytes"])
+        self.assertLess(c["index_bytes"] - c["chunk_bytes"] - c["vector_bytes"], 4096)
         self.assertGreater(c["markdown_bytes"], 0)
         self.assertGreater(c["source_bytes"], 0)
         self.assertRegex(c["built_at"], r"^\d{4}-\d\d-\d\dT")
@@ -254,6 +259,16 @@ class PipelineTests(TempHome):
         self.assertTrue(all(d["build_s"] is not None and d["index_bytes"] > 0 for d in c["documents"]))
         self.assertEqual(view["totals"]["documents"], 2)
         self.assertEqual(view["totals"]["index_bytes"], c["index_bytes"])
+        # a generation published before the catalogue recorded the two sizes still reports them
+        import json
+        cat_file = self.paths.current_gen() / "catalog.json"
+        cat = json.loads(cat_file.read_text())
+        for coll in cat["collections"]:
+            coll.pop("chunk_bytes", None)
+            coll.pop("vector_bytes", None)
+        cat_file.write_text(json.dumps(cat))
+        old = list_view(self.paths, Rules(), "cli")["collections"][0]
+        self.assertEqual((old["chunk_bytes"], old["vector_bytes"]), (c["chunk_bytes"], c["vector_bytes"]))
         # a second run only reports the documents as unchanged
         events.clear()
         summary = self.index(progress=events.append)

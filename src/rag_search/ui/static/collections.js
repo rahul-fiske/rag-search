@@ -133,30 +133,6 @@
     return setAccess(row.collection, next);
   }
 
-  async function editDialog(row) {
-    const known = knownClients();
-    const current = row.clients === null ? null : row.clients;
-    const radios = ['everyone', 'only'].map(v => h('input', { type: 'radio', name: 'acc-mode', value: v, checked: (v === 'everyone') === (current === null) }));
-    const boxes = known.map(c => h('input', { type: 'checkbox', value: c, checked: current !== null && current.includes(c) }));
-    const others = h('input', { type: 'text', placeholder: 'other client names, comma separated', style: { width: '100%' },
-      value: current ? current.filter(c => !known.includes(c)).join(', ') : '' });
-    const body = h('div', null,
-      h('label', { class: 'check', style: { display: 'flex', margin: '4px 0' } }, radios[0], h('span', null, h('b', null, 'Everyone'), ' – every client may use it')),
-      h('label', { class: 'check', style: { display: 'flex', margin: '4px 0' } }, radios[1], h('span', null, h('b', null, 'Only these clients'))),
-      h('div', { style: { margin: '6px 0 6px 26px' } }, known.map((c, i) => h('label', { class: 'check', style: { marginRight: '14px' } }, boxes[i], c)), h('div', { style: { marginTop: '8px' } }, others)),
-      h('p', { class: 'small muted' }, 'Your terminal (cli) and this dashboard can always use every collection. A client is the name a host passes as ', h('code', null, 'rag-search-mcp --profile NAME'), '.'));
-    if (!await dialog(`Access to “${row.collection}”`, body, { okText: 'Save' })) return;
-    if (radios[0].checked) return setAccess(row.collection, ['all']);
-    const chosen = boxes.filter(b => b.checked).map(b => b.value).concat(others.value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean));
-    return setAccess(row.collection, chosen);
-  }
-
-  function accessChips(row) {
-    if (row.clients === null) return chip('everyone', 'ok');
-    if (!row.clients.length) return chip('nobody', 'bad');
-    return row.clients.map(c => chip(c, 'accent'));
-  }
-
   /* ---------- per-collection details (fetched on demand when a row is expanded) ---------- */
   const infoCache = new Map();      // collection -> { data, error, at, key, loading }
   const sectionsOpen = new Set();   // "collection:section" the user opened
@@ -378,12 +354,11 @@
       const c = r.info; const isOpen = open.has(r.collection);
       body.push(h('tr', { class: 'clickable', on: { click: () => { isOpen ? open.delete(r.collection) : open.add(r.collection); RS.views.collections.update(); } } },
         h('td', null, (isOpen ? '▾ ' : '▸ '), h('b', null, r.collection), kindChip(r), !r.exists ? h('span', { class: 'chip warn', style: { marginLeft: '8px' } }, 'rule only') : !r.indexed ? h('span', { class: 'chip', style: { marginLeft: '8px' } }, 'not indexed') : null),
-        h('td', { class: 'num' }, c ? num((c.documents || []).length) : '–'), h('td', { class: 'num' }, c ? num(c.chunks) : '–'),
-        h('td', { class: 'num' }, c ? bytes(c.index_bytes) : '–'), h('td', { class: 'num' }, c ? bytes(c.markdown_bytes) : '–'), h('td', { class: 'num' }, c ? bytes(c.source_bytes) : '–'),
-        h('td', { class: 'nowrap muted' }, c ? stamp(c.built_at) : '–'), h('td', { class: 'num' }, c && c.build_seconds !== null && c.build_seconds !== undefined ? dur(c.build_seconds) : '–'),
-        h('td', null, accessChips(r)),
+        h('td', { class: 'num grp' }, c ? num((c.documents || []).length) : '–'), h('td', { class: 'num' }, c ? bytes(c.source_bytes) : '–'),
+        h('td', { class: 'num grp' }, c ? bytes(c.markdown_bytes) : '–'),
+        h('td', { class: 'num grp' }, c ? num(c.chunks) : '–'), h('td', { class: 'num' }, c ? bytes(c.chunk_bytes) : '–'), h('td', { class: 'num' }, c ? bytes(c.vector_bytes) : '–'),
+        h('td', { class: 'nowrap muted grp' }, c ? stamp(c.built_at) : '–'), h('td', { class: 'num' }, c && c.build_seconds !== null && c.build_seconds !== undefined ? dur(c.build_seconds) : '–'),
         h('td', { class: 'nowrap', on: { click: e => e.stopPropagation() } },
-          h('button', { class: 'btn small', disabled: ro, title: 'Choose who may use it', on: { click: () => editDialog(r) } }, 'Access…'), ' ',
           h('button', { class: 'btn small', disabled: ro || !r.exists, title: 'Say in a sentence what this collection holds', on: { click: () => describeDialog(r) } }, 'Describe…'), ' ',
           h('button', { class: 'btn small', disabled: ro || !r.exists || r.kind === 'imported', title: 'Index new and changed documents of this collection', on: { click: async () => { const x = await act('index/start', { mode: 'new', path: r.collection }); if (x.ok !== false) toast(x.already_running ? 'A run is already active' : 'Indexing started', x.already_running ? '' : 'ok'); } } }, 'Index'))));
       if (isOpen) body.push(h('tr', { class: 'cd-row' }, h('td', { colspan: 10 }, details(r))));
@@ -394,7 +369,16 @@
           h('button', { class: 'btn small primary', disabled: readOnly(), title: 'Index a folder elsewhere on this computer as a collection', on: { click: () => addDialog() } }, 'Add collection…'), ' ',
           h('button', { class: 'btn small', disabled: readOnly(), title: 'Add a collection someone exported', on: { click: () => importDialog() } }, 'Import…'))),
       rs.length ? h('div', { class: 'table-wrap' }, h('table', null,
-        h('thead', null, h('tr', null, ['Collection', 'Docs', 'Chunks', 'Index', 'Markdown', 'Sources', 'Built', 'Took', 'Who can use it', ''].map((t, i) => h('th', { class: i > 0 && i < 6 ? 'num' : '' }, t)))),
+        h('thead', null,
+          h('tr', { class: 'grouphead' }, h('th', { rowspan: 2 }, 'Collection'),
+            h('th', { colspan: 2, class: 'grp', title: 'the documents indexed and their size in your folders; search does not read them, only re-indexing does' }, 'Sources'),
+            h('th', { class: 'grp', title: 'the converted text of the documents: grep and reading a whole document use it, search does not' }, 'Markdown'),
+            h('th', { colspan: 3, class: 'grp', title: 'what search loads: the passages and the vectors (the keyword index is built in memory from the passages, not stored)' }, 'Search index'),
+            h('th', { colspan: 2, class: 'grp' }, 'Indexing'), h('th', { rowspan: 2 }, '')),
+          h('tr', null, [['Docs', 'documents indexed'], ['Size', 'size of the indexed source files'], ['Size', 'size of the converted Markdown'],
+            ['Chunks', 'passages searched'], ['Text', 'chunk text and details on disk (nodes.json)'], ['Vectors', 'embedding vectors on disk (embeddings.npy)'],
+            ['Built', 'when this collection was last indexed'], ['Took', 'how long indexing it took']].map(([t, tip], i) =>
+            h('th', { class: (i === 7 || i === 6 ? '' : 'num') + (i === 0 || i === 2 || i === 3 || i === 6 ? ' grp' : ''), title: tip }, t)))),
         h('tbody', null, body))) : empty('No collections yet. Register a folder on this tab, then start indexing.'));
   }
 

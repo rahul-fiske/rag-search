@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from . import descriptions, policy
-from .paths import Paths, is_plain_name
+from .paths import ALL_DIR, EMB_FILE, NODES_FILE, Paths, is_plain_name
 from .publish import read_catalog
 
 
@@ -49,6 +49,18 @@ def canonical_name(paths: Paths, name: str, extra: Iterable[str] = ()) -> str:
     return name
 
 
+def _file_bytes(paths: Paths, collection: str, name: str) -> int | None:
+    """Size of one of a collection's index files in the live generation (a generation published before the
+    catalogue recorded it)."""
+    gen = paths.current_gen()
+    if gen is None:
+        return None
+    try:
+        return (gen / "index" / collection / ALL_DIR / name).stat().st_size
+    except OSError:
+        return None
+
+
 def list_view(paths: Paths, rules: policy.Rules, client: str, *, full: bool = False) -> dict[str, Any]:
     """What `rag_list_collections` returns for *client*: only what it is authorised to use.
 
@@ -73,6 +85,8 @@ def list_view(paths: Paths, rules: policy.Rules, client: str, *, full: bool = Fa
             "chunks": c.get("chunks", 0),
             "document_count": len(docs),
             "index_bytes": c.get("index_bytes"),
+            "chunk_bytes": c.get("chunk_bytes") if c.get("chunk_bytes") is not None else _file_bytes(paths, c["collection"], NODES_FILE),
+            "vector_bytes": c.get("vector_bytes") if c.get("vector_bytes") is not None else _file_bytes(paths, c["collection"], EMB_FILE),
             "markdown_bytes": c.get("markdown_bytes"),
             "source_bytes": c.get("source_bytes"),
             "built_at": c.get("built_at") or None,
