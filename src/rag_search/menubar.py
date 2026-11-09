@@ -26,9 +26,15 @@ from typing import Any
 from . import __version__, api, client, machine
 from .paths import Paths, get_paths
 
+MODULE = "rag_search.menubar"
 REFRESH_S = 5.0
 ICONS = {"ready": "doc.text.magnifyingglass", "warming": "hourglass", "indexing": "arrow.triangle.2.circlepath",
          "down": "exclamationmark.triangle"}
+
+
+def note(message: str) -> None:
+    """A line in the menu-bar item's log (standard error: the LaunchAgent writes it to run/menubar.log)."""
+    print(f"{time.strftime('%H:%M:%S')} menubar: {message}", file=sys.stderr, flush=True)
 
 
 def pid_file(paths: Paths) -> Path:
@@ -49,6 +55,22 @@ def installed_version() -> str:
 
 def needs_relaunch(loaded: str = __version__, on_disk: str | None = None) -> bool:
     return (on_disk or installed_version()) != loaded
+
+
+RELAUNCH_EXIT = 75                  # "start me again": launchd restarts a service that exits with anything but 0
+
+
+def relaunch(paths: Paths, *, popen=subprocess.Popen, leave=os._exit) -> None:
+    """Replace this process with a fresh one (the installed version changed).  Never ``exec``: a process that has
+    connected to the window server cannot draw after an exec, so the new image would run without its icon.  Under launchd
+    a non-zero exit is enough (it restarts the job); started by hand, a new detached process takes over."""
+    pid_file(paths).unlink(missing_ok=True)
+    if os.environ.get("XPC_SERVICE_NAME", "") == "io.rag-search.menubar":
+        leave(RELAUNCH_EXIT)
+        return
+    popen([sys.executable, "-m", MODULE], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+          start_new_session=True, close_fds=True)
+    leave(0)
 
 
 def snapshot(paths: Paths) -> dict[str, Any]:
@@ -276,6 +298,8 @@ def run(paths: Paths | None = None) -> int:
             button.sendActionOn_(NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp)
             self.shown = ""
             self.set_icon("down")
+            note(f"status item created: visible={bool(self.item.isVisible())} "
+                 f"image={self.item.button().image() is not None} pid={os.getpid()} version={__version__}")
             background(refresh)
             self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
                 REFRESH_S, self, b"tick:", None, True)
@@ -295,9 +319,11 @@ def run(paths: Paths | None = None) -> int:
 
         def tick_(self, _timer):
             if needs_relaunch():
-                pid_file(paths).unlink(missing_ok=True)
-                os.execv(sys.executable, [sys.executable, "-m", "rag_search.menubar"])
+                relaunch(paths)
             self.set_icon(icon_state(state["snap"]))
+            self.ticks = getattr(self, "ticks", 0) + 1
+            if self.ticks % 12 == 1:
+                note(f"alive: icon={self.shown} visible={bool(self.item.isVisible())}")
             self.item.button().setToolTip_("\n".join(status_lines(state["snap"])))
             if not state["busy"]:
                 state["busy"] = True

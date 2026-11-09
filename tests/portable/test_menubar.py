@@ -83,6 +83,29 @@ class StalenessTests(unittest.TestCase):
         self.assertEqual(menubar.installed_version(), __import__("rag_search").__version__)
 
 
+class RelaunchTests(TempHome):
+    def test_under_launchd_it_exits_non_zero_so_launchd_starts_it_again(self):
+        left = []
+        with mock.patch.dict("os.environ", {"XPC_SERVICE_NAME": "io.rag-search.menubar"}):
+            menubar.relaunch(self.paths, popen=mock.Mock(), leave=left.append)
+        self.assertEqual(left, [menubar.RELAUNCH_EXIT])
+        self.assertNotEqual(menubar.RELAUNCH_EXIT, 0)
+
+    def test_started_by_hand_a_new_detached_process_takes_over(self):
+        left, popen = [], mock.Mock()
+        env = {k: v for k, v in __import__("os").environ.items() if k != "XPC_SERVICE_NAME"}
+        with mock.patch.dict("os.environ", env, clear=True):
+            menubar.relaunch(self.paths, popen=popen, leave=left.append)
+        self.assertEqual(left, [0])
+        args, kw = popen.call_args
+        self.assertEqual(args[0][1:], ["-m", "rag_search.menubar"])
+        self.assertTrue(kw["start_new_session"])
+
+    def test_the_process_is_never_replaced_in_place(self):
+        import inspect
+        self.assertNotIn("execv", inspect.getsource(menubar))
+
+
 class ActionTests(TempHome):
     def test_restart_everything_restarts_the_daemons_and_then_the_dashboard(self):
         calls = []
