@@ -191,8 +191,8 @@ the status item (PyObjC). `machine.menubar_possible()` says whether the machine 
 **Publishing** (`publish.py`) collects every workspace collection with a complete `_all/` index,
 refuses to mix embedding models, computes a `content_sha` (no-op if it equals the live one), builds
 `.tmp-gen-N`, renames it to `gen-N` and switches `current`. Hard links make it O(files); a running
-search daemon keeps reading the old generation's files until it swaps. `rollback` re-points
-`current` at the previous generation.
+search daemon keeps reading the old generation's files until it swaps. A publish keeps the generation before
+it; once the search daemon has switched (`api.publish_and_reload`), only the live generation is kept.
 
 **Freshness** – a document is re-indexed when its source SHA-256, the chunk parameters,
 `CHUNKER_VERSION`, `TOKENIZER_VERSION`, the index format or the model differ from

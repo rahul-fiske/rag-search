@@ -148,7 +148,7 @@
       dbox(257, 576, 190, 100, '5 · Embed', [shortName(e.name), `${e.dim || 1024}-d vectors, batch ${e.batch}`, `≤ ${e.max_seq} tokens per chunk`], 'hl'), hwchip(405, 582, 'gpu'),
       dbox(494, 576, 190, 100, '6 · Write', ['nodes.json', 'embeddings.npy', 'index.meta.json last'], 'store'),
       dbox(731, 576, 190, 100, '7 · Merge', ['_all/ per collection', 'concatenate, no', 're-embedding']),
-      dbox(968, 576, 190, 100, '8 · Publish', ['hard-link → serving/gen-N', 'switch “current” symlink', `keep ${A.index.generations_kept}; search reloads`], 'hl'),
+      dbox(968, 576, 190, 100, '8 · Publish', ['hard-link → serving/gen-N', 'switch “current” symlink', 'old generation removed after reload'], 'hl'),
       E('M210,626 H253', 'new chunks', 232, 620), E('M447,626 H490', null), E('M684,626 H727', null), E('M921,626 H964', null));
   }
 
@@ -222,7 +222,7 @@
   index/<collection>/collection.origin.json   only for imported collections
 
 serving/                                  what the search daemon reads
-  gen-000042/                             immutable, hard-linked; last ${ix.generations_kept} kept
+  gen-000042/                             immutable, hard-linked; only the live one is kept
     catalog.json                          generation, content_sha, model, collections, documents
     index/<collection>/_all/…   markup/…
   current -> gen-000042                   symlink, switched atomically`)),

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -45,6 +46,36 @@ class IndexData:
     nodes: list[dict[str, Any]]
     emb: np.ndarray
     bm25: BM25
+
+
+def _deep_size(obj: Any, seen: set[int] | None = None) -> int:
+    """Bytes of a Python object and what it holds (strings, numbers, containers), each object once."""
+    seen = set() if seen is None else seen
+    if id(obj) in seen:
+        return 0
+    seen.add(id(obj))
+    n = sys.getsizeof(obj)
+    if isinstance(obj, dict):
+        n += sum(_deep_size(k, seen) + _deep_size(v, seen) for k, v in obj.items())
+    elif isinstance(obj, (list, tuple)):
+        n += sum(_deep_size(x, seen) for x in obj)
+    return n
+
+
+def index_memory(d: "IndexData") -> dict[str, int]:
+    """What one collection's index costs in the search daemon's memory: the vectors (exact), the passages with their
+    details as Python objects (estimated from every 100th passage), and the keyword index (BM25).  Worked out once."""
+    cached = getattr(d, "_memory", None)
+    if cached is None:
+        step = max(1, len(d.nodes) // 300)
+        sample = d.nodes[::step]
+        per = sum(_deep_size(n) for n in sample) / len(sample) if sample else 0.0
+        passages = int(per * len(d.nodes))
+        keyword = d.bm25.memory_bytes()
+        cached = {"vectors": int(d.emb.nbytes), "passages": passages, "keyword": keyword,
+                  "total": int(d.emb.nbytes) + passages + keyword}
+        d._memory = cached                                     # type: ignore[attr-defined]
+    return cached
 
 
 def load_index(d: Path) -> IndexData:
@@ -179,7 +210,9 @@ class SearchEngine:
         for name, d in list(self.gen.indexes.items()):
             e = int(d.emb.nbytes)
             t = sum(len(n["text"]) for n in d.nodes)
-            colls[name] = {"chunks": len(d.nodes), "embeddings_bytes": e, "text_bytes": t}
+            mem = index_memory(d)
+            colls[name] = {"chunks": len(d.nodes), "embeddings_bytes": e, "text_bytes": t,
+                           "passages_bytes": mem["passages"], "keyword_bytes": mem["keyword"], "ram_bytes": mem["total"]}
             emb += e
             txt += t
         models: dict[str, int] = {}
@@ -189,6 +222,7 @@ class SearchEngine:
             if b is not None:
                 models[label] = b
         return {"embeddings_bytes": emb, "text_bytes": txt, "models_bytes": models,
+                "indexes_bytes": sum(c["ram_bytes"] for c in colls.values()),
                 "collections": colls, "models": self.models_info()}
 
     # generations ----------------------------------------------------------

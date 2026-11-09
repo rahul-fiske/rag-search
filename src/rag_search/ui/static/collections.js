@@ -245,6 +245,36 @@
     dialog(`${coll} / ${name}`, h('div', null, info, pre, h('div', { style: { marginTop: '8px' } }, more)), { okText: 'Close', noCancel: true });
   }
 
+  /* What the search daemon holds in memory for a collection ({vectors, passages, keyword, total}), or null when
+     the daemon is down or has not loaded it. */
+  function ramOf(coll) {
+    const m = ((((RS.state.live || {}).daemons || {}).search || {}).memory) || {};
+    const e = (m.collections || {})[coll];
+    return e && e.ram_bytes !== undefined ? { vectors: e.embeddings_bytes, passages: e.passages_bytes, keyword: e.keyword_bytes, total: e.ram_bytes } : null;
+  }
+
+  /* "Disk and memory": what ONE collection costs, by what each part is for. */
+  function costBody(coll, i) {
+    const k = i.cost || {}; const ram = ramOf(coll);
+    const tbl = (head, rows, total) => h('div', { class: 'table-wrap' }, h('table', { class: 'plain cost' },
+      h('thead', null, h('tr', null, head.map((t, n) => h('th', { class: n === 1 ? 'num' : '' }, t)))),
+      h('tbody', null, rows.map(r => h('tr', null, h('td', null, r[0]), h('td', { class: 'num' }, r[1]), h('td', { class: 'muted' }, r[2]))),
+        total ? h('tr', { class: 'total' }, h('td', null, h('b', null, total[0])), h('td', { class: 'num' }, h('b', null, total[1])), h('td', { class: 'muted' }, total[2] || '')) : null)));
+    const disk = tbl(['On disk', 'Size', 'Used by'], [
+      ['Chunks: passages and their details', bytes(k.chunks), 'search (returned as results)'],
+      ['Vectors', bytes(k.vectors), 'search'],
+      ['Working copy, per document', bytes(k.working_copy), 're-indexing (merged into the search index)'],
+      ['Markdown', bytes(k.markdown), 'grep, reading a whole document'],
+    ], ['Total on disk', bytes(k.total), 'published copy shares the search index files (hard links)']);
+    const mem = ram ? tbl(['In memory (search daemon)', 'Size', 'How known'], [
+      ['Vectors', bytes(ram.vectors), 'exact'],
+      ['Passages and details', '~' + bytes(ram.passages), 'estimated (Python objects)'],
+      ['Keyword index (BM25)', '~' + bytes(ram.keyword), 'estimated; built from the passages, not stored'],
+    ], ['Total in memory', '~' + bytes(ram.total), ''])
+      : h('p', { class: 'small muted', style: { margin: '8px 0 0' } }, 'In memory: not loaded (the search daemon is not running, or has not loaded this collection yet).');
+    return h('div', null, disk, mem);
+  }
+
   function documentsTable(row, coll) {
     const c = row.info;
     const docs = (c && c.documents) || [];
@@ -311,6 +341,7 @@
     if (i) {
       const ws = i.workspace, src = i.source, pub = i.published, b = i.build || {};
       parts.push(tiles(i));
+      parts.push(section(coll, 'cost', 'Disk and memory', `  ${bytes((i.cost || {}).total)} on disk` + (ramOf(coll) ? ` · ~${bytes(ramOf(coll).total)} in memory` : ''), costBody(coll, i), true));
       const where = [
         i.kind === 'imported' ? null : pathRow('Source documents', src.folder, src.reachable === false ? 'not reachable now' : src.unsupported ? `${num(src.unsupported)} file(s) in formats that are not indexed` : ''),
         pathRow('Markdown (workspace)', ws.markdown_folder, `${num(ws.markdown_files)} file(s), ${bytes(ws.markdown_bytes)}`),
@@ -357,11 +388,12 @@
         h('td', { class: 'num grp' }, c ? num((c.documents || []).length) : '–'), h('td', { class: 'num' }, c ? bytes(c.source_bytes) : '–'),
         h('td', { class: 'num grp' }, c ? bytes(c.markdown_bytes) : '–'),
         h('td', { class: 'num grp' }, c ? num(c.chunks) : '–'), h('td', { class: 'num' }, c ? bytes(c.chunk_bytes) : '–'), h('td', { class: 'num' }, c ? bytes(c.vector_bytes) : '–'),
+        h('td', { class: 'num' }, ramOf(r.collection) ? '~' + bytes(ramOf(r.collection).total) : '–'),
         h('td', { class: 'nowrap muted grp' }, c ? stamp(c.built_at) : '–'), h('td', { class: 'num' }, c && c.build_seconds !== null && c.build_seconds !== undefined ? dur(c.build_seconds) : '–'),
         h('td', { class: 'nowrap', on: { click: e => e.stopPropagation() } },
           h('button', { class: 'btn small', disabled: ro || !r.exists, title: 'Say in a sentence what this collection holds', on: { click: () => describeDialog(r) } }, 'Describe…'), ' ',
           h('button', { class: 'btn small', disabled: ro || !r.exists || r.kind === 'imported', title: 'Index new and changed documents of this collection', on: { click: async () => { const x = await act('index/start', { mode: 'new', path: r.collection }); if (x.ok !== false) toast(x.already_running ? 'A run is already active' : 'Indexing started', x.already_running ? '' : 'ok'); } } }, 'Index'))));
-      if (isOpen) body.push(h('tr', { class: 'cd-row' }, h('td', { colspan: 10 }, details(r))));
+      if (isOpen) body.push(h('tr', { class: 'cd-row' }, h('td', { colspan: 11 }, details(r))));
     }
     return h('div', { class: 'card' },
       h('div', { class: 'card-head' }, h('h2', null, 'Collections'), h('span', { class: 'muted small' }, 'a registered folder or an imported export; click a row for its details'),
@@ -373,12 +405,13 @@
           h('tr', { class: 'grouphead' }, h('th', { rowspan: 2 }, 'Collection'),
             h('th', { colspan: 2, class: 'grp', title: 'the documents indexed and their size in your folders; search does not read them, only re-indexing does' }, 'Sources'),
             h('th', { class: 'grp', title: 'the converted text of the documents: grep and reading a whole document use it, search does not' }, 'Markdown'),
-            h('th', { colspan: 3, class: 'grp', title: 'what search loads: the passages and the vectors (the keyword index is built in memory from the passages, not stored)' }, 'Search index'),
+            h('th', { colspan: 4, class: 'grp', title: 'what search loads: the passages and the vectors (the keyword index is built in memory from the passages, not stored)' }, 'Search index'),
             h('th', { colspan: 2, class: 'grp' }, 'Indexing'), h('th', { rowspan: 2 }, '')),
           h('tr', null, [['Docs', 'documents indexed'], ['Size', 'size of the indexed source files'], ['Size', 'size of the converted Markdown'],
             ['Chunks', 'passages searched'], ['Text', 'chunk text and details on disk (nodes.json)'], ['Vectors', 'embedding vectors on disk (embeddings.npy)'],
+            ['RAM', 'what this collection takes in the running search daemon: vectors, passages and keyword index (estimated)'],
             ['Built', 'when this collection was last indexed'], ['Took', 'how long indexing it took']].map(([t, tip], i) =>
-            h('th', { class: (i === 7 || i === 6 ? '' : 'num') + (i === 0 || i === 2 || i === 3 || i === 6 ? ' grp' : ''), title: tip }, t)))),
+            h('th', { class: (i === 8 || i === 7 ? '' : 'num') + (i === 0 || i === 2 || i === 3 || i === 7 ? ' grp' : ''), title: tip }, t)))),
         h('tbody', null, body))) : empty('No collections yet. Register a folder on this tab, then start indexing.'));
   }
 

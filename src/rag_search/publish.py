@@ -38,7 +38,8 @@ from .paths import (
 )
 
 CATALOG = "catalog.json"
-KEEP_GENERATIONS = 3
+KEEP_WHILE_SWAPPING = 2     # a publish keeps the one before it: the search daemon may still be reading it
+KEEP_LIVE = 1               # once the search daemon has switched, only the live generation is kept
 _GEN_RE = re.compile(r"gen-(\d+)$")
 
 
@@ -290,29 +291,14 @@ def _publish(paths: Paths, force: bool, allow_drop: bool) -> dict[str, Any]:
         link_tmp.unlink()
     os.symlink(final.name, link_tmp)
     os.replace(link_tmp, paths.current_link)  # atomic switch
-    gc(paths)
+    gc(paths, keep=KEEP_WHILE_SWAPPING)
     return {"changed": True, "generation": n, "collections": len(collections),
             "chunks": sum(c["chunks"] for c in collections),
             "documents": sum(len(c["documents"]) for c in collections)}
 
 
-def rollback(paths: Paths) -> dict[str, Any]:
-    """Point `current` at the previous generation (still on disk)."""
-    cur = current_generation(paths)
-    older = [g for g in list_generations(paths) if cur is not None and g < cur]
-    if not older:
-        raise PublishError("no earlier generation to roll back to")
-    target = paths.gen_dir(older[-1])
-    link_tmp = paths.serving / ".current.tmp"
-    with contextlib.suppress(FileNotFoundError):
-        link_tmp.unlink()
-    os.symlink(target.name, link_tmp)
-    os.replace(link_tmp, paths.current_link)
-    return {"changed": True, "generation": older[-1]}
-
-
-def gc(paths: Paths, keep: int = KEEP_GENERATIONS) -> list[int]:
-    """Delete old generations (never the live one) and stale temp dirs."""
+def gc(paths: Paths, keep: int = KEEP_LIVE) -> list[int]:
+    """Delete old generations (never the live one) and stale temp dirs.  By default only the live generation stays."""
     live = current_generation(paths)
     gens = list_generations(paths)
     removed = []

@@ -18,7 +18,7 @@ from typing import Any
 from .. import __version__, api, effective, locations, machine, models, register, spec
 from ..core.chunker import CHUNKER_VERSION
 from ..paths import DEFAULT_TOP_K, INDEX_FORMAT, Paths, env_flag
-from ..publish import KEEP_GENERATIONS
+from ..publish import KEEP_LIVE
 
 APPLIES_LABEL = {
     spec.IMMEDIATE: "applies immediately, to the very next search",
@@ -202,7 +202,7 @@ def architecture(paths: Paths) -> dict[str, Any]:
                            "rerank_pool_max": spec.RERANK_POOL_MAX},
         "limits": {"top_k_default": DEFAULT_TOP_K, "top_k_max": spec.MAX_TOP_K,
                    "snippet_chars": spec.SNIPPET_CHARS},
-        "index": {"format": INDEX_FORMAT, "generations_kept": KEEP_GENERATIONS,
+        "index": {"format": INDEX_FORMAT, "generations_kept": KEEP_LIVE,
                   "node_fields": NODE_FIELDS, "meta_fields": META_FIELDS,
                   "catalog_fields": CATALOG_FIELDS},
         "paths": {"home": str(paths.home)},

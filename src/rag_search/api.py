@@ -292,6 +292,7 @@ def publish_and_reload(paths: Paths, *, allow_drop: bool = False) -> dict[str, A
         return out
     if out["publish"].get("changed"):
         out["search_reload"] = reload_search(paths)
+        out["removed_generations"] = publish.gc(paths, keep=publish.KEEP_LIVE)   # the daemon now serves the new one
     return out
 
 

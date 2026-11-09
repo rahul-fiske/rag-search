@@ -136,12 +136,15 @@ def _workspace(paths: Paths, coll: str) -> dict[str, Any]:
     md_files, md_bytes = _du(md)
     idx_files, idx_bytes = _du(idx)
     all_files, all_bytes = _du(all_dir)
+    md_text_bytes = sum(os.lstat(os.path.join(dp, f)).st_size for dp, _d, fs in os.walk(md) for f in fs if f.endswith(".md"))
+    sizes = {n: (all_dir / n).stat().st_size if (all_dir / n).is_file() else 0 for n in (NODES_FILE, EMB_FILE)}
     return {"index_folder": str(idx), "markdown_folder": str(md),
             "index_exists": idx.is_dir(), "markdown_exists": md.is_dir(),
             "index_bytes": idx_bytes, "merged_index_bytes": all_bytes,
             "per_document_index_bytes": idx_bytes - all_bytes,
+            "chunk_bytes": sizes[NODES_FILE], "vector_bytes": sizes[EMB_FILE],
             "markdown_files": sum(1 for _ in md.rglob("*.md")) if md.is_dir() else 0,
-            "markdown_bytes": md_bytes,
+            "markdown_bytes": md_bytes, "markdown_text_bytes": md_text_bytes,
             "documents": len(metas), "incomplete": sorted(incomplete),
             "merged": {"documents": len(manifest.get("docs", [])),
                        "chunks": manifest.get("nodes", 0),
@@ -272,6 +275,11 @@ def collection_info(paths: Paths, name: str) -> dict[str, Any]:
         "workspace": ws,
         "published": {k: v for k, v in pub.items() if k != "documents_list"} if pub else None,
         "build": build,
+        # what this collection costs on disk, by what it is for (hard links to the published copy counted once)
+        "cost": {"chunks": ws["chunk_bytes"], "vectors": ws["vector_bytes"], "search_index": ws["merged_index_bytes"],
+                 "working_copy": ws["per_document_index_bytes"], "markdown": ws["markdown_text_bytes"],
+                 "total": ws["merged_index_bytes"] + ws["per_document_index_bytes"] + ws["markdown_text_bytes"],
+                 "sources": src.get("bytes")},
         "disk": {"markdown_bytes": ws["markdown_bytes"], "index_bytes": ws["index_bytes"],
                  "total_bytes": ws["markdown_bytes"] + ws["index_bytes"],
                  "source_bytes": src.get("bytes"),

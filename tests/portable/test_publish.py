@@ -1,9 +1,10 @@
 import json
 import os
 import unittest
+from unittest import mock
 
 from tests.helpers import TempHome
-from rag_search import catalog, publish
+from rag_search import api, catalog, publish
 from rag_search.paths import EMB_FILE, META_FILE, NODES_FILE, read_json
 
 A = "# A\n\n<!-- page 1 -->\n\nalpha text about widgets"
@@ -52,27 +53,30 @@ class PublishTests(TempHome):
         self.assertNotEqual((self.paths.current_gen() / "index/c/_all" / NODES_FILE).read_bytes(),
                             before)
 
-    def test_generations_gc_keeps_three_and_never_live(self):
+    def test_a_publish_keeps_the_previous_generation_until_the_daemon_has_switched(self):
         p = self.write_doc("c/a.md", A)
         for i in range(5):
             p.write_text(A + f"\n\nrevision {i}")
             self.index()
             self.publish()
-        gens = publish.list_generations(self.paths)
-        self.assertEqual(gens, [3, 4, 5])
+        self.assertEqual(publish.list_generations(self.paths), [4, 5])
         self.assertEqual(publish.current_generation(self.paths), 5)
 
-    def test_rollback(self):
+    def test_after_the_switch_only_the_live_generation_stays(self):
         p = self.write_doc("c/a.md", A)
         self.index()
         self.publish()
         p.write_text(A + "\n\nsecond revision")
         self.index()
-        self.publish()
-        self.assertEqual(publish.rollback(self.paths)["generation"], 1)
-        self.assertEqual(publish.current_generation(self.paths), 1)
-        with self.assertRaises(publish.PublishError):
-            publish.rollback(self.paths)
+        with mock.patch.object(api, "reload_search", return_value={"ok": True, "generation": 2}):
+            out = api.publish_and_reload(self.paths)
+        self.assertEqual(out["removed_generations"], [1])
+        self.assertEqual(publish.list_generations(self.paths), [2])
+        self.assertEqual(publish.current_generation(self.paths), 2)
+        self.assertEqual(publish.gc(self.paths), [])             # nothing more to remove, the live one is never touched
+
+    def test_there_is_no_rollback(self):
+        self.assertFalse(hasattr(publish, "rollback"))
 
     def test_removing_everything_publishes_an_empty_generation(self):
         a = self.write_doc("c/a.md", A)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+import sys
 from collections import Counter
 
 import numpy as np
@@ -48,6 +49,15 @@ class BM25:
                 np.asarray(tfs, dtype=np.float32),
                 idf,
             )
+
+    def memory_bytes(self) -> int:
+        """What the postings occupy in memory: the term strings, the two arrays per term (data and Python object),
+        the tuple that holds them, and the dictionary.  An estimate of the Python overhead, exact for the array data."""
+        total = sys.getsizeof(self._post) + int(self._norm.nbytes)
+        for term, (ids, tfs, _idf) in self._post.items():
+            total += sys.getsizeof(term) + sys.getsizeof(ids) + int(ids.nbytes) + sys.getsizeof(tfs) + int(tfs.nbytes)
+            total += 64 + 24                                   # the (ids, tfs, idf) tuple and the float
+        return total
 
     def scores(self, query_tokens: list[str]) -> np.ndarray:
         s = np.zeros(self.n, dtype=np.float32)
