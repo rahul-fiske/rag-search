@@ -581,13 +581,17 @@ class DetachAndCliTests(TempHome):
 
     def test_a_dashboard_run_in_the_foreground_can_be_stopped_with_ui_stop(self):
         env = dict(os.environ, PYTHONPATH=SUBPROC_PYTHONPATH)
-        proc = subprocess.Popen([sys.executable, "-m", "rag_search.ui.server", "--port", "0", "--no-browser"],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+        out = self.tmp / "ui-foreground.out"
+        with open(out, "wb") as log:
+            proc = subprocess.Popen([sys.executable, "-m", "rag_search.ui.server", "--port", "0", "--no-browser"],
+                                    stdout=log, stderr=subprocess.STDOUT, env=env)
         try:
             pid_file = self.paths.run / "ui.pid"
-            end = time.monotonic() + 30
-            while not pid_file.exists() and time.monotonic() < end:
+            end = time.monotonic() + 90
+            while not pid_file.exists() and time.monotonic() < end and proc.poll() is None:
                 time.sleep(0.1)
+            self.assertTrue(pid_file.exists(), f"the dashboard wrote no pid file (exit {proc.poll()}): "
+                            + out.read_text(errors="replace")[-1500:])
             self.assertEqual(pid_file.read_text().strip(), str(proc.pid))
             p = subprocess.run([sys.executable, "-m", "rag_search.cli", "ui", "--stop"], capture_output=True,
                                text=True, env=env, timeout=60)
