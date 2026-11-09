@@ -152,6 +152,12 @@ the tests. The Help tab renders the README and this file (copied into `ui/static
 `build_release.sh`, checked for drift by a test) with a small escaping Markdown renderer, and builds the
 command reference from the argparse tree.
 
+The **menu-bar item** (`menubar.py`, macOS) is one more long-running front-end, a third LaunchAgent next to the two
+daemons. It makes the same `api` calls as the CLI and the dashboard; the decisions (icon state, menu items and when
+they are enabled, what asks for confirmation, replacing a dashboard that runs another version, relaunching itself when
+the installed version changes) are plain functions tested without AppKit, and `menubar.run` is the thin layer that draws
+the status item (PyObjC). `machine.menubar_possible()` says whether the machine has one (Linux would add a tray icon there).
+
 ## 2. Data folder
 
 ```

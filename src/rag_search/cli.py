@@ -1778,6 +1778,15 @@ def _cmd_playground_rm(a: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_menubar(a: argparse.Namespace) -> int:
+    from . import menubar
+
+    if a.stop:
+        print(menubar.stop_running(get_paths()))
+        return EXIT_OK
+    return menubar.run(get_paths())
+
+
 def _cmd_ui(a: argparse.Namespace) -> int:
     from .ui import server
 
@@ -1935,7 +1944,7 @@ def _setup_plan(a: argparse.Namespace, apple: bool) -> tuple[list[tuple[str, str
         out.append("Tesseract: left out (" + ("--no-tesseract" if a.no_tesseract else "--skip-docling") + ")")
     plan.append(("doctor", "Checking the installation"))
     if a.service:
-        plan.append(("daemons", "Installing the start-at-login services"))
+        plan.append(("daemons", "Installing the start-at-login services" + (" and the menu-bar item" if machine.menubar_possible() else "")))
     elif not a.no_start:
         plan.append(("daemons", "Starting the daemons"))
     else:
@@ -2806,6 +2815,10 @@ def build_parser() -> argparse.ArgumentParser:
     q = pgadd("rm", "permanently delete an experiment and its bench runs", _cmd_playground_rm)
     q.add_argument("name")
     q.add_argument("-y", "--yes", action="store_true", help="do not ask for confirmation")
+
+    p = add("menubar", "run the menu-bar item: click opens the dashboard, right-click has the common operations (a Mac)",
+            _cmd_menubar)
+    p.add_argument("--stop", action="store_true", help="stop a running menu-bar item")
 
     p = add("ui", "open the web dashboard (status, indexing, search, access, architecture, help)",
             _cmd_ui, description="Local web dashboard on 127.0.0.1: live daemon and indexing status, "

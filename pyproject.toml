@@ -38,6 +38,8 @@ dependencies = [
   "pillow-heif>=0.18",
   # macOS: Apple Vision (ocrmac) reads scanned pages, and is the independent second reader that confirms repaired table cells
   "ocrmac>=1.0; sys_platform == 'darwin'",
+  # macOS: the menu-bar item (rag_search/menubar.py) draws with AppKit
+  "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'",
   # Apple Silicon: the document reader, a vision-language model that reads scanned pages, pictures and image files
   "mlx-vlm>=0.3.4; sys_platform == 'darwin' and platform_machine == 'arm64'",
   # Intel Macs: PyTorch stopped publishing macOS x86_64 wheels after 2.2.2, which was compiled against NumPy 1.x

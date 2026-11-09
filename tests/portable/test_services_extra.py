@@ -39,11 +39,11 @@ class ServiceTests(TempHome):
             p.start()
             self.addCleanup(p.stop)
 
-    def test_install_writes_one_plist_per_daemon_and_boots_it(self):
+    def test_install_writes_one_plist_per_service_and_boots_it(self):
         out = service.install(self.paths, python="/venv/bin/python")
-        self.assertEqual([line.split(":")[0] for line in out], list(api.KINDS))
+        self.assertEqual([line.split(":")[0] for line in out], list(service.kinds()))
         self.assertTrue(all("installed and started" in line for line in out))
-        for kind in api.KINDS:
+        for kind in service.kinds():
             plist = service.plistlib.loads(service.plist_path(kind).read_bytes())
             self.assertEqual(plist["ProgramArguments"][0], "/venv/bin/python")
             self.assertEqual(plist["EnvironmentVariables"]["RAG_SEARCH_HOME"], str(self.paths.home))
@@ -59,13 +59,13 @@ class ServiceTests(TempHome):
         self.assertTrue(all("FAILED" in line and "Load failed: 5" in line for line in out))
 
     def test_uninstall_removes_what_is_installed_and_says_what_is_not(self):
-        self.assertEqual(service.uninstall(self.paths), [f"{k}: not installed" for k in api.KINDS])
+        self.assertEqual(service.uninstall(self.paths), [f"{k}: not installed" for k in service.kinds()])
         service.install(self.paths)
         self.replies["bootout"] = done(3)                      # not loaded any more: unload the file instead
         out = service.uninstall(self.paths)
-        self.assertEqual(out, [f"{k}: removed" for k in api.KINDS])
+        self.assertEqual(out, [f"{k}: removed" for k in service.kinds()])
         self.assertIn("unload", {c[0] for c in self.calls})
-        self.assertFalse(any(service.plist_path(k).exists() for k in api.KINDS))
+        self.assertFalse(any(service.plist_path(k).exists() for k in service.kinds()))
 
     def test_status_says_installed_loaded_and_running_with_the_pid(self):
         service.install(self.paths)

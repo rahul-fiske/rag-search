@@ -38,6 +38,19 @@ def _pass_env() -> tuple[str, ...]:
 PASS_ENV = _pass_env()
 
 
+MENUBAR = "menubar"                  # the menu-bar item: a third LaunchAgent (a Mac only)
+MENUBAR_MODULE = "rag_search.menubar"
+
+
+def kinds() -> tuple[str, ...]:
+    """The services of this machine: the two daemons, and the menu-bar item where there is one."""
+    return (*api.KINDS, MENUBAR) if machine.menubar_possible() else tuple(api.KINDS)
+
+
+def _module(kind: str) -> str:
+    return MENUBAR_MODULE if kind == MENUBAR else client.DAEMON_MODULES[kind]
+
+
 def label(kind: str) -> str:
     return f"{LABEL_PREFIX}.{kind}"
 
@@ -56,12 +69,13 @@ def plist_dict(paths: Paths, kind: str, python: str | None = None) -> dict[str, 
     env.update({k: os.environ[k] for k in PASS_ENV if os.environ.get(k)})
     return {
         "Label": label(kind),
-        "ProgramArguments": [python or sys.executable, "-m", client.DAEMON_MODULES[kind]],
+        "ProgramArguments": [python or sys.executable, "-m", _module(kind)],
         "EnvironmentVariables": env,
         "WorkingDirectory": str(paths.home),
         "RunAtLoad": True,
         "KeepAlive": {"SuccessfulExit": False},
         "ProcessType": "Interactive",
+        **({"LimitLoadToSessionType": "Aqua"} if kind == MENUBAR else {}),   # a menu-bar item needs the login session
         "StandardOutPath": str(paths.log_file(kind)),
         "StandardErrorPath": str(paths.log_file(kind)),
     }
@@ -142,7 +156,11 @@ def install(paths: Paths, python: str | None = None) -> list[str]:
                        + ("" if proc.returncode == 0 else f"\n  {proc.stderr.strip()}"))
         return out
     agents_dir().mkdir(parents=True, exist_ok=True)
-    for kind in api.KINDS:
+    from . import menubar
+
+    if machine.menubar_possible():
+        menubar.stop_running(paths)        # the login service takes over
+    for kind in kinds():
         pf = plist_path(kind)
         _launchctl("bootout", f"{_domain()}/{label(kind)}")  # ignore "not loaded"
         pf.write_bytes(plistlib.dumps(plist_dict(paths, kind, python)))
@@ -169,7 +187,7 @@ def uninstall(paths: Paths) -> list[str]:
         _systemctl("daemon-reload")
         api.daemon_stop(paths, "all")
         return out
-    for kind in api.KINDS:
+    for kind in kinds():
         pf = plist_path(kind)
         if not pf.exists():
             out.append(f"{kind}: not installed")
@@ -185,7 +203,7 @@ def uninstall(paths: Paths) -> list[str]:
 
 def status(paths: Paths) -> dict[str, Any]:
     res: dict[str, Any] = {}
-    for kind in api.KINDS:
+    for kind in kinds() if machine.service_manager() == "launchd" else api.KINDS:
         if machine.service_manager() == "systemd":
             entry: dict[str, Any] = {"unit": str(unit_path(kind)), "installed": unit_path(kind).exists()}
             entry["loaded"] = _systemctl("is-active", unit_name(kind)).returncode == 0
@@ -193,6 +211,12 @@ def status(paths: Paths) -> dict[str, Any]:
             entry = {"plist": str(plist_path(kind)), "installed": plist_path(kind).exists()}
             if machine.service_manager() == "launchd":
                 entry["loaded"] = _launchctl("print", f"{_domain()}/{label(kind)}").returncode == 0
+        if kind == MENUBAR:
+            from . import menubar
+
+            entry["running"] = bool(menubar.running_pid(paths))
+            res[kind] = entry
+            continue
         info = client.ping(paths, kind)
         entry["running"] = bool(info)
         if info:

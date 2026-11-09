@@ -114,6 +114,7 @@ rag-search list [--client NAME]                               what is published:
 rag-search describe [COLLECTION [TEXT|--clear]]                view or set a collection's short description
 rag-search access [restrict|grant COLLECTION CLIENT...]        who may use which collection (see "Access per client")
 rag-search ui [--port N] [--read-only] [--detach|--stop|--url] local web dashboard (see "Web dashboard")
+rag-search menubar [--stop]                                    the menu-bar item (a Mac; set up by `setup` and `service install`)
 rag-search index new [PATH] [--restart] [--rebuild] [-f]       index new/changed documents
 rag-search index all [PATH] [--restart] [-f]                   wipe and rebuild everything in scope
 rag-search index status [JOB] [-f] [--docs N] [--history N]   progress, timings per document, or -f live
@@ -321,6 +322,20 @@ and put it into that host's MCP settings; `NAME` becomes the host's client ident
 `rag-search access restrict COLLECTION claude NAME` can give it its own set of collections. The tool
 names all start with `rag_`, so they do not clash with other servers; `--tool-prefix P` still adds a
 prefix if you ever need one.
+
+## Menu-bar item (Mac)
+
+`rag-search setup` (and `rag-search service install`) also start a small icon in the menu bar at every login, so the
+dashboard is one click away and a stale one never lingers:
+
+* **Click** opens the dashboard (starting it if it is not running, replacing it if it runs an older version).
+* **Right-click** shows the status (search ready or warming up, indexing progress) and the common operations: index
+  new documents now, cancel indexing, **restart everything** (both daemons and the dashboard), restart the dashboard,
+  start or stop the daemons, open the data or logs folder, quit the item. Anything that would cancel a running
+  indexing run asks first (finished documents are kept).
+* The icon shows the state: ready, warming up, indexing, or a daemon down. The item restarts itself after an upgrade.
+  It is a LaunchAgent (`io.rag-search.menubar`); `rag-search menubar --stop` stops it for now, `service uninstall`
+  removes it.
 
 ## Web dashboard
 

@@ -162,6 +162,11 @@ def apple_vision_possible() -> bool:
     return is_mac()
 
 
+def menubar_possible() -> bool:
+    """A status item in the menu bar exists on every Mac (a Linux tray icon would be another answer here)."""
+    return is_mac()
+
+
 def service_manager() -> str:
     """The program that starts the daemons at login: ``launchd`` on a Mac, ``systemd`` (a user service) on a Linux machine
     that has ``systemctl``, ``""`` where none is supported."""
@@ -252,5 +257,6 @@ def describe() -> dict[str, Any]:
     return {"kind": k, "system": system(), "arch": arch(), "ram_gb": ram_gb(), "device": device,
             "weight_bytes": weight_bytes(device), "unified_memory": unified_memory(),
             "cpu_cores": physical_cores(), "reader_backends": reader_backends(),
-            "apple_vision": apple_vision_possible(), "service_manager": service_manager(),
+            "apple_vision": apple_vision_possible(), "menubar": menubar_possible(),
+            "service_manager": service_manager(),
             "package_manager": package_manager(), "note": notes}
