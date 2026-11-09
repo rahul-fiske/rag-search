@@ -27,6 +27,7 @@ import time
 import urllib.error
 import urllib.request
 from http.cookies import SimpleCookie
+import socketserver
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -894,6 +895,13 @@ class UiServer(ThreadingHTTPServer):
     def __init__(self, addr: tuple[str, int], app: UiApp):
         self.app = app
         super().__init__(addr, Handler)
+
+    def server_bind(self) -> None:
+        """Bind without the standard library's ``socket.getfqdn()``: it asks the resolver about 127.0.0.1, which can take
+        many seconds on a machine whose DNS is slow (a CI runner), and nothing here uses the name it finds."""
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name, self.server_port = str(host), port
 
     def handle_error(self, request: Any, client_address: Any) -> None:
         """A browser that closes a tab or reloads ends its connection in the middle of a request: that is not

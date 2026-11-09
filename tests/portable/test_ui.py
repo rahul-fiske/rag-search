@@ -517,6 +517,20 @@ class ConsistencyTests(TempHome):
         self.assertTrue(build_parser())
 
 
+class BindTests(TempHome):
+    def test_starting_never_waits_for_a_name_lookup(self):
+        from rag_search.ui import server
+
+        with mock.patch("socket.getfqdn", side_effect=AssertionError("the dashboard must not do a DNS lookup")):
+            srv = server.make_server(self.paths, 0)
+        try:
+            self.assertEqual(srv.server_name, "127.0.0.1")
+            self.assertEqual(srv.server_port, srv.server_address[1])
+        finally:
+            srv.server_close()
+            srv.app.live.stop()
+
+
 class DetachAndCliTests(TempHome):
     def test_ui_modules_stay_light(self):
         for mod in ("rag_search.ui.server", "rag_search.ui.info", "rag_search.ui.markdown"):
