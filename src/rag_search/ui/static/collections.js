@@ -189,7 +189,7 @@
     return h('div', { class: 'cd-tiles' },
       statCard(num(ws.documents), docLabel),
       statCard(num(b.chunks || 0), 'chunks'),
-      statCard(bytes(i.disk.total_bytes), `on disk: Markdown ${bytes(ws.markdown_bytes)} + index ${bytes(ws.index_bytes)}`),
+      statCard(bytes(i.cost.total), `on disk: search index ${bytes(i.cost.search_index)} + working copy ${bytes(i.cost.working_copy)} + Markdown ${bytes(i.cost.markdown)}`),
       src.bytes !== null && src.bytes !== undefined ? statCard(bytes(src.bytes), 'source documents') : null,
       h('div', { class: 'stat' }, h('b', null, b.last_indexed ? stamp(b.last_indexed) : '–'), h('span', null, 'last indexed')),
       b.build_seconds !== null && b.build_seconds !== undefined ? statCard(dur(b.build_seconds), 'total build time') : null);
@@ -348,7 +348,7 @@
         pathRow('Index (workspace)', ws.index_folder, `${bytes(ws.index_bytes)}: merged ${bytes(ws.merged_index_bytes)} + per-document ${bytes(ws.per_document_index_bytes)}`),
         pub ? pathRow('Published copy', pub.index_folder, `generation ${pub.generation}; hard links, no extra space`) : null,
       ];
-      parts.push(section(coll, 'where', 'Where it lives', `  ${i.kind === 'location' ? 'location' : 'imported'} · ${bytes(i.disk.total_bytes)} on disk`, where, false));
+      parts.push(section(coll, 'where', 'Where it lives', `  ${i.kind === 'location' ? 'location' : 'imported'} · ${bytes(i.cost.total)} on disk`, where, false));
       parts.push(section(coll, 'indexing', 'Indexing & publishing', b.last_indexed ? `  last indexed ${clock(b.last_indexed)}` : '', h('div', null,
         kv([
           ['Model', b.model ? h('span', null, h('code', null, String(b.model)), b.model_revision ? h('span', { class: 'muted small' }, ` @ ${String(b.model_revision).slice(0, 12)}`) : null) : null],
