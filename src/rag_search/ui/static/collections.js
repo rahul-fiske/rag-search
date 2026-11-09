@@ -215,7 +215,7 @@
       statCard(num(b.chunks || 0), 'chunks'),
       statCard(bytes(i.disk.total_bytes), `on disk: Markdown ${bytes(ws.markdown_bytes)} + index ${bytes(ws.index_bytes)}`),
       src.bytes !== null && src.bytes !== undefined ? statCard(bytes(src.bytes), 'source documents') : null,
-      h('div', { class: 'stat', title: b.last_indexed ? clock(b.last_indexed) : '' }, h('b', null, b.last_indexed ? ago(b.last_indexed) : '–'), h('span', null, 'last indexed')),
+      h('div', { class: 'stat' }, h('b', null, b.last_indexed ? stamp(b.last_indexed) : '–'), h('span', null, 'last indexed')),
       b.build_seconds !== null && b.build_seconds !== undefined ? statCard(dur(b.build_seconds), 'total build time') : null);
   }
 
@@ -380,7 +380,7 @@
         h('td', null, (isOpen ? '▾ ' : '▸ '), h('b', null, r.collection), kindChip(r), !r.exists ? h('span', { class: 'chip warn', style: { marginLeft: '8px' } }, 'rule only') : !r.indexed ? h('span', { class: 'chip', style: { marginLeft: '8px' } }, 'not indexed') : null),
         h('td', { class: 'num' }, c ? num((c.documents || []).length) : '–'), h('td', { class: 'num' }, c ? num(c.chunks) : '–'),
         h('td', { class: 'num' }, c ? bytes(c.index_bytes) : '–'), h('td', { class: 'num' }, c ? bytes(c.markdown_bytes) : '–'), h('td', { class: 'num' }, c ? bytes(c.source_bytes) : '–'),
-        h('td', { class: 'nowrap muted' }, c ? ago(c.built_at) : '–'), h('td', { class: 'num' }, c && c.build_seconds !== null && c.build_seconds !== undefined ? dur(c.build_seconds) : '–'),
+        h('td', { class: 'nowrap muted' }, c ? stamp(c.built_at) : '–'), h('td', { class: 'num' }, c && c.build_seconds !== null && c.build_seconds !== undefined ? dur(c.build_seconds) : '–'),
         h('td', null, accessChips(r)),
         h('td', { class: 'nowrap', on: { click: e => e.stopPropagation() } },
           h('button', { class: 'btn small', disabled: ro, title: 'Choose who may use it', on: { click: () => editDialog(r) } }, 'Access…'), ' ',

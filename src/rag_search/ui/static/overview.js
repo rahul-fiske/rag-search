@@ -196,7 +196,7 @@
         h('div', { class: 'ov-coll-n' }, h('span', null, h('b', null, num(c.document_count)), c.document_count === 1 ? ' document' : ' documents'), h('span', null, h('b', null, num(c.chunks)), c.chunks === 1 ? ' passage' : ' passages'),
           h('span', null, bytes(c.index_bytes))),
         c.description ? h('p', { class: 'small muted' }, c.description) : null,
-        h('p', { class: 'small muted' }, c.built_at ? 'built ' + ago(c.built_at) : '', c.model ? ' · ' + c.model.split('/').pop() : ''))))
+        h('p', { class: 'small muted' }, c.built_at ? ['built ', stamp(c.built_at)] : '', c.model ? ' · ' + c.model.split('/').pop() : ''))))
         : h('p', { class: 'muted' }, 'Nothing is published yet. ' + (list.hint || '')),
       cols.length > 12 ? h('p', { class: 'small muted', style: { marginBottom: 0 } }, `+ ${cols.length - 12} more`) : null,
       list.model ? h('p', { class: 'small muted', style: { margin: '10px 0 0' } }, 'Embedding model: ', h('code', null, list.model)) : null);

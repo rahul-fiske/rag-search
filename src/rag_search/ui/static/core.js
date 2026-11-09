@@ -90,7 +90,17 @@ function clock(t) {
 function ago(t) {
   const d = toDate(t); if (!d) return '–';
   const s = Math.max(0, (Date.now() - d.getTime()) / 1000);
-  return s < 5 ? 'just now' : dur(s) + ' ago';
+  if (s < 5) return 'just now';
+  if (s >= 172800) { const days = Math.floor(s / 86400); return days >= 60 ? `${Math.round(days / 30)} months ago` : `${days} days ago`; }
+  return dur(s) + ' ago';
+}
+/* A moment as a date and time people read at a glance ("Nov 9, 11:30"; the year only when it is not this one),
+   with how long ago as the tooltip.  For tables and cards where "375h 56m ago" says little. */
+function stamp(t) {
+  const d = toDate(t); if (!d) return h('span', null, '–');
+  const opt = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+  if (d.getFullYear() !== new Date().getFullYear()) opt.year = 'numeric';
+  return h('span', { title: ago(t) + ' \u00b7 ' + clock(t) }, d.toLocaleString(undefined, opt));
 }
 function since(t) { const d = toDate(t); return d ? dur(Math.max(0, (Date.now() - d.getTime()) / 1000)) : '–'; }
 function num(n) { return n === null || n === undefined ? '–' : Number(n).toLocaleString(); }
