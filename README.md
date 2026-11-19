@@ -744,8 +744,8 @@ with the model that built it, until a re-embedded index is complete.
 
 ## Supported files
 
-`.pdf .docx .docm .rtf .pptx .xlsx .html .htm .csv .adoc .md .txt .png .jpg .jpeg .tif .tiff .bmp .webp .heic .heif`.
-`.rtf` is read by rag-search itself (paragraphs and tables; fonts, colours and pictures are dropped) and `.docm`
+`.pdf .docx .docm .rtf .pptx .xlsx .html .htm .csv .adoc .md .txt .json .jsonl .ndjson .png .jpg .jpeg .tif .tiff .bmp .webp .heic .heif`.
+`.json` is read by rag-search itself too: an array becomes one section per item and an object one per top-level key, `.jsonl`/`.ndjson` one section per line, and every value is a `key.path: value` line, so a passage still says what it is (text that is not valid JSON is indexed as plain text). `.rtf` is read by rag-search itself (paragraphs and tables; fonts, colours and pictures are dropped) and `.docm`
 (macro-enabled Word) as a `.docx`; neither needs LibreOffice or any other tool, and macros are never read or run.
 Legacy `.doc`/`.xls`/`.ppt` are not read (docling needs LibreOffice for them); a
 file with any other extension is skipped and shown in the Indexing tab / `index status` as

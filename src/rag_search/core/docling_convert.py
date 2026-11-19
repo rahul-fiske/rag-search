@@ -35,6 +35,7 @@ Formats without pages (docx, html, ...) are emitted as a single page 1.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -49,6 +50,7 @@ from typing import Any
 PASSTHROUGH = {".md", ".txt"}
 RTF_EXTENSIONS = {".rtf"}                 # read here, with the standard library (docling needs an office suite installed for RTF)
 TEXT_FALLBACK = {".adoc"}                # plain text that a docling of another version may not read: then it is read as text
+JSON_EXTENSIONS = {".json", ".jsonl", ".ndjson"}   # read here, with the standard library (no docling)
 MACRO_WORD_EXTENSIONS = {".docm"}         # a .docx with another content type: docling's Word reader refuses it as it is
 IMAGES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 
@@ -965,6 +967,67 @@ def _word_macro_as_docx(src: Path, tmp_dir: Path) -> Path:
     return out
 
 
+_LABEL_KEYS = ("id", "name", "title", "key", "slug", "label")
+_MAX_DEPTH = 40
+
+
+def _scalar(v: Any) -> str:
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, str):
+        return " ".join(v.split()) or '""'
+    return str(v)
+
+
+def _flatten(v: Any, path: str, out: list[str], depth: int = 0) -> None:
+    """One ``path: value`` line per leaf, so a chunk cut anywhere keeps the keys that say what its values are."""
+    if isinstance(v, dict) and v and depth < _MAX_DEPTH:
+        for k, x in v.items():
+            _flatten(x, f"{path}.{k}" if path else str(k), out, depth + 1)
+    elif isinstance(v, list) and v and depth < _MAX_DEPTH:
+        for i, x in enumerate(v):
+            _flatten(x, f"{path}[{i}]", out, depth + 1)
+    elif isinstance(v, (dict, list)):
+        out.append(f"{path or 'value'}: {'{}' if isinstance(v, dict) else '[]'}" if not v else
+                   f"{path}: {json.dumps(v, ensure_ascii=False)}")
+    else:
+        out.append(f"{path or 'value'}: {_scalar(v)}")
+
+
+def _record(heading: str, value: Any, hint: Any = None, prefix: str = "") -> str:
+    if isinstance(hint, dict):
+        for k in _LABEL_KEYS:
+            if isinstance(hint.get(k), (str, int)) and str(hint[k]).strip():
+                heading = f"{heading}: {_scalar(hint[k])}"
+                break
+    lines: list[str] = []
+    _flatten(value, prefix, lines)
+    return f"## {heading}\n\n" + "\n".join(lines)
+
+
+def json_to_markdown(text: str, *, lines: bool = False) -> str:
+    """Readable Markdown for a JSON document (an array: one section per item; an object: one per top-level key) or
+    for JSON Lines (one section per line).  Every leaf is a ``key.path: value`` line.  Raises ValueError when the text
+    is not JSON."""
+    text = text.lstrip("\ufeff")
+    blocks: list[str] = []
+    if lines:
+        for n, raw in enumerate((x for x in text.splitlines() if x.strip()), 1):
+            v = json.loads(raw)
+            blocks.append(_record(f"Record {n}", v, v))
+    else:
+        data = json.loads(text)
+        if isinstance(data, list) and data:
+            blocks = [_record(f"Item {n}", v, v) for n, v in enumerate(data, 1)]
+        elif isinstance(data, dict) and data:
+            blocks = [_record(str(k), v, prefix=str(k)) for k, v in data.items()]
+        else:
+            blocks = [_record("Value", data)]
+    return "\n\n".join(blocks) + "\n"
+
+
 def read_text_file(src: Path) -> str:
     """The text of a ``.md`` / ``.txt`` source, whatever it is encoded in.  Most are UTF-8; a file saved by Windows
     Notepad as "Unicode" is UTF-16 with a byte-order mark, and an old one is in a one-byte code page.  Copied as
@@ -992,6 +1055,18 @@ def convert_file(src: Path, out_md: Path, ocr: bool | None = None) -> dict:
 
     if suffix in PASSTHROUGH:
         tmp.write_text(read_text_file(src), encoding="utf-8")
+        os.replace(tmp, out_md)
+        return {"pages": 1, "seconds": round(time.perf_counter() - t0, 2)}
+    if suffix in JSON_EXTENSIONS:
+        raw_text = read_text_file(src)
+        try:
+            md = json_to_markdown(raw_text, lines=suffix != ".json")
+        except ValueError as exc:                 # not valid JSON: the text is still worth searching
+            print(f"note: {src.name}: not valid JSON ({exc}); indexed as plain text", file=sys.stderr)
+            md = raw_text
+        if not has_real_text(md):
+            raise NoTextError(f"no text extracted from {src.name}")
+        tmp.write_text("<!-- page 1 -->\n\n" + md, encoding="utf-8")
         os.replace(tmp, out_md)
         return {"pages": 1, "seconds": round(time.perf_counter() - t0, 2)}
     if suffix in RTF_EXTENSIONS:

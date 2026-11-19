@@ -195,6 +195,40 @@ class ConvertFileTests(TempHome):
         self.assertEqual(info["pages"], 1)
         self.assertIn("<!-- page 1 -->", out.read_text())
 
+    def test_json_becomes_sections_of_key_path_lines(self):
+        src = self.tmp / "orders.json"
+        src.write_text('[{"id": "A7", "customer": {"name": "Ana", "tags": ["vip", "eu"]}, "total": 12.5, "note": null},'
+                       ' {"name": "second", "items": [], "ok": true}]', encoding="utf-8")
+        out = self.tmp / "out" / "orders.md"
+        self.assertEqual(dc.convert_file(src, out)["pages"], 1)
+        md = out.read_text(encoding="utf-8")
+        self.assertTrue(md.startswith("<!-- page 1 -->\n\n## Item 1: A7\n"))
+        for line in ("customer.name: Ana", "customer.tags[1]: eu", "total: 12.5", "note: null", "## Item 2: second",
+                     "items: []", "ok: true"):
+            self.assertIn(line, md)
+
+    def test_json_object_and_json_lines_and_broken_json(self):
+        obj = self.tmp / "cfg.json"
+        obj.write_text('{"db": {"host": "h1", "port": 5432}, "debug": false}', encoding="utf-8")
+        dc.convert_file(obj, self.tmp / "out" / "cfg.md")
+        md = (self.tmp / "out" / "cfg.md").read_text(encoding="utf-8")
+        self.assertIn("## db\n\ndb.host: h1\ndb.port: 5432", md)
+        self.assertIn("## debug\n\ndebug: false", md)
+        jl = self.tmp / "log.jsonl"
+        jl.write_text('{"id": 1, "msg": "up"}\n\n{"id": 2, "msg": "down"}\n', encoding="utf-8")
+        dc.convert_file(jl, self.tmp / "out" / "log.md")
+        md = (self.tmp / "out" / "log.md").read_text(encoding="utf-8")
+        self.assertIn("## Record 1: 1", md)
+        self.assertIn("msg: down", md)
+        bad = self.tmp / "bad.json"
+        bad.write_text('{"a": 1,', encoding="utf-8")
+        dc.convert_file(bad, self.tmp / "out" / "bad.md")
+        self.assertIn('{"a": 1,', (self.tmp / "out" / "bad.md").read_text(encoding="utf-8"))
+        empty = self.tmp / "empty.json"
+        empty.write_text("", encoding="utf-8")
+        with self.assertRaises(dc.NoTextError):
+            dc.convert_file(empty, self.tmp / "out" / "empty.md")
+
     def test_asciidoc_that_docling_cannot_read_is_indexed_as_text_but_a_pdf_is_not(self):
         src = self.tmp / "deploy.adoc"
         src.write_text("= Deploy\n\nNeedle: azure quarry deployment.\n\n* one\n* two\n", encoding="utf-8")

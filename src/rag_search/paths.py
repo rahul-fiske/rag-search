@@ -47,7 +47,7 @@ DEFAULT_TOP_K = 5
 # Formats docling (or the plain-text passthrough) can turn into Markdown.
 SUPPORTED_EXTENSIONS = frozenset({
     ".pdf", ".docx", ".docm", ".rtf", ".pptx", ".xlsx", ".html", ".htm", ".csv", ".adoc",
-    ".md", ".txt",
+    ".md", ".txt", ".json", ".jsonl", ".ndjson",
     ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp",
     ".heic", ".heif",                       # read by the document reader (needs pillow-heif)
 })
