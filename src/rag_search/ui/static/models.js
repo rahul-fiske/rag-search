@@ -360,20 +360,20 @@
       (d.choices || []).map(c => h('option', { value: c.id, selected: c.id === d.model }, `${c.label} · needs about ${c.need_gb.toFixed(1)} GB free${c.downloaded ? '' : ' · not downloaded'}`)));
     return h('div', { class: 'card', style: { marginTop: '16px' } },
       h('div', { class: 'card-head' }, h('h2', null, 'Photo descriptions'),
-        h('span', { class: 'muted small' }, 'a vision model writes a short description of each photograph · lines are marked as machine-written · by itself after each indexing run, or now')),
+        h('span', { class: 'muted small' }, 'a vision model writes a short description of each photograph while it is indexed (step 3.9) · lines are marked as machine-written')),
       d.unavailable ? h('div', { class: 'notice warn' }, d.unavailable) : null,
       h('p', { style: { margin: '0 0 8px' } }, h('b', null, `${num(d.photographs)} photograph(s)`), ': ',
         `${num(d.described)} described by the current model`, d.described_by_another_model ? `, ${num(d.described_by_another_model)} by another model or prompt` : '', `, ${num(d.pending)} to do.`),
-      h('label', { class: 'check', style: { display: 'flex', margin: '0 0 8px' }, title: 'after an indexing run has published, the photographs without a description are described in the background, one process, so the run is never held up' },
+      h('label', { class: 'check', style: { display: 'flex', margin: '0 0 8px' }, title: 'a photograph is described between Locate and Chunk, in one process, so it is indexed once, complete; photographs left undescribed (memory short, a new model) are caught up after the run' },
         h('input', { type: 'checkbox', checked: !!d.auto, disabled: readOnly(), on: { change: async e => { const r = await api('photos/auto', { on: e.target.checked }); if (r.ok === false) toast(r.error || 'failed', 'bad'); load(true); } } }),
-        'Describe photographs automatically after each indexing run'),
-      d.auto && d.pending && !taskActive() ? h('p', { class: 'small muted', style: { margin: '0 0 8px' } }, `${num(d.pending)} photograph(s) will be described after the next indexing run (or now: the button).`) : null,
+        'Describe photographs while they are indexed'),
+      d.auto && d.pending && !taskActive() ? h('p', { class: 'small muted', style: { margin: '0 0 8px' } }, `${num(d.pending)} photograph(s) are not described yet: the next indexing run catches them up (or now: the button).`) : null,
       d.failed ? h('p', { class: 'small muted', style: { margin: '0 0 8px' } }, `${num(d.failed)} photograph(s) the model could not describe are not tried again automatically; "Describe now" tries them.`) : null,
       h('div', { class: 'row' }, h('span', { class: 'small' }, 'Model:'), sel,
         h('button', { class: 'btn small primary', disabled: busy || !d.pending || !d.downloaded, on: { click: () => describePhotos(0) } }, d.pending ? `Describe ${num(d.pending)} now` : 'All described'),
         h('button', { class: 'btn small', disabled: busy || !d.pending || !d.downloaded, title: 'a trial on the first ten', on: { click: () => describePhotos(10) } }, 'Try 10')),
       !d.downloaded ? h('p', { class: 'small muted', style: { margin: '8px 0 0' } }, 'This model is not downloaded: ', h('code', null, 'rag-search models download ' + d.model)) : null,
-      h('p', { class: 'small muted', style: { margin: '8px 0 0' } }, 'About 2.5 seconds a photograph with the 8B model and 1.5 with the 4B. Each description is cached by the photograph, the model and the prompt, so downloading map data or refreshing places never describes a photograph again. Only photographs are described; a photographed page is read as text. With about 8 GB of memory short, it waits for the next run.'));
+      h('p', { class: 'small muted', style: { margin: '8px 0 0' } }, 'About 2.5 seconds a photograph with the 8B model and 1.5 with the 4B. Each description is cached by the photograph, the model and the prompt, so downloading map data or refreshing places never describes a photograph again. Only photographs are described; a photographed page is read as text. With about 8 GB of memory short, the photograph is indexed without a description and caught up later.'));
   }
 
   function taskCard() {

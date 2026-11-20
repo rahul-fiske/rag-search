@@ -27,8 +27,8 @@ class RegistryTests(unittest.TestCase):
         for s in stages.ALL:
             if s.parent:
                 self.assertIn(s.parent, stages.BY_ID, s.id)
-        self.assertEqual([s.id for s in stages.INDEXING if not s.parent], [str(i) for i in range(1, 10)])
-        self.assertEqual([s.id for s in stages.children("3")], ["3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7", "3.8"])
+        self.assertEqual([s.id for s in stages.INDEXING if not s.parent], [str(i) for i in range(1, 9)])
+        self.assertEqual([s.id for s in stages.children("3")], ["3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7", "3.8", "3.9"])
         self.assertEqual([s.id for s in stages.SEARCH], ["S1", "S2", "S3", "S4", "S5", "S6"])
 
     def test_every_tunable_belongs_to_exactly_one_stage(self):
@@ -68,7 +68,7 @@ class RegistryTests(unittest.TestCase):
     def test_the_indexer_and_model_settings_sit_in_the_stage_that_reads_them(self):
         want = {"indexer.chunk_size": "4", "indexer.chunk_overlap": "4", "indexer.ocr": "3.2", "indexer.vlm": "3.2",
                 "indexer.repair": "3.4", "models.repair": "3.4", "models.embed_batch": "5", "models.device": "5",
-                "search.rrf_k": "S4", "models.rerank_batch": "S5", "search.top_k": "S6", "models.describe": "9"}
+                "search.rrf_k": "S4", "models.rerank_batch": "S5", "search.top_k": "S6", "models.describe": "3.9"}
         for setting, sid in want.items():
             self.assertEqual(stages.owner_of(setting).id, sid, setting)
 

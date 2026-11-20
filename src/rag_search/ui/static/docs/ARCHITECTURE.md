@@ -285,7 +285,7 @@ One numbered list of stages describes a document's way into the index and a quer
 numbers are the same everywhere: the progress events of a run (`stage` events carry `id`), the indexer's
 log lines ("3 Convert started", "2 Fingerprint unchanged: skipped"), `rag-search index` output, the
 Architecture tab's diagram, the Indexing tab ("Settings in effect, by pipeline stage"), the Settings tab
-(one card per stage; the steps 3.1-3.8 are cards inside 3 Convert, and 3.2 Read has one card for the router and one
+(one card per stage; the steps 3.1-3.9 are cards inside 3 Convert, and 3.2 Read has one card for the router and one
 for each lane), the page traces, the Playground and this document.
 `stages.py` (stdlib only) is the registry: each `Stage` has its number, key, name, scope, where it runs, a
 one-line description, the settings it owns (`section.key` of `config.json`, the keys the Settings tab edits)
@@ -298,7 +298,7 @@ the Settings tab, the Indexing tab's "Settings in effect" and a Playground exper
 per group, so it is plain which setting acts on which lane. `tests/test_stages.py` checks that every tunable belongs
 to exactly one stage, that every setting and variable of a grouped stage is in exactly one group, that every environment variable listed is really read, and that the browser's copy of the keys
 (`ui/static/pipeline.js`) equals the registry. Conversion is not a side branch: 3 Convert is a stage like
-the others, with its steps 3.1-3.8 numbered inside it: 3.1-3.5 are for pages; 3.0 Sniff comes first and decides, from the file itself, which path a file takes; 3.6 Photo details, 3.7 Locate and 3.8 Timeline are the paths of a photograph and of a Google Maps Timeline `.json` (3.1-3.5 are for pages), drawn in the Architecture diagram and on the Indexing tab's Convert picture, recorded as the page branches `photo` and `timeline` and as `stage` events with the ids 3.0 (with the `route` it chose), 3.6, 3.7 and 3.8; only pages are profiled (3.1), and the plan a run announces says `photo` or `timeline` for the others. 9 Describe is not inside a run (see 5.3b).
+the others, with its steps 3.1-3.9 numbered inside it: 3.1-3.5 are for pages; 3.0 Sniff comes first and decides, from the file itself, which path a file takes; 3.6 Photo details, 3.7 Locate and 3.9 Describe are the path of a photograph and 3.8 Timeline and 3.7 Locate that of a Google Maps Timeline `.json` (3.1-3.5 are for pages), drawn in the Architecture diagram and on the Indexing tab's Convert picture, recorded as the page branches `photo` and `timeline` and as `stage` events with the ids 3.0 (with the `route` it chose), 3.6, 3.7, 3.8 and 3.9; only pages are profiled (3.1), and the plan a run announces says `photo` or `timeline` for the others. 3.9 Describe is described in 5.3b.
 
 Indexing (one run; 3.2 has four lanes, chosen per page by the router: 3.2a docling on the text layer, 3.2b
 OCR for a clean scan, 3.2c docling on the text layer plus the document reader on its pictures and regions, 3.2d
@@ -318,12 +318,12 @@ the document reader for every other scan and image; a page a cheaper lane doubts
 | 3.6 | Photo details (optional) | CPU | document | a photograph (3.0 decided) is indexed from a section of facts, never read by the document reader: time and zone, GPS, camera, faces Apple Vision counts, text found in the picture, a cached description; a photographed page goes down the lanes and gets the same section at the end | – |
 | 3.7 | Locate (optional) | CPU | document | for every position: the Overture area, the GeoNames town and the Overture places within 100 m, from the map data that is installed (nothing is downloaded here) | – |
 | 3.8 | Timeline (optional) | CPU | document | a Google Maps Timeline `.json` (recognised by its content) becomes a day-by-day log of visits and journeys with `geo:` positions and Google place IDs as they are | – |
+| 3.9 | Describe (optional) | GPU | document | a photograph (3.0 decided) is described by a vision model after 3.7 and before 4 Chunk: a short description written into its record, marked as machine-written, so it is chunked and embedded once, complete. One process holds the model (image files are converted one after another in the run's own process, after the documents); cached by photograph, model and prompt. Left undescribed for now when memory is short or the model is missing: a pass after the run catches up | `models.describe`, `models.describe_auto` |
 | 4 | Chunk | CPU | document | split the Markdown into passages that never cross a page; tables and code stay whole where they fit | `indexer.chunk_size`, `indexer.chunk_overlap` |
 | 5 | Embed | GPU | run | turn every new passage into a vector; the model is loaded once per run, after all documents are converted | `models.embedding`, `models.embed_batch`, `models.max_seq`, `models.dtype`, `models.device` |
 | 6 | Write | CPU | document | nodes.json and embeddings.npy, then index.meta.json last, so a half-written document is never taken for a finished one | – |
 | 7 | Merge | CPU | collection | concatenate the documents' vectors into the collection's index for search (nothing is re-embedded) | – |
 | 8 | Publish | CPU | collection | hard-link the new generation, switch the "current" symlink, tell the search daemon to reload; the last three generations are kept | `indexer.auto_publish` |
-| 9 | Describe (optional, after a run) | GPU | document | not inside a run: after a run has published, a vision model describes the photographs that have no description by the current model, in one process in the background, and a short run embeds it (4, 5, 6). Cached by photograph, model and prompt | `models.describe`, `models.describe_auto` |
 
 Search (one query):
 
@@ -1029,18 +1029,23 @@ processes, runs without downloading models.
   like one of the three export shapes is written as a day-by-day log (visits and journeys with times, `geo:`
   positions, the Google place ID as it is, the `geo.py` lines); any other `.json` goes to the generic JSON converter.
 
-### 5.3b Photo descriptions (`core/describe.py`, step 9)
+### 5.3b Photo descriptions (`core/describe.py`, step 3.9)
 
-* **A step of its own, started by itself after a run** (`IndexerDaemon._auto_describe`, once the run has published, so the photographs
-  are already searchable by metadata; also the Models tab's *Photo descriptions* card and `rag-search photos describe [--collection C]
-  [--limit N] [--redo]`; a `model_tasks` task with `op: "describe"`). The model of several GB runs in **one** process, which a
-  run's several conversion processes could not afford, in the background, so a run is never held up. `describe.wanted_automatically`
-  says when to start it: the switch `models.describe_auto` (default on; `RAG_SEARCH_DESCRIBE_AUTO`, `rag-search photos auto on|off`)
-  is on, this is an Apple Silicon Mac, the model is downloaded and some photograph is pending. `models.describe` chooses the
-  8B (default) or the 4B (`rag-search photos model NAME`).
-* **Quiet when it cannot**: a machine short of free memory defers (`deferred` in the result, no failure; the photographs wait for the next
-  run); a photograph the model could not describe is recorded in the cache's `failed` table for that model and prompt and is not tried
-  again by the automatic step (a describe run started by hand tries it again), so describe -> embed run -> describe cannot loop.
+* **Step 3.9 of the photograph's own way through a run**, between 3.7 Locate and 4 Chunk (`describe.for_indexing`, called from
+  `_prepare_document` for a photograph that is converted now): the photograph is described, then chunked and embedded once, complete,
+  and published with everything else; the run takes as long as it takes. The model of several GB is held by **one** process: image
+  files are converted one after another in the run's own process, after the parallel pool has done the documents, and the model is
+  released (`describe.close_shared`) before the embedder loads. `models.describe` chooses the 8B (default) or the 4B
+  (`rag-search photos model NAME`); the switch `models.describe_auto` (default on; `RAG_SEARCH_DESCRIBE_AUTO`,
+  `rag-search photos auto on|off`) turns it off.
+* **A catch-up pass** for photographs indexed without a description (memory was short, the model was not downloaded) or with another
+  model or prompt (`IndexerDaemon._auto_describe`, after a run has published; the Models tab's *Photo descriptions* card and
+  `rag-search photos describe [--collection C] [--limit N] [--redo]`; a `model_tasks` task with `op: "describe"`): one process, in the
+  background, then a short run embeds the new lines. `describe.wanted_automatically` says when it starts: the switch is on, this is an
+  Apple Silicon Mac, the model is downloaded and some photograph is pending.
+* **Quiet when it cannot**: a machine short of free memory, or without the model, leaves the photograph undescribed for now (no
+  failure; the `describe` stage event says why); a photograph the model could not describe is recorded in the cache's `failed` table
+  for that model and prompt and is not tried again automatically (a describe run started by hand tries it again), so nothing loops.
 * **What it writes**: lines in the photograph's *Photo details* section, marked as machine-written (`Looks like`, `Things seen`,
   `People in the picture (model count)`, `Described by: <model>, prompt <version>`), plus Apple Vision's `Faces detected`. A word
   filter drops the guesses the model still makes (seasons, weather, indoors or outdoors). Tried on 38 photographs: main subject
@@ -1050,7 +1055,7 @@ processes, runs without downloading models.
   photograph's checksum, the model and the prompt version; `photo.attach` carries the description lines over when the section is
   renewed (a map refresh rewrites only the place lines); a photograph converted again (a full rebuild) gets its description back from the
   cache while it is converted, without the model. A new model or prompt makes the photographs candidates again.
-* **Embedding**: describing marks the photograph's index entry out of date and starts `index new`, which reuses the Markdown and embeds the new text.
+* **Embedding**: inside a run the description is part of the photograph's text when it is chunked, so it is embedded once; the catch-up pass marks the photograph's index entry out of date and starts `index new`, which reuses the Markdown and embeds the new text.
 
 ### 5.4 Playground (`core/playground.py`)
 

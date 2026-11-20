@@ -115,7 +115,7 @@
     const lane = (k, y, title, l1, l2, hwk) => [
       dbox(420, y, 340, 70, title, [l1, l2], k === 'd' ? 'hl' : (rw[k] ? 'hl' : null)), hwchip(718, y + 6, hwk)];
     return dsvg('idx', 1180, 1125,
-      'The indexing pipeline as one numbered list. 1 Discover lists the files of every collection; 2 Fingerprint skips unchanged documents; 3 Convert turns a file into page-marked Markdown. Documents go page by page through 3.1 Profile looks at every page, 3.2 Read sends each page down one of four lanes (a: docling on the text layer, b: OCR for a clean scan, c: the text layer plus the document reader on pictures, d: the document reader for every other scan and photo; a page a cheaper lane doubts goes on to d), 3.3 Gate checks the result, 3.4 Repair re-reads a suspect table cell of a scanned page, 3.5 Reconcile joins tables that run across pages. 3.0 Sniff decides, from the file itself and before any page is looked at, what kind of file this is: a photograph (an image with camera data and little text) takes 3.6 Photo details and is indexed from its details, a Google Maps Timeline .json takes 3.8 Timeline, anything else, a photographed page too, goes to 3.1 Profile and the lanes; the first two use 3.7 Locate for every position (area, town, places nearby from the installed map data). 9 Describe runs by itself after a run has published and writes a machine-written description of each photograph. Then 4 Chunk, 5 Embed with the model loaded once per run, 6 Write, 7 Merge per collection and 8 Publish.',
+      'The indexing pipeline as one numbered list. 1 Discover lists the files of every collection; 2 Fingerprint skips unchanged documents; 3 Convert turns a file into page-marked Markdown. Documents go page by page through 3.1 Profile looks at every page, 3.2 Read sends each page down one of four lanes (a: docling on the text layer, b: OCR for a clean scan, c: the text layer plus the document reader on pictures, d: the document reader for every other scan and photo; a page a cheaper lane doubts goes on to d), 3.3 Gate checks the result, 3.4 Repair re-reads a suspect table cell of a scanned page, 3.5 Reconcile joins tables that run across pages. 3.0 Sniff decides, from the file itself and before any page is looked at, what kind of file this is: a photograph (an image with camera data and little text) takes 3.6 Photo details, 3.7 Locate and 3.9 Describe and is never read by the document reader, a Google Maps Timeline .json takes 3.8 Timeline and 3.7 Locate, anything else, a photographed page too, goes to 3.1 Profile and the lanes. 3.7 Locate gives every position its area, town and places nearby from the installed map data; 3.9 Describe, after it and before 4 Chunk, writes a machine-written description of the photograph. Then 4 Chunk, 5 Embed with the model loaded once per run, 6 Write, 7 Merge per collection and 8 Publish.',
       dhead(20, 24, 'PER RUN, THEN PER DOCUMENT'),
       dbox(20, 40, 170, 90, '1 · Discover', ['every collection:', 'registered folders', 'and imports'], 'store'),
       dbox(240, 40, 180, 90, '2 · Fingerprint', ['SHA-256 of the file +', 'chunk, model and', 'conversion settings'], 'hl'),
@@ -151,17 +151,20 @@
       sv('text', { x: 36, y: 514, class: 's' }, 'A page that lane a, b or c doubts after the gate is read again by lane d (b tries Tesseract first). Outcome per page: pass · repaired · low confidence (kept, flagged) · no text · error.'),
       sv('text', { x: 36, y: 532, class: 's' }, 'A photographed page (camera data and a page of text) takes this path too, and gets the photo details (3.6, 3.7) added at the end.')),
       sv('g', { transform: 'translate(0,150)' },
-      // 3.6 .. 3.8 and 9: the paths of what is not a page
+      // 3.6 .. 3.9: the paths of what is not a page
       sv('line', { x1: 40, y1: 534, x2: 1140, y2: 534, class: 'edge dash' }),
       dhead(36, 556, 'PHOTOGRAPHS AND GOOGLE TIMELINE FILES · the path 3.0 chose · 3.1–3.5 are for pages'),
-      dbox(40, 586, 240, 84, '3.6 · Photo details', ['time + zone · GPS · camera', 'faces counted (Apple Vision)', nPhoto ? `${num(nPhoto)} photographs this run` : 'a cached description is kept'], 'hl'), hwchip(238, 592, 'cpu'),
-      E('M280,628 H452', 'details + position', 366, 620),
-      dbox(40, 712, 240, 64, '3.8 · Timeline', ['recognised by its content', nTl ? `${num(nTl)} timeline files this run` : 'a day-by-day log'], 'hl'), hwchip(238, 718, 'cpu'),
-      E('M280,742 H452', 'positions', 366, 734),
-      dbox(456, 586, 230, 176, '3.7 · Locate', ['for every position:', 'the Overture area it is in', 'the GeoNames town it is near', 'the Overture places within 100 m', '(candidates, with distances)', 'only the map data installed;', 'nothing is downloaded here'], 'hl'), hwchip(644, 592, 'cpu'),
-      dbox(730, 586, 220, 84, 'Map data', ['GeoNames · Overture areas', 'Overture places, by cell', 'downloaded only on request'], 'store'),
-      E('M730,628 H690', 'read', 710, 620),
-      dbox(984, 586, 166, 176, '9 · Describe', ['after a run, by itself:', 'a vision model writes', 'a short description of', 'each photograph, marked', 'as machine-written, in', 'the background; then a', 'short run embeds it'], 'dim'), hwchip(1108, 592, 'gpu')),
+      dbox(40, 586, 220, 84, '3.6 · Photo details', ['time + zone · GPS · camera', 'faces counted (Apple Vision)', nPhoto ? `${num(nPhoto)} photographs this run` : 'text found in the picture'], 'hl'), hwchip(218, 592, 'cpu'),
+      E('M260,628 H296', null),
+      dbox(300, 586, 230, 176, '3.7 · Locate', ['for every position:', 'the Overture area it is in', 'the GeoNames town it is near', 'the Overture places within 100 m', '(candidates, with distances)', 'only the map data installed;', 'nothing is downloaded here'], 'hl'), hwchip(488, 592, 'cpu'),
+      E('M530,628 H566', null),
+      dbox(570, 586, 250, 124, '3.9 · Describe', ['a vision model writes a short', 'description of the photograph,', 'marked machine-written; one', 'process holds the model;', 'cached by photo, model, prompt'], 'hl'), hwchip(778, 592, 'gpu'),
+      dbox(40, 712, 220, 64, '3.8 · Timeline', ['recognised by its content', nTl ? `${num(nTl)} timeline files this run` : 'a day-by-day log'], 'hl'), hwchip(218, 718, 'cpu'),
+      E('M260,744 H296', null),
+      dbox(570, 730, 250, 64, 'Map data', ['GeoNames · Overture areas, places', 'downloaded only on request'], 'store'),
+      E('M570,762 H534', 'read', 552, 754),
+      dbox(860, 586, 290, 124, 'Catch-up pass', ['after a run publishes: photographs', 'left undescribed (memory short, model', 'missing) or described by an older', 'model or prompt are described in the', 'background; then a short run embeds them'], 'dim'),
+      E('M860,640 H824', null, null, null, null, true)),
       sv('text', { x: 126, y: 964, class: 's' }, 'page-marked Markdown + a trace of every page'), E('M115,942 V996', null),
       // 4 .. 8
       sv('g', { transform: 'translate(0,425)' },
@@ -213,7 +216,7 @@
     const c = A.chunking;
     return [
       card('The indexing pipeline, one numbered list', 'the same numbers are used in the Indexing tab, Settings, page traces and logs',
-        figure(pipelineDiagram(), 'Each document is handled on its own: fingerprinted, then converted and chunked only if something changed. 3.0 Sniff first decides what kind of file it is: a document goes page by page (3.1–3.5); a photograph (an image with camera data and little text) takes 3.6 and is never read by the document reader; a Google Timeline .json takes 3.8; both use 3.7 for every position. 9 Describe runs after a run has published, by itself, in the background. The embedding model is loaded once per run for all new chunks. index.meta.json is written last, so a half-written document is never mistaken for a finished one, and nothing becomes searchable until publish.'),
+        figure(pipelineDiagram(), 'Each document is handled on its own: fingerprinted, then converted and chunked only if something changed. 3.0 Sniff first decides what kind of file it is: a document goes page by page (3.1–3.5); a photograph (an image with camera data and little text) takes 3.6, 3.7 and 3.9 and is never read by the document reader; a Google Timeline .json takes 3.8 and 3.7. 3.9 Describe writes a machine-written description of a photograph after 3.7 and before 4 Chunk; a catch-up pass after the run describes what was left. The embedding model is loaded once per run for all new chunks. index.meta.json is written last, so a half-written document is never mistaken for a finished one, and nothing becomes searchable until publish.'),
         h('ul', { class: 'tight' },
           h('li', null, h('b', null, 'Chunks: '), `split at the page markers, so a chunk never straddles two pages; tables and code are kept whole where they fit; packed to about ${c.size} estimated tokens with about ${c.overlap} of overlap; each records page, nearest heading and source.`),
           h('li', null, h('b', null, 'Keyword index: '), `built in memory by the search daemon from the chunk text, not stored. Compound tokens such as `, code('9.16.1'), ` are kept whole and also split, so identifiers and their parts both match (BM25, k1 ${A.keyword.k1}, b ${A.keyword.b}).`)),
@@ -225,7 +228,7 @@
           ['embedding model', '5 embed · 6 write (chunks are reused)'],
           ['conversion settings (OCR, tables, routing, a lane switched on, the document reader or repair switched off)', '3 convert · 4 chunk · 5 embed · 6 write (pages come from the page cache)'],
           ['map data downloaded or updated (Models tab, Maps) · Refresh places', '3.7 locate again, only for the photographs and Timeline files whose map cells changed · 4 chunk · 5 embed · 6 write (a photograph is updated in place: its picture is not read again, its description is kept)'],
-          ['a photograph description (Describe, or a new model or prompt)', '9 describe · 4 chunk · 5 embed · 6 write (cached by photograph, model and prompt; nothing else is converted again)'],
+          ['a photograph description (a new model or prompt, or a photograph left undescribed)', '3.9 describe · 4 chunk · 5 embed · 6 write (cached by photograph, model and prompt; nothing else is converted again)'],
           ['nothing', '2 fingerprint only: skipped, seconds for a whole collection']]))];
   }
 

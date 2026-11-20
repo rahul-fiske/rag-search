@@ -14,11 +14,16 @@ weather, indoors or outdoors).  It was tried on 38 of the Ranthambore photograph
 the 8B model made no false statement (the 4B about one photograph in twelve), but a model can still be wrong, which is why
 the lines say so.
 
-Describing is a step of its own (``rag-search photos describe``, the Models tab), not part of indexing: it loads a model of
-several GB, so it runs in one process, can be stopped and picked up again, and a map refresh never repeats it.  Each result
-is also kept in ``<workspace>/describe_cache.sqlite`` under the photograph's checksum, the model and the prompt version,
-so converting the photograph again (a full rebuild) puts the description back without running the model.  A photograph
-counts as one when its Markdown holds little text beyond the details section (a photographed page is read, not described).
+Describing is a step of the photograph's own way through a run, after 3.7 Locate and before 4 Chunk (step 3.9): the
+photograph is described, then chunked and embedded once, complete, and published with everything else.  The model of several
+GB is held by one process, the run's own: image files are converted one after another there (``indexer``), after the
+parallel pool has done the documents, and the model is released before the embedder loads.  A machine short of memory, or
+without the model, simply leaves the photograph undescribed for now; ``rag-search photos describe`` and the pass that follows
+a run (``IndexerDaemon._auto_describe``) catch up photographs that were indexed without a description, or with another model
+or prompt.  Each result is also kept in ``<workspace>/describe_cache.sqlite`` under the photograph's checksum, the model and
+the prompt version, so converting the photograph again (a full rebuild) puts the description back without running the model,
+and a map refresh carries it over.  A photograph counts as one when its Markdown holds little text beyond the details
+section (a photographed page is read, not described).
 The face count is Apple Vision's (a count, never who it is).
 """
 
@@ -331,22 +336,93 @@ def status(paths: Paths, collection: str = "") -> dict[str, Any]:
             "pending": len(groups["pending"]), "unavailable": available()}
 
 
-def indexing_lines(paths: Paths, src: Path, sha: str) -> list[str]:
-    """What is added to a photograph's section while it is converted: a description from the cache (never a model run) and
-    Apple Vision's face count."""
-    out = restore_lines(paths, sha)
-    tmp = Path(tempfile.mkdtemp(prefix="rag-faces-"))
+_SHARED: Any = None                  # this process's reader of the describe model (tests put a stand-in here)
+
+
+def inline_ready() -> str:
+    """"" when a photograph can be described while it is indexed, else why not (the switch is off, this machine cannot, the
+    model is not downloaded)."""
+    if not models.describe_auto():
+        return "describing is switched off"
+    why = available()
+    if why:
+        return why
+    model = models.describe_selection()[0]
+    if not models.cache_state(model)["cached"]:
+        return f"the model {model} is not downloaded"
+    return ""
+
+
+def shared_reader() -> Any:
+    """The reader of the describe model in this process, made on first use (the model loads on the first photograph)."""
+    global _SHARED
+    if _SHARED is None:
+        from .conversion import vlm
+
+        model, need = models.describe_choice()
+        _SHARED = vlm.VlmReader(model, style="instruct", need_gb=need)
+    return _SHARED
+
+
+def close_shared() -> None:
+    """Release the model (the run calls this when the image files are done, before the embedder loads)."""
+    global _SHARED
+    if _SHARED is not None:
+        with contextlib.suppress(Exception):
+            _SHARED.close()
+        _SHARED = None
+
+
+def for_indexing(paths: Paths, src: Path, sha: str) -> tuple[list[str], dict[str, Any]]:
+    """The lines a photograph gets while it is converted, after Locate: Apple Vision's face count and the description, from
+    the cache or from the model (loaded once per process).  Returns (lines, info): ``info["described"]`` is ``model``,
+    ``cache`` or ``""``, ``info["why"]`` says why a description is missing (memory, model, a photograph the model could not
+    describe).  Nothing here fails a photograph."""
+    from .conversion import vlm
+
+    info: dict[str, Any] = {"described": "", "why": "", "seconds": 0.0}
+    made_by = current_id()
+    tmp = Path(tempfile.mkdtemp(prefix="rag-describe-"))
+    out: list[str] = []
     try:
-        n = photo.faces_in(render(src, tmp / "p.png"))
-    except Exception:  # noqa: BLE001 - a picture that cannot be rendered has no count
-        n = None
+        try:
+            image = render(src, tmp / "p.png")
+        except Exception as exc:  # noqa: BLE001 - a picture that cannot be rendered has no face count and no description
+            info["why"] = f"the picture could not be rendered ({type(exc).__name__})"
+            return restore_lines(paths, sha), info
+        n = photo.faces_in(image)
+        rec = cached(paths, sha, made_by)
+        if rec is not None:
+            info["described"] = "cache"
+        elif sha in failures(paths, made_by):
+            info["why"] = "the model could not describe this photograph before"
+        else:
+            info["why"] = inline_ready()
+            if not info["why"]:
+                t0 = time.perf_counter()
+                try:
+                    rec = describe_image(shared_reader(), image)
+                    if rec["description"]:
+                        remember(paths, sha, made_by, rec)
+                        info["described"] = "model"
+                    else:
+                        remember_failure(paths, sha, made_by, "the model wrote no description")
+                        info["why"], rec = "the model wrote no description", None
+                except vlm.ReaderUnavailable as exc:      # short of memory (or the reader cannot start): not this photograph's fault
+                    info["why"], rec = str(exc), None
+                except vlm.ReaderError as exc:
+                    remember_failure(paths, sha, made_by, str(exc)[:200])
+                    info["why"], rec = f"the model failed on it ({str(exc)[:120]})", None
+                info["seconds"] = round(time.perf_counter() - t0, 2)
+        if rec is not None:
+            out = lines(rec, made_by)
+        if n is not None:
+            out.append(f"{FACES} {n}")
+        return out, info
     finally:
         import shutil
 
         shutil.rmtree(tmp, ignore_errors=True)
-    if n is not None:
-        out.append(f"{FACES} {n}")
-    return out
 
 
 # ── the work ─────────────────────────────────────────────────────────────────

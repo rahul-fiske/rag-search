@@ -21,7 +21,6 @@ Indexing (one run)::
     6  Write           nodes.json, embeddings, index.meta.json    (document)
     7  Merge           per-collection index for search            (collection)
     8  Publish         swap the serving generation                (collection)
-    9  Describe        a vision model describes each photograph   (document; after a run, then 4-6 again)
 
 Search (one query): S1 Access, S2 Keyword, S3 Vectors, S4 Fuse, S5 Rerank, S6 Top k.
 
@@ -169,6 +168,15 @@ INDEXING: tuple[Stage, ...] = (
           "ID as it is, and the 3.7 lines; a .json that is not one (3.0 found out, or the file proved not to be) is read as "
           "plain structured text",
           optional=True),
+    Stage("3.9", "describe", "Describe", DOCUMENT, GPU,
+          "a photograph is described by a vision model, after 3.7 Locate and before 4 Chunk: a short description written into its "
+          "record, marked as machine-written, with Apple Vision's face count, so it is chunked and embedded once, complete. "
+          "One process holds the model (image files are converted one after another in the run's own process, after the "
+          "documents; the model is released before the embedder loads). Cached by the photograph, the model and the prompt, so "
+          "a map refresh or a rebuild never repeats it. Left undescribed for now when memory is short or the model is missing: "
+          "the pass after a run, and `rag-search photos describe`, catch up",
+          settings=("models.describe", "models.describe_auto"), optional=True,
+          constants=(("photographs of the test described without a false statement (8B)", "38 of 38"),)),
     Stage("4", "chunk", "Chunk", DOCUMENT, CPU,
           "split the Markdown into passages that never cross a page; tables and code stay whole where they fit",
           settings=("indexer.chunk_size", "indexer.chunk_overlap")),
@@ -185,13 +193,6 @@ INDEXING: tuple[Stage, ...] = (
     Stage("8", "publish", "Publish", COLLECTION, CPU,
           "hard-link the new generation, switch the \"current\" symlink, tell the search daemon to reload; the "
           "last three generations are kept", settings=("indexer.auto_publish",), constants=(("generations kept", 3),)),
-    Stage("9", "describe", "Describe", DOCUMENT, GPU,
-          "not inside a run: after a run has published, the photographs that have no description by the current model are "
-          "described in the background (one process; switch and model on the Models tab; `rag-search photos describe` does "
-          "it by hand): a vision model writes a short description into the photograph's record, marked as machine-written, and "
-          "a short run (4, 5, 6) embeds it. Cached by the photograph, the model and the prompt, so a map refresh or a rebuild "
-          "never repeats it",
-          settings=("models.describe", "models.describe_auto"), optional=True, constants=(("photographs of the test described without a false statement (8B)", "38 of 38"),)),
 )
 
 SEARCH: tuple[Stage, ...] = (

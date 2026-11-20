@@ -229,6 +229,15 @@ def _carry(old: str, new: str) -> str:
     return head + "\n" + "\n".join(kept) + (sep + tail if sep else "") + "\n"
 
 
+def insert_extra(section: str, extra: Sequence[str]) -> str:
+    """*section* with the lines of *extra* just before its Reference data line (at the end without one)."""
+    if not extra:
+        return section
+    head, sep, tail = section.rstrip("\n").rpartition("\n- Reference data")
+    body = "\n".join(f"- {x}" for x in extra)
+    return (head + "\n" + body + sep + tail if sep else section.rstrip("\n") + "\n" + body) + "\n"
+
+
 def set_extra(md_path: Path, extra: Sequence[str]) -> bool:
     """Put the lines of *extra* (each starts with one of the ``_KEEP`` labels) into the Photo details section of an
     existing Markdown file, replacing the lines that have the same label; nothing else in the file changes.  True when

@@ -40,6 +40,7 @@ from ..paths import (
     MERGE_MANIFEST,
     META_FILE,
     NODES_FILE,
+    IMAGE_EXTENSIONS,
     PASSTHROUGH_EXTENSIONS,
     IndexBusyError,  # noqa: F401 - re-exported: callers catch indexer.IndexBusyError
     Paths,
@@ -670,8 +671,7 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         photograph = route == "photograph" and not reused_md      # made now: only its details are indexed
         photo_section = ""
         if meta:
-            photo_section = (photo.block(src, get_paths(), seen or "", describe.indexing_lines(get_paths(), src, sha))
-                             if photograph and not reused_md else photo.block(src, get_paths()))
+            photo_section = photo.block(src, get_paths(), seen or "") if photograph else photo.block(src, get_paths())
         if photo_section:
             loc_s = float(photo.LAST.get("locate_s") or 0.0)
             stage_event(slog, rel_name, "photo", "done", seconds=round(max(0.0, time.perf_counter() - t_ph - loc_s), 2),
@@ -679,6 +679,14 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
             if "- Area:" in photo_section or "- Town:" in photo_section:
                 stage_event(slog, rel_name, "locate", "done", seconds=round(loc_s, 3),
                             nearby="- Nearby:" in photo_section)
+        if photograph:                                 # 3.9 Describe: after Locate, before Chunk (the face count goes with it)
+            t_de = time.perf_counter()
+            extra, dinfo = describe.for_indexing(get_paths(), src, sha)
+            photo_section = photo.insert_extra(photo_section, extra)
+            stage_event(slog, rel_name, "describe", "done", seconds=round(time.perf_counter() - t_de, 2),
+                        source=dinfo["described"] or "none", why=dinfo["why"], model_s=dinfo["seconds"])
+            if not dinfo["described"] and dinfo["why"]:
+                route_note = f"not described now ({dinfo['why'][:120]}); a later pass picks it up"
         try:
             if photograph:
                 raise NoTextError("a photograph: only its details are indexed")
@@ -1560,19 +1568,27 @@ def run_index(
         if stage_log:                                 # with a limit of 0 it stops nothing, and still knows what is open
             watch = stallwatch.StallWatch(Path(str(stage_log)), limit).start(_on_stall)
         try:
-            if jobs > 1 and total > 1:
-                _convert_in_pool(tasks, min(jobs, total), _collect, watch=watch, stalled=stalled, rel_src=rel_src,
+            # Image files are converted one after another in this process, after the pool has done the documents: a
+            # photograph is described by a vision model of several GB (3.9), which one process must hold, and the images
+            # that go to the document reader are bound to the same GPU anyway.
+            images = [t for t in tasks if Path(t["src"]).suffix.lower() in IMAGE_EXTENSIONS]
+            others = [t for t in tasks if t not in images]
+            if jobs > 1 and len(others) > 1:
+                _convert_in_pool(others, min(jobs, len(others)), _collect, watch=watch, stalled=stalled, rel_src=rel_src,
                                  stage_log=stage_log)
             else:
-                for t in tasks:
+                for t in others:
                     _collect(prepare_document(t))
+            for t in images:
+                _collect(prepare_document(t))
         finally:
             if watch is not None:
                 watch.stop()
 
         phase_s["convert"] = round(time.perf_counter() - t_phase, 1)
         _sink({"phase_event": {"phase": "convert", "status": "done", "total": total, "seconds": phase_s["convert"]}})
-        vlm.close_shared()                 # conversion is over: free the reader's memory before the embedder loads
+        vlm.close_shared()                 # conversion is over: free the readers' memory before the embedder loads
+        describe.close_shared()
 
         # Phase 2 — embeddings (one model, this process)
         indexed = 0

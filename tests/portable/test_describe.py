@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from unittest import mock
 
-from tests.portable.test_maps import fake_reader as fake_overture
+from tests.portable.test_maps import fake_reader
 from tests.portable.test_photo import IndexedPhotoTests, jpeg
 from tests.portable.test_ui import Dash
 
@@ -128,7 +128,7 @@ class DescribeRunTests(IndexedPhotoTests):
         describe.describe_all(self.paths, reader=model)
         self.run_index()
         maps.write_stamp(self.paths, md, md.read_text(encoding="utf-8"))
-        maps.download_overture(self.paths, ["19.05,78.30"], release="r1", reader=fake_overture())
+        maps.download_overture(self.paths, ["19.05,78.30"], release="r1", reader=fake_reader())
         res = maps.refresh(self.paths)
         self.assertEqual((res["refreshed"], res["in_place"]), (1, 1))
         with mock.patch.object(photo, "visible_text", side_effect=AssertionError("the picture must not be read")):
@@ -221,6 +221,20 @@ class RouteTests(IndexedPhotoTests):
             dash.close()
 
 
+def switch_as_left():
+    """The environment of a test has the automatic switch off (so no test loads the real model); this puts back "as the user left it"
+    (the default, or what config.json says) for the code inside the ``with``."""
+    import contextlib
+    import os
+
+    @contextlib.contextmanager
+    def cm():
+        with mock.patch.dict(os.environ):
+            os.environ.pop("RAG_SEARCH_DESCRIBE_AUTO", None)
+            yield
+    return cm()
+
+
 class AutomaticTests(IndexedPhotoTests):
     """Photographs are described by themselves after an indexing run: the switch, a machine short of memory, a photograph
     the model cannot describe, and the daemon's hook."""
@@ -234,11 +248,12 @@ class AutomaticTests(IndexedPhotoTests):
 
     def test_the_switch_is_on_unless_turned_off(self):
         import os
-        self.assertTrue(models.describe_auto())
-        models.set_describe_auto(self.paths, False)
-        self.assertFalse(models.describe_auto())
-        models.set_describe_auto(self.paths, True)
-        self.assertTrue(models.describe_auto())
+        with switch_as_left():
+            self.assertTrue(models.describe_auto())
+            models.set_describe_auto(self.paths, False)
+            self.assertFalse(models.describe_auto())
+            models.set_describe_auto(self.paths, True)
+            self.assertTrue(models.describe_auto())
         with mock.patch.dict(os.environ, {"RAG_SEARCH_DESCRIBE_AUTO": "off"}):
             self.assertFalse(models.describe_auto())
         models.set_describe_auto(self.paths, False)
@@ -247,7 +262,7 @@ class AutomaticTests(IndexedPhotoTests):
 
     def test_wanted_automatically_says_why_not(self):
         self.photo_md()
-        with mock.patch.object(describe, "available", return_value=""), \
+        with switch_as_left(), mock.patch.object(describe, "available", return_value=""), \
                 mock.patch.object(models, "cache_state", return_value={"cached": True}):
             self.assertEqual(describe.wanted_automatically(self.paths), "")
             models.set_describe_auto(self.paths, False)
@@ -255,9 +270,9 @@ class AutomaticTests(IndexedPhotoTests):
             models.set_describe_auto(self.paths, True)
             describe.describe_all(self.paths, reader=StandIn())
             self.assertIn("every photograph is described", describe.wanted_automatically(self.paths))
-        with mock.patch.object(describe, "available", return_value="needs an Apple Silicon Mac"):
+        with switch_as_left(), mock.patch.object(describe, "available", return_value="needs an Apple Silicon Mac"):
             self.assertIn("Apple Silicon", describe.wanted_automatically(self.paths))
-        with mock.patch.object(describe, "available", return_value=""), \
+        with switch_as_left(), mock.patch.object(describe, "available", return_value=""), \
                 mock.patch.object(models, "cache_state", return_value={"cached": False}):
             self.assertIn("not downloaded", describe.wanted_automatically(self.paths))
 
@@ -319,18 +334,151 @@ class AutomaticTests(IndexedPhotoTests):
 
     def test_route_and_command(self):
         from tests.portable.test_cli_api import run
-        dash = Dash(self.paths)
-        try:
-            status, js, _, _ = dash.req("GET", "/api/photos")
-            self.assertTrue(js["auto"])
-            self.assertEqual(dash.req("POST", "/api/photos/auto", {"on": False})[0], 200)
-            self.assertFalse(models.describe_auto())
-            self.assertEqual(dash.req("POST", "/api/photos/auto", {"on": "yes"})[0], 400)
-        finally:
-            dash.close()
-        rc, out, err = run("photos", "auto", "on")
-        self.assertEqual(rc, 0, err)
-        self.assertTrue(models.describe_auto())
-        rc, out, _ = run("photos", "--json")
-        self.assertTrue(json.loads(out)["auto"])
-        self.assertEqual(run("photos", "auto", "maybe")[0], 2)
+        with switch_as_left():
+            dash = Dash(self.paths)
+            try:
+                status, js, _, _ = dash.req("GET", "/api/photos")
+                self.assertTrue(js["auto"])
+                self.assertEqual(dash.req("POST", "/api/photos/auto", {"on": False})[0], 200)
+                self.assertFalse(models.describe_auto())
+                self.assertEqual(dash.req("POST", "/api/photos/auto", {"on": "yes"})[0], 400)
+            finally:
+                dash.close()
+            rc, out, err = run("photos", "auto", "on")
+            self.assertEqual(rc, 0, err)
+            self.assertTrue(models.describe_auto())
+            rc, out, _ = run("photos", "--json")
+            self.assertTrue(json.loads(out)["auto"])
+            self.assertEqual(run("photos", "auto", "maybe")[0], 2)
+
+
+class InlineDescribeTests(IndexedPhotoTests):
+    """A photograph is described while it is indexed (3.9, after Locate and before Chunk) and embedded once, complete."""
+
+    def setUp(self):
+        super().setUp()
+        self.model = StandIn()
+        describe._SHARED = self.model
+        self.addCleanup(setattr, describe, "_SHARED", None)
+        patch = mock.patch.object(describe, "inline_ready", return_value="")
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def index(self, log=None, **kw):
+        (self.sdir / "c").mkdir(exist_ok=True)
+        if not (self.sdir / "c" / "p.jpg").exists():
+            jpeg(self.sdir / "c" / "p.jpg")
+        srcs = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
+        with mock.patch.object(photo, "visible_text", return_value="EXIT 4"):
+            from tests.helpers import FakeEmbedder
+            return indexer.run_index(self.paths, srcs, self.roots(), jobs=1, embedder=FakeEmbedder(),
+                                     progress=lambda e: None, stage_log=log, **kw)
+
+    def events(self, log):
+        return [json.loads(x) for x in Path(log).read_text(encoding="utf-8").splitlines() if x.strip()]
+
+    def test_one_run_describes_chunks_and_embeds_a_photograph(self):
+        log = self.tmp / "stages.jsonl"
+        self.index(log)
+        md = next(self.paths.markup.rglob("p.md"))
+        text = md.read_text(encoding="utf-8")
+        self.assertIn("- Looks like (model-written): A tiger walks", text)
+        self.assertIn(f"- Described by: {describe.current_id()}", text)
+        self.assertEqual(self.model.calls, 1)
+        nodes = json.loads(next(self.paths.index.rglob("p/nodes.json")).read_text())["nodes"]
+        self.assertTrue(any("A tiger walks" in n["text"] for n in nodes))         # chunked after describing: one pass
+        self.assertTrue((next(self.paths.index.rglob("p")) / "embeddings.npy").exists())
+        order = [e["stage"] for e in self.events(log) if e.get("event") == "stage" and e.get("status") == "done"
+                 and e.get("file", "").endswith("p.jpg")]
+        wanted = ["sniff", "photo", "locate", "describe", "chunk"]
+        positions = [order.index(x) for x in wanted if x in order]
+        self.assertEqual([x for x in order if x in wanted], [x for x in wanted if x in order])      # in this order
+        self.assertIn("describe", order)
+        self.assertEqual(positions, sorted(positions))
+        done = next(e for e in self.events(log) if e.get("stage") == "describe" and e.get("status") == "done")
+        self.assertEqual((done["id"], done["source"]), ("3.9", "model"))
+        self.assertIsNone(describe._SHARED)                                           # the model is released before the embedder loads
+        self.assertEqual(describe.status(self.paths)["described"], 1)
+
+    def test_nothing_is_asked_again_by_a_second_run_a_refresh_or_a_rebuild(self):
+        from rag_search import maps
+        self.index()
+        describe._SHARED = self.model
+        self.index()                                                                  # unchanged: skipped
+        self.assertEqual(self.model.calls, 1)
+        md = next(self.paths.markup.rglob("p.md"))
+        maps.write_stamp(self.paths, md, md.read_text(encoding="utf-8"))
+        maps.download_overture(self.paths, ["19.05,78.30"], release="r1", reader=fake_reader())
+        self.assertEqual(maps.refresh(self.paths)["in_place"], 1)
+        describe._SHARED = self.model
+        self.index()
+        self.assertIn("- Nearby: Hotel Sai Krishna", md.read_text(encoding="utf-8"))
+        self.assertIn("- Looks like (model-written): A tiger walks", md.read_text(encoding="utf-8"))
+        self.assertEqual(self.model.calls, 1)
+        describe._SHARED = self.model
+        md.unlink()
+        self.index(rebuild=True, force_md=True)                                       # converted again: from the cache
+        self.assertIn("- Looks like (model-written): A tiger walks", next(self.paths.markup.rglob("p.md")).read_text(encoding="utf-8"))
+        self.assertEqual(self.model.calls, 1)
+
+    def test_a_photographed_page_is_not_described(self):
+        (self.sdir / "c").mkdir()
+        jpeg(self.sdir / "c" / "page.jpg")
+
+        def convert(src, out, ocr=None):
+            out.write_text("<!-- page 1 -->\n\n" + "The agreement is made between the parties. " * 10 + "\n", encoding="utf-8")
+            return {"pages": 1, "seconds": 0.0}
+        srcs = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
+        with mock.patch.object(photo, "visible_text", return_value="word " * 120), \
+                mock.patch("rag_search.core.docling_convert.convert_file", convert):
+            from tests.helpers import FakeEmbedder
+            indexer.run_index(self.paths, srcs, self.roots(), jobs=1, embedder=FakeEmbedder(), progress=lambda e: None)
+        self.assertEqual(self.model.calls, 0)
+
+    def test_a_machine_short_of_memory_still_indexes_the_photograph_and_leaves_it_for_later(self):
+        from rag_search.core.conversion import vlm
+
+        class NoRoom(StandIn):
+            def ensure_started(self):
+                raise vlm.ReaderUnavailable("only 3.0 GB of memory is free")
+        describe._SHARED = NoRoom()
+        log = self.tmp / "stages.jsonl"
+        res = self.index(log)
+        self.assertEqual(res["errors"], [])
+        md = next(self.paths.markup.rglob("p.md"))
+        self.assertNotIn("Looks like", md.read_text(encoding="utf-8"))
+        self.assertIn("Taken:", md.read_text(encoding="utf-8"))                       # still indexed from its details
+        done = next(e for e in self.events(log) if e.get("stage") == "describe" and e.get("status") == "done")
+        self.assertEqual(done["source"], "none")
+        self.assertIn("3.0 GB", done["why"])
+        self.assertEqual((describe.status(self.paths)["pending"], describe.status(self.paths)["failed"]), (1, 0))
+
+    def test_a_model_that_writes_nothing_is_not_asked_again_for_that_photograph(self):
+        describe._SHARED = StandIn(reply="")
+        self.index()
+        self.assertEqual(describe._SHARED.calls if describe._SHARED else 1, 1) if describe._SHARED else None
+        md = next(self.paths.markup.rglob("p.md"))
+        self.assertNotIn("Looks like", md.read_text(encoding="utf-8"))
+        again = StandIn(reply="")
+        describe._SHARED = again
+        self.index(rebuild=True, force_md=True)
+        self.assertEqual(again.calls, 0)
+        self.assertEqual(describe.status(self.paths)["failed"], 1)
+
+    def test_a_photograph_is_converted_after_the_documents_and_in_this_process(self):
+        (self.sdir / "c").mkdir()
+        (self.sdir / "c" / "a.md").write_text("# T\n\n<!-- page 1 -->\n\nthe text of a document\n", encoding="utf-8")
+        jpeg(self.sdir / "c" / "p.jpg")
+        srcs = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
+        seen = []
+        real = indexer.prepare_document
+
+        def spy(task):
+            seen.append((Path(task["src"]).name, __import__("os").getpid()))
+            return real(task)
+        with mock.patch.object(indexer, "prepare_document", spy), mock.patch.object(photo, "visible_text", return_value=""):
+            from tests.helpers import FakeEmbedder
+            indexer.run_index(self.paths, srcs, self.roots(), jobs=2, embedder=FakeEmbedder(), progress=lambda e: None)
+        names = [n for n, _ in seen]
+        self.assertEqual(names[-1], "p.jpg")                                           # the image comes last
+        self.assertEqual(seen[-1][1], __import__("os").getpid())                       # and in the run's own process
