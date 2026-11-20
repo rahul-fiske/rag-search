@@ -160,7 +160,7 @@ const CV = (function () {
           node('3.8 · Timeline', nTl ? `${num(nTl)} timeline file${nTl === 1 ? '' : 's'} this run` : 'recognised by its content · day-by-day log', 'cpu', nTl ? 'on' : '',
             'A .json that is a Timeline export (phone, semanticSegments or Takeout) is written as one line per visit and journey, with times, geo: positions and the Google place ID as it is. Any other .json is read as plain structured text.'),
           h('span', { class: 'cv-arrow down', 'aria-hidden': 'true' }, '↓'),
-          node('9 · Describe', 'on request: a vision model describes each photograph (Models tab)', 'gpu', 'planned', 'Not part of a run: `rag-search photos describe` or the Models tab writes machine-written lines into the photograph\'s record; the next run embeds them. A map refresh never repeats it.'))));
+          node('9 · Describe', 'after a run, by itself: a vision model describes each photograph', 'gpu', 'planned', 'Not inside a run: when a run has published, the photographs without a description are described in the background (switch and model on the Models tab; `rag-search photos describe` does it by hand), then a short run embeds the lines. A map refresh never repeats it.'))));
     const main = h('div', { class: 'cv-pipe' },
       h('div', { class: 'cv-col' },
         node('3.1 · Profile', t.pages ? `${num(t.pages)} pages looked at` : 'what is on each page', 'cpu', 'on', 'Text layer? scan? photo? pictures, ink, resolution, script'),

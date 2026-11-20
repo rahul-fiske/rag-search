@@ -20,7 +20,7 @@ Indexing (one run)::
     6  Write           nodes.json, embeddings, index.meta.json    (document)
     7  Merge           per-collection index for search            (collection)
     8  Publish         swap the serving generation                (collection)
-    9  Describe        a vision model describes each photograph   (document; on request, then 4-6 again)
+    9  Describe        a vision model describes each photograph   (document; after a run, then 4-6 again)
 
 Search (one query): S1 Access, S2 Keyword, S3 Vectors, S4 Fuse, S5 Rerank, S6 Top k.
 
@@ -177,10 +177,12 @@ INDEXING: tuple[Stage, ...] = (
           "hard-link the new generation, switch the \"current\" symlink, tell the search daemon to reload; the "
           "last three generations are kept", settings=("indexer.auto_publish",), constants=(("generations kept", 3),)),
     Stage("9", "describe", "Describe", DOCUMENT, GPU,
-          "not part of a run: on request (Models tab, `rag-search photos describe`) a vision model writes a short description "
-          "of each photograph into its record, marked as machine-written; the next run (4, 5, 6) embeds it. One process, "
-          "cached by the photograph, the model and the prompt, so a map refresh or a rebuild never repeats it",
-          settings=("models.describe",), optional=True, constants=(("photographs of the test described without a false statement (8B)", "38 of 38"),)),
+          "not inside a run: after a run has published, the photographs that have no description by the current model are "
+          "described in the background (one process; switch and model on the Models tab; `rag-search photos describe` does "
+          "it by hand): a vision model writes a short description into the photograph's record, marked as machine-written, and "
+          "a short run (4, 5, 6) embeds it. Cached by the photograph, the model and the prompt, so a map refresh or a rebuild "
+          "never repeats it",
+          settings=("models.describe", "models.describe_auto"), optional=True, constants=(("photographs of the test described without a false statement (8B)", "38 of 38"),)),
 )
 
 SEARCH: tuple[Stage, ...] = (
@@ -217,7 +219,7 @@ FINGERPRINT_INPUTS: tuple[tuple[str, str], ...] = (
 )
 
 # Settings that are `config.json` keys but not tunables of spec.py (a model choice, a switch, a limit).
-MODEL_KEYS = ("models.embedding", "models.reranker", "models.reader", "models.repair", "models.describe", "models.memory_limit_gb")
+MODEL_KEYS = ("models.embedding", "models.reranker", "models.reader", "models.repair", "models.describe", "models.describe_auto", "models.memory_limit_gb")
 CONFIG_KEYS = MODEL_KEYS + ("indexer.jobs", "indexer.auto_publish", "search.prewarm")
 
 

@@ -589,6 +589,7 @@ def run_describe(paths: Paths, task: Task, req: dict[str, Any]) -> dict[str, Any
     try:
         res = describe.describe_all(
             paths, collection=req.get("collection", ""), limit=int(req.get("limit") or 0), redo=req.get("redo") is True,
+            auto=req.get("auto") is True,
             progress=lambda done, total, what: task.progress(done=done, total=total, unit="photos", model=what), log=task.log)
     except RuntimeError as exc:
         raise TaskError(str(exc)) from exc

@@ -219,3 +219,118 @@ class RouteTests(IndexedPhotoTests):
             self.assertEqual(status, 403)
         finally:
             dash.close()
+
+
+class AutomaticTests(IndexedPhotoTests):
+    """Photographs are described by themselves after an indexing run: the switch, a machine short of memory, a photograph
+    the model cannot describe, and the daemon's hook."""
+
+    def photo_md(self):
+        (self.sdir / "c").mkdir(exist_ok=True)
+        jpeg(self.sdir / "c" / "p.jpg")
+        with mock.patch.object(photo, "visible_text", return_value="EXIT 4"):
+            self.run_index()
+        return next(self.paths.markup.rglob("p.md"))
+
+    def test_the_switch_is_on_unless_turned_off(self):
+        import os
+        self.assertTrue(models.describe_auto())
+        models.set_describe_auto(self.paths, False)
+        self.assertFalse(models.describe_auto())
+        models.set_describe_auto(self.paths, True)
+        self.assertTrue(models.describe_auto())
+        with mock.patch.dict(os.environ, {"RAG_SEARCH_DESCRIBE_AUTO": "off"}):
+            self.assertFalse(models.describe_auto())
+        models.set_describe_auto(self.paths, False)
+        with mock.patch.dict(os.environ, {"RAG_SEARCH_DESCRIBE_AUTO": "on"}):
+            self.assertTrue(models.describe_auto())
+
+    def test_wanted_automatically_says_why_not(self):
+        self.photo_md()
+        with mock.patch.object(describe, "available", return_value=""), \
+                mock.patch.object(models, "cache_state", return_value={"cached": True}):
+            self.assertEqual(describe.wanted_automatically(self.paths), "")
+            models.set_describe_auto(self.paths, False)
+            self.assertIn("switched off", describe.wanted_automatically(self.paths))
+            models.set_describe_auto(self.paths, True)
+            describe.describe_all(self.paths, reader=StandIn())
+            self.assertIn("every photograph is described", describe.wanted_automatically(self.paths))
+        with mock.patch.object(describe, "available", return_value="needs an Apple Silicon Mac"):
+            self.assertIn("Apple Silicon", describe.wanted_automatically(self.paths))
+        with mock.patch.object(describe, "available", return_value=""), \
+                mock.patch.object(models, "cache_state", return_value={"cached": False}):
+            self.assertIn("not downloaded", describe.wanted_automatically(self.paths))
+
+    def test_a_machine_short_of_memory_defers_instead_of_failing(self):
+        from rag_search.core.conversion import vlm
+        md = self.photo_md()
+        before = md.read_text(encoding="utf-8")
+
+        class NoRoom:
+            def __init__(self, *a, **k): pass
+            def ensure_started(self): raise vlm.ReaderUnavailable("only 3.0 GB of memory is free")
+            def close(self): pass
+        with mock.patch.object(describe, "available", return_value=""), mock.patch.object(vlm, "VlmReader", NoRoom):
+            res = describe.describe_all(self.paths, auto=True)
+            self.assertIn("3.0 GB", res["deferred"])
+            self.assertEqual((res["described"], res["updated"]), (0, 0))
+            self.assertEqual(md.read_text(encoding="utf-8"), before)
+            self.assertEqual(describe.pending_count(self.paths), 1)                    # it waits for the next run
+            with self.assertRaises(RuntimeError):                                     # started by hand it says so
+                describe.describe_all(self.paths)
+
+    def test_a_photograph_the_model_cannot_describe_is_not_retried_by_the_automatic_step(self):
+        md = self.photo_md()
+        silent = StandIn(reply="")
+        res = describe.describe_all(self.paths, reader=silent, auto=True)
+        self.assertEqual((res["described"], res["skipped"], res["updated"]), (0, 1, 0))
+        self.assertEqual((silent.calls, describe.pending_count(self.paths)), (1, 0))        # nothing pending: no loop
+        again = describe.describe_all(self.paths, reader=silent, auto=True)
+        self.assertEqual((again["candidates"], silent.calls), (0, 1))
+        st = describe.status(self.paths)
+        self.assertEqual((st["failed"], st["pending"], st["photographs"]), (1, 0, 1))
+        manual = describe.describe_all(self.paths, reader=StandIn())                        # by hand it tries again
+        self.assertEqual(manual["described"], 1)
+        self.assertEqual(describe.status(self.paths)["failed"], 0)
+        self.assertIn("Looks like (model-written)", md.read_text(encoding="utf-8"))
+
+    def test_the_daemon_starts_the_describe_task_after_a_run_only_when_there_is_something_to_do(self):
+        from rag_search import model_tasks
+        from rag_search.core.indexer_daemon import IndexerDaemon
+        self.photo_md()
+        rec = {}
+        fake = mock.Mock(paths=self.paths, _update=lambda r, **kw: r.update(kw))
+        with mock.patch.object(describe, "wanted_automatically", return_value=""), \
+                mock.patch.object(model_tasks, "start_detached") as start:
+            IndexerDaemon._auto_describe(fake, rec)
+            start.assert_called_once_with(self.paths, {"op": "describe", "model": "describe photos", "auto": True})
+            self.assertEqual(rec["describe"], {"started": True})
+        rec = {}
+        with mock.patch.object(describe, "wanted_automatically", return_value="the automatic step is switched off"), \
+                mock.patch.object(model_tasks, "start_detached") as start:
+            IndexerDaemon._auto_describe(fake, rec)
+            start.assert_not_called()
+            self.assertEqual(rec["describe"]["started"], False)
+        rec = {}
+        with mock.patch.object(describe, "wanted_automatically", return_value=""), \
+                mock.patch.object(model_tasks, "start_detached", side_effect=model_tasks.TaskBusy("busy")):
+            IndexerDaemon._auto_describe(fake, rec)                                       # never fails a finished run
+            self.assertEqual(rec["describe"]["started"], False)
+
+    def test_route_and_command(self):
+        from tests.portable.test_cli_api import run
+        dash = Dash(self.paths)
+        try:
+            status, js, _, _ = dash.req("GET", "/api/photos")
+            self.assertTrue(js["auto"])
+            self.assertEqual(dash.req("POST", "/api/photos/auto", {"on": False})[0], 200)
+            self.assertFalse(models.describe_auto())
+            self.assertEqual(dash.req("POST", "/api/photos/auto", {"on": "yes"})[0], 400)
+        finally:
+            dash.close()
+        rc, out, err = run("photos", "auto", "on")
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(models.describe_auto())
+        rc, out, _ = run("photos", "--json")
+        self.assertTrue(json.loads(out)["auto"])
+        self.assertEqual(run("photos", "auto", "maybe")[0], 2)

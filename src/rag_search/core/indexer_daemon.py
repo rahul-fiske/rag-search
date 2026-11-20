@@ -398,6 +398,7 @@ class IndexerDaemon(DaemonBase):
                          finished_at=now(), progress={"phase": "done"})
             if self.cfgs.get()["indexer"].get("auto_publish", True):
                 self._auto_publish(rec)
+            self._auto_describe(rec)
         else:
             why = err or ("another indexing run holds the index lock (started outside the "
                           "daemon?)" if rc == EXIT_BUSY else
@@ -417,6 +418,23 @@ class IndexerDaemon(DaemonBase):
         pub = api.publish_and_reload(self.paths)
         self._update(rec, publish=pub.get("publish"), search_reload=pub.get("search_reload"),
                      publish_s=round(time.time() - t0, 1), progress={"phase": "done"})
+
+    def _auto_describe(self, rec: dict[str, Any]) -> None:
+        """After a run: describe the photographs that have no description by the current model (``core/describe.py``), in the
+        background, in one process (a ``model_tasks`` task), so the run itself is never held up by it.  Nothing is started when
+        the switch is off, the machine cannot, the model is not downloaded, or nothing is pending."""
+        try:
+            from .. import model_tasks
+            from . import describe
+
+            why = describe.wanted_automatically(self.paths)
+            if why:
+                self._update(rec, describe={"started": False, "why": why})
+                return
+            model_tasks.start_detached(self.paths, {"op": "describe", "model": "describe photos", "auto": True})
+            self._update(rec, describe={"started": True})
+        except Exception as exc:  # noqa: BLE001 - describing is a bonus: never fail a finished run over it
+            self._update(rec, describe={"started": False, "why": f"{type(exc).__name__}: {exc}"})
 
     # ── request handling ────────────────────────────────────────────────────
     def dispatch(self, req: dict[str, Any], conn: socket.socket) -> dict[str, Any] | None:

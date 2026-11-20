@@ -20,6 +20,7 @@ Changing the *embedding* model changes every stored vector, so all documents are
 from __future__ import annotations
 
 import importlib.metadata as md
+import json
 import os
 import re
 import time
@@ -30,7 +31,7 @@ from typing import Any
 from . import DIST_NAME
 from . import machine as host
 from .paths import (DEFAULT_MODEL, DEFAULT_RERANK_MODEL, META_FILE, ALL_DIR, Paths, configured_model,
-                    env_flag, read_json)
+                    default_home, env_flag, read_json)
 
 EMBEDDING, RERANKER = "embedding", "reranker"
 KINDS = (EMBEDDING, RERANKER)
@@ -292,6 +293,30 @@ def describe_selection() -> tuple[str, str]:
     if cfg:
         return cfg, "config"
     return DESCRIBE_MODELS[0], "default"
+
+
+DESCRIBE_AUTO_ENV = "RAG_SEARCH_DESCRIBE_AUTO"
+
+
+def describe_auto() -> bool:
+    """Are photographs described automatically after an indexing run?  On unless ``RAG_SEARCH_DESCRIBE_AUTO`` is off or
+    ``config.json`` has ``"models": {"describe_auto": false}``."""
+    env = os.environ.get(DESCRIBE_AUTO_ENV, "").strip().lower()
+    if env in ("off", "0", "false", "no"):
+        return False
+    if env in ("on", "1", "true", "yes"):
+        return True
+    try:
+        data = json.loads((default_home() / "config.json").read_text(encoding="utf-8"))
+        return (data.get("models") or {}).get("describe_auto") is not False
+    except (OSError, ValueError, AttributeError):
+        return True
+
+
+def set_describe_auto(paths: Paths, on: bool) -> None:
+    from .config import update_config
+
+    update_config(paths, "models", {"describe_auto": bool(on)})
 
 
 def describe_choice() -> tuple[str, float]:

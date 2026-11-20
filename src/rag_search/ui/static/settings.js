@@ -11,7 +11,7 @@
   const tkey = t => t.section + '.' + t.key;
 
   function whereToChange(row) {
-    if (row.id.startsWith('models.') && ['models.embedding', 'models.reranker', 'models.reader', 'models.repair', 'models.describe', 'models.memory_limit_gb'].includes(row.id))
+    if (row.id.startsWith('models.') && ['models.embedding', 'models.reranker', 'models.reader', 'models.repair', 'models.describe', 'models.describe_auto', 'models.memory_limit_gb'].includes(row.id))
       return h('span', { class: 'small muted' }, 'chosen on the ', h('a', { href: '#/models' }, 'Models'), ' tab');
     return h('span', { class: 'small muted' }, 'set in config.json as ', h('code', null, row.id));
   }

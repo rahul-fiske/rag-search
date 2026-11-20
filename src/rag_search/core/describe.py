@@ -153,6 +153,7 @@ def _cache(paths: Paths, create: bool = False) -> sqlite3.Connection | None:
     con = sqlite3.connect(p, timeout=30)
     con.execute("create table if not exists d(sha text, id text, description text, tags text, people integer, at text, "
                 "primary key (sha, id))")
+    con.execute("create table if not exists failed(sha text, id text, why text, at text, primary key (sha, id))")
     return con
 
 
@@ -174,6 +175,39 @@ def remember(paths: Paths, sha: str, made_by: str, rec: dict[str, Any]) -> None:
     with contextlib.closing(con), con:
         con.execute("insert or replace into d values (?,?,?,?,?,?)",
                     (sha, made_by, rec["description"], json.dumps(rec["tags"]), rec["people"], time.strftime("%Y-%m-%d %H:%M")))
+
+
+def failures(paths: Paths, made_by: str) -> set[str]:
+    """Checksums of the photographs the current model and prompt could not describe: not tried again by the automatic
+    step (a describe run started by hand tries them again), or a failed photograph would start a new run for ever."""
+    con = _cache(paths)
+    if con is None:
+        return set()
+    with contextlib.closing(con):
+        try:
+            return {r[0] for r in con.execute("select sha from failed where id = ?", (made_by,))}
+        except sqlite3.Error:
+            return set()
+
+
+def remember_failure(paths: Paths, sha: str, made_by: str, why: str) -> None:
+    if not sha:
+        return
+    con = _cache(paths, create=True)
+    assert con is not None
+    with contextlib.closing(con), con:
+        con.execute("insert or replace into failed values (?,?,?,?)", (sha, made_by, why, time.strftime("%Y-%m-%d %H:%M")))
+        # a description that exists wins over an old failure
+        con.execute("delete from failed where sha = ? and id = ? and exists (select 1 from d where sha = ? and id = ?)",
+                    (sha, made_by, sha, made_by))
+
+
+def forget_failure(paths: Paths, sha: str, made_by: str) -> None:
+    con = _cache(paths)
+    if con is None:
+        return
+    with contextlib.closing(con), con:
+        con.execute("delete from failed where sha = ? and id = ?", (sha, made_by))
 
 
 def restore_lines(paths: Paths, sha: str) -> list[str]:
@@ -239,25 +273,62 @@ def source_sha(md: Path) -> str:
         return ""
 
 
+def classify(paths: Paths, collection: str = "") -> dict[str, list[Path]]:
+    """The photographs by what describing them needs: ``current`` (done by the current model and prompt), ``failed`` (it
+    could not, and is not tried again by the automatic step), ``pending`` (no description, or one by another model)."""
+    made_by = current_id(models.describe_selection()[0])
+    bad = failures(paths, made_by)
+    out: dict[str, list[Path]] = {"current": [], "failed": [], "pending": [], "other": []}
+    for md in photographs(paths, collection):
+        by = described_by(section_of(md.read_text(encoding="utf-8", errors="replace"))[0])
+        if by == made_by:
+            out["current"].append(md)
+        elif source_sha(md) in bad:
+            out["failed"].append(md)
+        else:
+            out["pending"].append(md)
+            if by:
+                out["other"].append(md)
+    return out
+
+
+def pending_count(paths: Paths, collection: str = "") -> int:
+    return len(classify(paths, collection)["pending"])
+
+
+def wanted_automatically(paths: Paths) -> str:
+    """"" when the automatic step has something to do now, else why not (the switch is off, this machine cannot, the model is
+    not downloaded, nothing is pending)."""
+    if not models.describe_auto():
+        return "the automatic step is switched off"
+    why = available()
+    if why:
+        return why
+    if not models.cache_state(models.describe_selection()[0])["cached"]:
+        return f"the model {models.describe_selection()[0]} is not downloaded"
+    if not pending_count(paths):
+        return "every photograph is described"
+    return ""
+
+
 def status(paths: Paths, collection: str = "") -> dict[str, Any]:
     """What the Models tab and `rag-search photos` show."""
     model, source = models.describe_selection()
     made_by = current_id(model)
-    total = current = old = 0
-    for md in photographs(paths, collection):
-        total += 1
-        by = described_by(section_of(md.read_text(encoding="utf-8", errors="replace"))[0])
-        if by == made_by:
-            current += 1
-        elif by:
-            old += 1
+    groups = classify(paths, collection)
     spec = models.vlm_find(models.READER, model)
+
+    def need(m: str) -> float:
+        sp = models.vlm_find(models.READER, m)
+        return (sp.mem_gb if sp else 4.0) + models.VLM_OVERHEAD_GB
     return {"model": model, "model_label": model_label(model), "source": source, "made_by": made_by,
-            "choices": [{"id": m, "label": model_label(m), "need_gb": (models.vlm_find(models.READER, m).mem_gb if models.vlm_find(models.READER, m) else 4.0) + models.VLM_OVERHEAD_GB,
-                         "downloaded": models.cache_state(m)["cached"]} for m in models.DESCRIBE_MODELS],
+            "choices": [{"id": m, "label": model_label(m), "need_gb": need(m), "downloaded": models.cache_state(m)["cached"]}
+                        for m in models.DESCRIBE_MODELS],
             "downloaded": models.cache_state(model)["cached"], "need_gb": (spec.mem_gb if spec else 4.0) + models.VLM_OVERHEAD_GB,
-            "photographs": total, "described": current, "described_by_another_model": old, "pending": total - current,
-            "unavailable": available()}
+            "auto": models.describe_auto(),
+            "photographs": sum(len(v) for k, v in groups.items() if k != "other"), "described": len(groups["current"]),
+            "described_by_another_model": len(groups["other"]), "failed": len(groups["failed"]),
+            "pending": len(groups["pending"]), "unavailable": available()}
 
 
 def indexing_lines(paths: Paths, src: Path, sha: str) -> list[str]:
@@ -295,13 +366,15 @@ def describe_image(reader: Any, image: Path) -> dict[str, Any]:
     return parse(res.get("md", ""))
 
 
-def describe_all(paths: Paths, *, collection: str = "", limit: int = 0, redo: bool = False,
+def describe_all(paths: Paths, *, collection: str = "", limit: int = 0, redo: bool = False, auto: bool = False,
                  progress: Callable[[int, int, str], None] | None = None, log: Callable[[str], None] | None = None,
                  reader: Any = None) -> dict[str, Any]:
     """Describe the photographs that have no description by the current model and prompt (all of them with *redo*; at
     most *limit*).  A photograph described before (same checksum, model and prompt) is taken from the cache.  Each Markdown
     file gets its lines and its index entry is marked out of date, so the next indexing run embeds it again; the picture
-    is not read again there.  *reader* is for tests."""
+    is not read again there.  With *auto* (the step that follows an indexing run) photographs the model could not describe
+    are left alone, and a machine that is short of memory is no failure: the photographs wait for the next run
+    (``deferred`` says why).  *reader* is for tests."""
     say = log or (lambda _m: None)
     if not reader:
         why = available()
@@ -309,14 +382,16 @@ def describe_all(paths: Paths, *, collection: str = "", limit: int = 0, redo: bo
             raise RuntimeError(why)
     model, need = models.describe_choice()
     made_by = current_id(model)
+    bad = failures(paths, made_by) if auto else set()
     todo = []
     for md in photographs(paths, collection):
         text = md.read_text(encoding="utf-8", errors="replace")
-        if redo or described_by(section_of(text)[0]) != made_by:
+        if (redo or described_by(section_of(text)[0]) != made_by) and source_sha(md) not in bad:
             todo.append(md)
     if limit:
         todo = todo[:limit]
-    res = {"model": made_by, "candidates": len(todo), "described": 0, "from_cache": 0, "skipped": 0, "faces_only": 0}
+    res = {"model": made_by, "candidates": len(todo), "described": 0, "from_cache": 0, "skipped": 0, "faces_only": 0,
+           "updated": 0}
     if not todo:
         return res
     own = None
@@ -324,6 +399,14 @@ def describe_all(paths: Paths, *, collection: str = "", limit: int = 0, redo: bo
         from .conversion import vlm
 
         own = reader = vlm.VlmReader(model, style="instruct", need_gb=need)
+        if auto:
+            try:
+                own.ensure_started()                 # loads the model now: a machine short of memory defers, it does not fail
+            except vlm.ReaderUnavailable as exc:
+                res["deferred"] = str(exc)
+                say(f"not now: {exc}; the photographs wait for the next run")
+                own.close()
+                return res
     tmp = Path(tempfile.mkdtemp(prefix="rag-describe-"))
     touched: list[Path] = []
     t0 = time.monotonic()
@@ -343,9 +426,11 @@ def describe_all(paths: Paths, *, collection: str = "", limit: int = 0, redo: bo
                 rec = describe_image(reader, image)
                 if not rec["description"]:
                     res["skipped"] += 1
-                    say(f"{md.name}: the model wrote no description; skipped")
+                    remember_failure(paths, sha, made_by, "the model wrote no description")
+                    say(f"{md.name}: the model wrote no description; skipped (not tried again by the automatic step)")
                     continue
                 remember(paths, sha, made_by, rec)
+                forget_failure(paths, sha, made_by)
                 res["described"] += 1
             else:
                 res["from_cache"] += 1

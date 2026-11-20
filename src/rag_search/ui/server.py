@@ -808,6 +808,11 @@ class Handler(BaseHTTPRequestHandler):
             except models.ModelError as exc:
                 return self._error(400, str(exc))
             return self._json({"ok": True, "model": body.get("model")})
+        if action == "auto":
+            if not isinstance(body.get("on"), bool):
+                return self._error(400, "expected {on: true | false}")
+            models.set_describe_auto(paths, body["on"])
+            return self._json({"ok": True, "auto": body["on"]})
         if action != "describe":
             return self._error(404, "not found")
         try:

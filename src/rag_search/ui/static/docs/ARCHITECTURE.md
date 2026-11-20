@@ -298,7 +298,7 @@ the Settings tab, the Indexing tab's "Settings in effect" and a Playground exper
 per group, so it is plain which setting acts on which lane. `tests/test_stages.py` checks that every tunable belongs
 to exactly one stage, that every setting and variable of a grouped stage is in exactly one group, that every environment variable listed is really read, and that the browser's copy of the keys
 (`ui/static/pipeline.js`) equals the registry. Conversion is not a side branch: 3 Convert is a stage like
-the others, with its steps 3.1-3.8 numbered inside it: 3.1-3.5 are for pages; 3.6 Photo details, 3.7 Locate and 3.8 Timeline are the paths of an image with camera data and of a Google Maps Timeline `.json`, drawn in the Architecture diagram and on the Indexing tab's Convert picture, recorded as the page branches `photo` and `timeline` and as `stage` events with the ids 3.6, 3.7 and 3.8. 9 Describe is not part of a run (see 5.3a).
+the others, with its steps 3.1-3.8 numbered inside it: 3.1-3.5 are for pages; 3.6 Photo details, 3.7 Locate and 3.8 Timeline are the paths of an image with camera data and of a Google Maps Timeline `.json`, drawn in the Architecture diagram and on the Indexing tab's Convert picture, recorded as the page branches `photo` and `timeline` and as `stage` events with the ids 3.6, 3.7 and 3.8. 9 Describe is not inside a run (see 5.3b).
 
 Indexing (one run; 3.2 has four lanes, chosen per page by the router: 3.2a docling on the text layer, 3.2b
 OCR for a clean scan, 3.2c docling on the text layer plus the document reader on its pictures and regions, 3.2d
@@ -322,7 +322,7 @@ the document reader for every other scan and image; a page a cheaper lane doubts
 | 6 | Write | CPU | document | nodes.json and embeddings.npy, then index.meta.json last, so a half-written document is never taken for a finished one | – |
 | 7 | Merge | CPU | collection | concatenate the documents' vectors into the collection's index for search (nothing is re-embedded) | – |
 | 8 | Publish | CPU | collection | hard-link the new generation, switch the "current" symlink, tell the search daemon to reload; the last three generations are kept | `indexer.auto_publish` |
-| 9 | Describe (optional, on request) | GPU | document | not part of a run: a vision model writes a short description of each photograph into its record, marked as machine-written; the next run embeds it (4, 5, 6). Cached by photograph, model and prompt | `models.describe` |
+| 9 | Describe (optional, after a run) | GPU | document | not inside a run: after a run has published, a vision model describes the photographs that have no description by the current model, in one process in the background, and a short run embeds it (4, 5, 6). Cached by photograph, model and prompt | `models.describe`, `models.describe_auto` |
 
 Search (one query):
 
@@ -1030,10 +1030,16 @@ processes, runs without downloading models.
 
 ### 5.3b Photo descriptions (`core/describe.py`, step 9)
 
-* **A step of its own, on request** (Models tab's *Photo descriptions* card, `rag-search photos describe [--collection C]
-  [--limit N] [--redo]`, a `model_tasks` task with `op: "describe"`): the model of several GB runs in **one** process,
-  which a run's several conversion processes could not afford, and the task can be stopped and picked up again.
-  `rag-search photos model NAME` chooses the 8B (default) or the 4B; `models.describe` is the setting (step 9).
+* **A step of its own, started by itself after a run** (`IndexerDaemon._auto_describe`, once the run has published, so the photographs
+  are already searchable by metadata; also the Models tab's *Photo descriptions* card and `rag-search photos describe [--collection C]
+  [--limit N] [--redo]`; a `model_tasks` task with `op: "describe"`). The model of several GB runs in **one** process, which a
+  run's several conversion processes could not afford, in the background, so a run is never held up. `describe.wanted_automatically`
+  says when to start it: the switch `models.describe_auto` (default on; `RAG_SEARCH_DESCRIBE_AUTO`, `rag-search photos auto on|off`)
+  is on, this is an Apple Silicon Mac, the model is downloaded and some photograph is pending. `models.describe` chooses the
+  8B (default) or the 4B (`rag-search photos model NAME`).
+* **Quiet when it cannot**: a machine short of free memory defers (`deferred` in the result, no failure; the photographs wait for the next
+  run); a photograph the model could not describe is recorded in the cache's `failed` table for that model and prompt and is not tried
+  again by the automatic step (a describe run started by hand tries it again), so describe -> embed run -> describe cannot loop.
 * **What it writes**: lines in the photograph's *Photo details* section, marked as machine-written (`Looks like`, `Things seen`,
   `People in the picture (model count)`, `Described by: <model>, prompt <version>`), plus Apple Vision's `Faces detected`. A word
   filter drops the guesses the model still makes (seasons, weather, indoors or outdoors). Tried on 38 photographs: main subject
