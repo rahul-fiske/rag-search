@@ -1118,7 +1118,7 @@ def _cmd_photos(a: argparse.Namespace) -> int:
             _err("photos auto on|off")
             return EXIT_USAGE
         models.set_describe_auto(p, a.value == "on")
-        print(f"photographs are {'now described automatically after each indexing run' if a.value == 'on' else 'no longer described automatically'}",
+        print(f"photographs are {'now described while they are indexed, and a pass after a run catches up the rest' if a.value == 'on' else 'no longer described automatically'}",
               file=sys.stderr)
         return EXIT_OK
     if a.action == "describe":
@@ -1140,7 +1140,7 @@ def _cmd_photos(a: argparse.Namespace) -> int:
     print(f"{st['photographs']} photograph(s): {st['described']} described by the current model ({st['made_by']}), "
           f"{st['described_by_another_model']} by another model or prompt, {st['pending']} to do"
           + (f", {st['failed']} the model could not describe (tried again only by `describe`)" if st["failed"] else ""))
-    print(f"automatic: {'on, after each indexing run' if st['auto'] else 'off'} (`rag-search photos auto on|off`)")
+    print(f"automatic: {'on: a photograph is described while it is indexed (step 3.9), and a pass after a run catches up the rest' if st['auto'] else 'off'} (`rag-search photos auto on|off`)")
     print(f"model: {st['model_label']} ({st['source']}), needs about {st['need_gb']:.1f} GB free, "
           f"{'downloaded' if st['downloaded'] else 'NOT downloaded (rag-search models download ' + st['model'] + ')'}")
     if st["unavailable"]:
@@ -2972,8 +2972,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="refresh: every document with positions, not only those whose map data changed")
 
     p = add("photos", "a short description of each photograph, written by a vision model", _cmd_photos,
-            description="status: how many photographs are described. By default they are described by themselves, in the "
-            "background, after each indexing run (auto on|off). describe: describe the ones that are not now (a model "
+            description="status: how many photographs are described. By default a photograph is described while it is indexed "
+            "(step 3.9, between Locate and Chunk) and a pass after a run catches up the rest (auto on|off). describe: describe the "
+            "ones that are not now (a model "
             "of several GB runs in one process; each description is cached by the photograph's checksum, the model and the "
             "prompt version, and written into the photograph's record as machine-written lines). model NAME: choose the 8B "
             "(default) or the 4B model. Map downloads and refreshes never repeat a description.")
