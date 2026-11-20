@@ -311,6 +311,7 @@ svg.dg { display: block; width: 100%; height: auto; min-width: 820px; font-famil
 .cv-rw-meter, .cv-rw-out { display: flex; flex: 1 1 auto; height: 8px; border-radius: 999px; overflow: hidden; background: var(--idle-soft); gap: 1px; min-width: 60px; }
 .cv-rw-meter i { display: block; height: 100%; background: var(--rw-c); min-width: 2px; }
 .rw-a .cv-rw-meter i { background: var(--rw-a); } .rw-b .cv-rw-meter i { background: var(--rw-b); } .rw-d .cv-rw-meter i { background: var(--rw-d); }
+.cv-step-bar { margin-top: 4px; } .cv-step-bar .small { margin-top: 2px; }
 .cv-rw-out { height: 6px; } .cv-rw-out i { display: block; height: 100%; min-width: 2px; }
 .cv-rw-out .o-ok { background: var(--ok); } .cv-rw-out .o-fix { background: var(--cv-repaired); } .cv-rw-out .o-bad { background: var(--bad); } .cv-rw-out .o-warn { background: var(--warn); }
 .cv-rw-n { white-space: nowrap; min-width: 110px; text-align: right; }

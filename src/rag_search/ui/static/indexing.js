@@ -336,7 +336,7 @@
       ph.total != null ? h('p', { class: 'small muted', style: { margin: '0 0 8px' } },
         `${num(ph.done || 0)} of ${num(ph.total)} document(s) through discover → chunk` + (ph.workers ? ` on ${ph.workers} worker process(es)` : '')
         + Object.entries(ph.outcomes || {}).map(([k, n]) => ` · ${k} ${num(n)}`).join('')) : null,
-      CV.flow(totals, live.live),
+      CV.flow(totals, live.live, live.steps),
       CV.live(live.live) ? h('div', { style: { marginTop: '14px' } }, h('h4', null, 'Pages in active files'), CV.live(live.live)) : null,
       totals.pages ? h('div', { style: { marginTop: '14px' } },
         h('h4', null, 'Pages in successfully converted files'), CV.bands(totals.ok_branches || totals.branches),

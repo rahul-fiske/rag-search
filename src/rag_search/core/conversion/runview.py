@@ -39,7 +39,8 @@ def _fresh() -> dict[str, Any]:
             "live": {"pages": 0, "cached": 0, "branches": {}, "outcomes": {}, "open": {}, "runways": {}, "moves": {},
                      "runway_outcomes": {}, "engines": {},
                      "first": 0.0, "last": 0.0, "tokens": 0, "gpu_s": 0.0,
-                     "first_read": 0.0, "last_read": 0.0}}
+                     "first_read": 0.0, "last_read": 0.0},
+            "steps": {}}
 
 
 def _lane(st: dict[str, Any], pid: int, role: str, ts: float) -> dict[str, Any]:
@@ -151,6 +152,7 @@ def _feed(st: dict[str, Any], line: str) -> None:
             proc["last"] = float(ev.get("ts") or 0)
     if kind == "stage" and "pid" in ev:
         _feed_stage_of_proc(st, ev)
+        _feed_step(st, ev)
     if ev.get("event") == "page" and "pid" in ev:
         _feed_page(st, ev)
         return
@@ -174,6 +176,52 @@ def _feed(st: dict[str, Any], line: str) -> None:
         lane["progress"] = None
         if role == "convert":
             st["live"]["open"].pop(str(ev.get("file", "")), None)
+
+
+STEP_KEYS = ("sniff", "photo", "locate", "timeline", "describe")
+
+
+def _feed_step(st: dict[str, Any], ev: dict[str, Any]) -> None:
+    """Totals of the steps that are not page lanes (3.0 Sniff, 3.6 Photo details, 3.7 Locate, 3.8 Timeline, 3.9 Describe):
+    files through each, seconds, and what they decided (route, source of a description, why one was left)."""
+    key = str(ev.get("stage") or "")
+    if key not in STEP_KEYS or ev.get("status") != "done":
+        return
+    sp = st["steps"].setdefault(key, {"n": 0, "seconds": 0.0, "max_s": 0.0, "last": 0.0})
+    sec = float(ev.get("seconds") or 0.0)
+    sp["n"] += 1
+    sp["seconds"] += sec
+    sp["max_s"] = max(sp["max_s"], sec)
+    sp["last"] = float(ev.get("ts") or 0)
+
+    def bump(field: str, name: str) -> None:
+        d = sp.setdefault(field, {})
+        d[name] = d.get(name, 0) + 1
+    if key == "sniff":
+        bump("routes", str(ev.get("route") or "pages"))
+    elif key == "photo":
+        bump("kinds", "photograph" if ev.get("photograph") else "photographed page")
+    elif key == "locate":
+        bump("places", "with places nearby" if ev.get("nearby") else "area and town only")
+    elif key == "describe":
+        src = str(ev.get("source") or "none")
+        bump("sources", src)
+        sp["model_s"] = sp.get("model_s", 0.0) + float(ev.get("model_s") or 0.0)
+        if src == "none":
+            bump("why", (str(ev.get("why") or "no reason given"))[:90])
+
+
+def _steps_view(st: dict[str, Any]) -> dict[str, Any]:
+    out = {}
+    for k, v in st["steps"].items():
+        d = dict(v)
+        d["seconds"] = round(v["seconds"], 1)
+        d["max_s"] = round(v["max_s"], 1)
+        if "model_s" in d:
+            d["model_s"] = round(d["model_s"], 1)
+        d["avg_s"] = round(v["seconds"] / v["n"], 2) if v["n"] else 0.0
+        out[k] = d
+    return out
 
 
 def _feed_page(st: dict[str, Any], ev: dict[str, Any]) -> None:
@@ -419,5 +467,5 @@ def run_view(paths: Paths, job_id: str = "") -> dict[str, Any]:
             "now": now_view(st, lanes, rec, running), "phases": phases_view(st, rec, running),
             "phase": prog.get("phase", ""), "done": prog.get("done"), "total": prog.get("total"),
             "totals": totals, "lanes": lanes,
-            "live": live_view(st, running), "stall_limit_s": _stall_limit(),
+            "live": live_view(st, running), "steps": _steps_view(st), "stall_limit_s": _stall_limit(),
             "started_at": rec.get("started_at"), "finished_at": rec.get("finished_at")}

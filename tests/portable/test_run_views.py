@@ -133,6 +133,28 @@ class LaneCountTests(unittest.TestCase):
         self.assertEqual(live["engines"], {"docling": 1})
 
 
+class StepTotalsTests(unittest.TestCase):
+    def test_the_steps_beside_the_lanes_are_totalled_with_what_they_decided(self):
+        st = runview._fresh()
+        stage = lambda i, key, **kw: runview._feed(st, json.dumps({"event": "stage", "status": "done", "pid": 1, "ts": 100 + i,
+                                                                    "file": f"c/{i}.jpg", "stage": key, **kw}))
+        for i, route in enumerate(["photograph", "photograph", "timeline", "pages"]):
+            stage(i, "sniff", route=route, seconds=0.5)
+        stage(0, "photo", photograph=True, seconds=1.0)
+        stage(0, "locate", nearby=True, seconds=0.25)
+        stage(0, "describe", source="model", why="", model_s=8.0, seconds=9.0)
+        stage(1, "describe", source="cache", why="", model_s=0.0, seconds=0.1)
+        stage(2, "describe", source="none", why="memory is short", model_s=0.0, seconds=0.0)
+        v = runview._steps_view(st)
+        self.assertEqual(v["sniff"]["routes"], {"photograph": 2, "timeline": 1, "pages": 1})
+        self.assertEqual(v["sniff"]["n"], 4)
+        self.assertEqual(v["locate"]["places"], {"with places nearby": 1})
+        self.assertEqual(v["describe"]["sources"], {"model": 1, "cache": 1, "none": 1})
+        self.assertEqual(v["describe"]["why"], {"memory is short": 1})
+        self.assertEqual(v["describe"]["model_s"], 8.0)
+        self.assertEqual(v["photo"]["kinds"], {"photograph": 1})
+
+
 class LogReaderTests(unittest.TestCase):
     """The same events through the reader of the real log file (which picks the lines it parses)."""
 

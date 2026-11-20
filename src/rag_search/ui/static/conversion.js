@@ -123,8 +123,8 @@ const CV = (function () {
   /* The pipeline of step 3 as one picture: Profile and router on the left, the four lanes of 3.2 in the middle (how many pages
      ended in each, how they fared, how many were handed on), Gate, Repair, Reconcile and the outcome on the right.
      *t* = the run's totals, *l* = the live view (pages finished this run, by lane and outcome). */
-  function flow(t, l) {
-    t = t || {}; l = l || {};
+  function flow(t, l, steps) {
+    t = t || {}; l = l || {}; steps = steps || {};
     const out = t.outcomes || {}, mv = t.moves || l.moves || {}, gf = t.gate_failed || {};
     let rw = t.runways || l.runways || {}, approx = false;
     if (!sumOf(rw) && t.pages && t.branches) {            // a run made before the lanes were recorded: the branches say it nearly as well
@@ -139,32 +139,50 @@ const CV = (function () {
     const moved = Object.entries(mv).map(([k, v]) => `${k.replace('>', ' → ')} ${num(v)}`).join(' · ');
     const eng = l.engines && Object.keys(l.engines).length ? Object.entries(l.engines).map(([k, v]) => `${k} ${num(v)}`).join(' · ') : '';
     const br = t.branches || {}, nPhoto = br.photo || 0, nTl = br.timeline || 0;
+    const S = k => steps[k] || {}, secs = x => x >= 90 ? `${Math.round(x / 6) / 10} min` : `${Math.round(x * 10) / 10} s`;
+    // a stacked bar of counts (class o-ok good, o-fix repaired/cache, o-warn waiting, o-bad failed) with its figures under it
+    const split = (parts, tip) => { const ps = parts.filter(p => p[1]); const tot = sumOf(Object.fromEntries(ps));
+      return tot ? h('div', { class: 'cv-step-bar', title: tip || '' }, h('span', { class: 'cv-rw-out' }, ps.map(([n, v, c]) => h('i', { class: 'o-' + c, title: `${n} ${num(v)}`, style: { flexGrow: String(v) } }))),
+        h('div', { class: 'small muted' }, ps.map(([n, v]) => `${n} ${num(v)}`).join(' · '))) : null; };
+    const stat = (k, what) => { const x = S(k); return x.n ? h('div', { class: 'small muted' }, `${num(x.n)} ${what} · ${secs(x.seconds)} in all · ${x.avg_s} s each (slowest ${x.max_s} s)`) : null; };
+    const stepNode = (title, sub, kind, on, tip, ...more) => { const n = node(title, sub, kind, on, tip); more.filter(Boolean).forEach(m => n.appendChild(m)); return n; };
+    const sn = S('sniff'), ro = sn.routes || {}, ph = S('photo'), ps = ph.kinds || {}, lo2 = S('locate'), pl = lo2.places || {},
+      dsc = S('describe'), src = dsc.sources || {}, why = Object.entries(dsc.why || {}).sort((a, b) => b[1] - a[1]), tlS = S('timeline');
+    const noPos = Math.max(0, (ph.n || 0) - (lo2.n || 0));
     const other = h('div', { class: 'cv-other' },
       h('div', { class: 'small muted cv-other-h' }, '3.0 Sniff decides first, from the file itself and before any page is looked at, what kind of file it is: pages go through 3.1–3.5 above; a photograph (an image with camera data and little text) and a Google Maps Timeline .json take the paths below and are never profiled or read by the lanes. A photograph is described (3.9) before it is chunked and embedded, so it is indexed once, complete.'),
       h('div', { class: 'cv-pipe cv-pipe-other' },
         h('div', { class: 'cv-col' },
-          node('3.0 · Sniff', (nPhoto || nTl) ? `this run: ${num(nPhoto)} photograph${nPhoto === 1 ? '' : 's'} · ${num(nTl)} Timeline file${nTl === 1 ? '' : 's'}` : 'pages · photograph · Timeline', 'cpu', 'on',
-            'What kind of file is this? A Timeline .json is recognised by its content; an image with camera data gets a quick text check (Apple Vision, else Tesseract): fewer than 200 letters and digits = a photograph, more = a photographed page, which goes down the lanes and gets the photo details at the end. Everything else is a document of pages.'),
+          stepNode('3.0 · Sniff', sn.n ? `${num(sn.n)} file${sn.n === 1 ? '' : 's'} sorted this run` : 'pages · photograph · Timeline', 'cpu', 'on',
+            'What kind of file is this? A Timeline .json is recognised by its content; an image with camera data gets a quick text check (Apple Vision, else Tesseract): fewer than 200 letters and digits = a photograph, more = a photographed page, which goes down the lanes and gets the photo details at the end. Everything else is a document of pages.',
+            split([['pages', ro.pages, 'ok'], ['photograph', ro.photograph, 'fix'], ['Timeline', ro.timeline, 'warn']], 'Where each file went after the sniff'), stat('sniff', 'files')),
           h('span', { class: 'cv-arrow down', 'aria-hidden': 'true' }, '↓'),
           h('div', { class: 'cv-other-l' }, 'a photograph'),
-          node('3.6 · Photo details', nPhoto ? `${num(nPhoto)} photograph${nPhoto === 1 ? '' : 's'} this run` : 'time · GPS · camera · faces counted', 'cpu', nPhoto ? 'on' : '',
-            'Time (with the time zone), GPS position, camera, size, the faces Apple Vision counts and text found in the picture. The document reader never reads a photograph.'),
+          stepNode('3.6 · Photo details', ph.n ? `${num(ph.n)} picture${ph.n === 1 ? '' : 's'} this run` : (nPhoto ? `${num(nPhoto)} photograph${nPhoto === 1 ? '' : 's'} this run` : 'time · GPS · camera · faces counted'), 'cpu', ph.n || nPhoto ? 'on' : '',
+            'Time (with the time zone), GPS position, camera, size, the faces Apple Vision counts and text found in the picture. The document reader never reads a photograph.',
+            split([['photographs', ps.photograph, 'ok'], ['photographed pages', ps['photographed page'], 'fix']], 'A photographed page is read by the lanes first; the details are added after'), stat('photo', 'pictures')),
           h('span', { class: 'cv-arrow down', 'aria-hidden': 'true' }, '↓'),
           h('div', { class: 'cv-other-l' }, 'a Google Maps Timeline .json'),
-          node('3.8 · Timeline', nTl ? `${num(nTl)} timeline file${nTl === 1 ? '' : 's'} this run` : 'recognised by its content · day-by-day log', 'cpu', nTl ? 'on' : '',
-            'A .json that is a Timeline export (phone, semanticSegments or Takeout) is written as one line per visit and journey, with times, geo: positions and the Google place ID as it is. Any other .json is read as plain structured text.')),
+          stepNode('3.8 · Timeline', tlS.n || nTl ? `${num(tlS.n || nTl)} timeline file${(tlS.n || nTl) === 1 ? '' : 's'} this run` : 'recognised by its content · day-by-day log', 'cpu', tlS.n || nTl ? 'on' : '',
+            'A .json that is a Timeline export (phone, semanticSegments or Takeout) is written as one line per visit and journey, with times, geo: positions and the Google place ID as it is. Any other .json is read as plain structured text.',
+            stat('timeline', 'files')),
+        ),
         h('span', { class: 'cv-arrow', 'aria-hidden': 'true' }, '→'),
         h('div', { class: 'cv-col' },
           h('div', { class: 'cv-other-l' }, 'for every position'),
-          node('3.7 · Locate', 'area · town · places nearby', 'cpu', 'on', 'From the map data that is installed (Models tab, Maps): the Overture area, the GeoNames town and the Overture places within 100 m, as candidates with distances. Nothing is downloaded here.'),
+          stepNode('3.7 · Locate', lo2.n ? `${num(lo2.n)} position${lo2.n === 1 ? '' : 's'} looked up` : 'area · town · places nearby', 'cpu', 'on', 'From the map data that is installed (Models tab, Maps): the Overture area, the GeoNames town and the Overture places within 100 m, as candidates with distances. Nothing is downloaded here.',
+            split([['places nearby', pl['with places nearby'], 'ok'], ['area and town only', pl['area and town only'], 'fix'], ['no position / no map data', noPos, 'warn']], 'Positions that found places within 100 m, positions with only an area and a town (the Overture places of that cell may not be downloaded yet), and pictures with nothing to look up'), stat('locate', 'lookups')),
           h('span', { class: 'cv-arrow down', 'aria-hidden': 'true' }, '↑'),
           node('Map data', 'GeoNames · Overture areas and places', null, 'planned', 'Downloaded only when you ask (Models tab, rag-search maps).')),
         h('span', { class: 'cv-arrow', 'aria-hidden': 'true' }, '→'),
         h('div', { class: 'cv-col' },
           h('div', { class: 'cv-other-l' }, 'a photograph only'),
-          node('3.9 · Describe', 'a vision model writes a short description, after Locate and before Chunk', 'gpu', 'on', 'A short description of the photograph, marked as machine-written, written into its record before it is chunked and embedded; one process holds the model; cached by the photograph, the model and the prompt, so a map refresh or a rebuild never repeats it. Left undescribed for now when memory is short or the model is missing: a pass after the run catches up.'),
+          stepNode('3.9 · Describe', dsc.n ? `${num(dsc.n)} photograph${dsc.n === 1 ? '' : 's'} handled this run` : 'a vision model writes a short description, after Locate and before Chunk', 'gpu', 'on', 'A short description of the photograph, marked as machine-written, written into its record before it is chunked and embedded; one process holds the model; cached by the photograph, the model and the prompt, so a map refresh or a rebuild never repeats it. Left undescribed for now when memory is short or the model is missing: a pass after the run catches up.',
+            split([['described by the model', src.model, 'ok'], ['from the cache', src.cache, 'fix'], ['left for the catch-up pass', src.none, 'warn']], 'How each photograph got its description in this run'),
+            dsc.n ? h('div', { class: 'small muted' }, `${secs(dsc.seconds)} in all` + (dsc.model_s ? ` · model time ${secs(dsc.model_s)}` + (src.model ? ` (${Math.round(dsc.model_s / src.model * 10) / 10} s per photograph)` : '') : '') + (dsc.max_s ? ` · slowest ${dsc.max_s} s` : '')) : null,
+            why.length ? h('div', { class: 'small muted', title: 'Why photographs were left undescribed now' }, 'left: ' + why.slice(0, 3).map(([w, n]) => `${w} (${num(n)})`).join(' · ')) : null),
           h('span', { class: 'cv-arrow down', 'aria-hidden': 'true' }, '↓'),
-          node('Catch-up pass', 'after a run: what was left undescribed, or has an older model or prompt', 'gpu', 'planned', 'After a run publishes, photographs without a description by the current model are described in the background, then a short run embeds them (switch and model on the Models tab; rag-search photos describe does it by hand).'))));
+          stepNode('Catch-up pass', src.none ? `${num(src.none)} left from this run` : 'after a run: what was left undescribed, or has an older model or prompt', 'gpu', src.none ? 'on' : 'planned', 'After a run publishes, photographs without a description by the current model are described in the background, then a short run embeds them (switch and model on the Models tab; rag-search photos describe does it by hand).'))));
     const main = h('div', { class: 'cv-pipe' },
       h('div', { class: 'cv-col' },
         node('3.1 · Profile', t.pages ? `${num(t.pages)} pages looked at` : 'what is on each page', 'cpu', 'on', 'Text layer? scan? photo? pictures, ink, resolution, script'),
