@@ -285,7 +285,7 @@ One numbered list of stages describes a document's way into the index and a quer
 numbers are the same everywhere: the progress events of a run (`stage` events carry `id`), the indexer's
 log lines ("3 Convert started", "2 Fingerprint unchanged: skipped"), `rag-search index` output, the
 Architecture tab's diagram, the Indexing tab ("Settings in effect, by pipeline stage"), the Settings tab
-(one card per stage; the steps 3.1-3.5 are cards inside 3 Convert, and 3.2 Read has one card for the router and one
+(one card per stage; the steps 3.1-3.8 are cards inside 3 Convert, and 3.2 Read has one card for the router and one
 for each lane), the page traces, the Playground and this document.
 `stages.py` (stdlib only) is the registry: each `Stage` has its number, key, name, scope, where it runs, a
 one-line description, the settings it owns (`section.key` of `config.json`, the keys the Settings tab edits)
@@ -298,7 +298,7 @@ the Settings tab, the Indexing tab's "Settings in effect" and a Playground exper
 per group, so it is plain which setting acts on which lane. `tests/test_stages.py` checks that every tunable belongs
 to exactly one stage, that every setting and variable of a grouped stage is in exactly one group, that every environment variable listed is really read, and that the browser's copy of the keys
 (`ui/static/pipeline.js`) equals the registry. Conversion is not a side branch: 3 Convert is a stage like
-the others, with its steps 3.1-3.5 numbered inside it.
+the others, with its steps 3.1-3.8 numbered inside it: 3.1-3.5 are for pages; 3.6 Photo details, 3.7 Locate and 3.8 Timeline are the paths of an image with camera data and of a Google Maps Timeline `.json`, drawn in the Architecture diagram and on the Indexing tab's Convert picture, recorded as the page branches `photo` and `timeline` and as `stage` events with the ids 3.6, 3.7 and 3.8. 9 Describe is not part of a run (see 5.3a).
 
 Indexing (one run; 3.2 has four lanes, chosen per page by the router: 3.2a docling on the text layer, 3.2b
 OCR for a clean scan, 3.2c docling on the text layer plus the document reader on its pictures and regions, 3.2d
@@ -314,11 +314,15 @@ the document reader for every other scan and image; a page a cheaper lane doubts
 | 3.3 | Gate | CPU | document | deterministic checks on every page: coverage, script, tables, resolution, running balances and totals, runaway output | – |
 | 3.4 | Repair (optional) | GPU | document | a table cell that breaks the arithmetic is cut out, read again and replaced only when a second, independent reader and the arithmetic agree | `indexer.repair`, `models.repair`; env `RAG_SEARCH_REPAIR_SECOND` |
 | 3.5 | Reconcile | CPU | document | a table that runs across a page break is joined (the continuation gets the header) and checked across the break | – |
+| 3.6 | Photo details (optional) | CPU | document | an image with camera data gets a section of facts (time and zone, GPS, camera, faces Apple Vision counts); a quick text check tells a photograph (indexed from these details, never read by the document reader) from a photographed page (lanes of 3.2, plus the details) | – |
+| 3.7 | Locate (optional) | CPU | document | for every position: the Overture area, the GeoNames town and the Overture places within 100 m, from the map data that is installed (nothing is downloaded here) | – |
+| 3.8 | Timeline (optional) | CPU | document | a Google Maps Timeline `.json` (recognised by its content) becomes a day-by-day log of visits and journeys with `geo:` positions and Google place IDs as they are | – |
 | 4 | Chunk | CPU | document | split the Markdown into passages that never cross a page; tables and code stay whole where they fit | `indexer.chunk_size`, `indexer.chunk_overlap` |
 | 5 | Embed | GPU | run | turn every new passage into a vector; the model is loaded once per run, after all documents are converted | `models.embedding`, `models.embed_batch`, `models.max_seq`, `models.dtype`, `models.device` |
 | 6 | Write | CPU | document | nodes.json and embeddings.npy, then index.meta.json last, so a half-written document is never taken for a finished one | – |
 | 7 | Merge | CPU | collection | concatenate the documents' vectors into the collection's index for search (nothing is re-embedded) | – |
 | 8 | Publish | CPU | collection | hard-link the new generation, switch the "current" symlink, tell the search daemon to reload; the last three generations are kept | `indexer.auto_publish` |
+| 9 | Describe (optional, on request) | GPU | document | not part of a run: a vision model writes a short description of each photograph into its record, marked as machine-written; the next run embeds it (4, 5, 6). Cached by photograph, model and prompt | `models.describe` |
 
 Search (one query):
 
@@ -1023,6 +1027,23 @@ processes, runs without downloading models.
 * **Google Timeline** (`core/timeline.py`, before conversion in `_prepare_document`): a `.json` whose first 256 KB look
   like one of the three export shapes is written as a day-by-day log (visits and journeys with times, `geo:`
   positions, the Google place ID as it is, the `geo.py` lines); any other `.json` goes to the generic JSON converter.
+
+### 5.3b Photo descriptions (`core/describe.py`, step 9)
+
+* **A step of its own, on request** (Models tab's *Photo descriptions* card, `rag-search photos describe [--collection C]
+  [--limit N] [--redo]`, a `model_tasks` task with `op: "describe"`): the model of several GB runs in **one** process,
+  which a run's several conversion processes could not afford, and the task can be stopped and picked up again.
+  `rag-search photos model NAME` chooses the 8B (default) or the 4B; `models.describe` is the setting (step 9).
+* **What it writes**: lines in the photograph's *Photo details* section, marked as machine-written (`Looks like`, `Things seen`,
+  `People in the picture (model count)`, `Described by: <model>, prompt <version>`), plus Apple Vision's `Faces detected`. A word
+  filter drops the guesses the model still makes (seasons, weather, indoors or outdoors). Tried on 38 photographs: main subject
+  right every time; no visibly false statement from the 8B, two photographs with one from the 4B.
+* **Only photographs**: a document with a Photo details section and little text beyond it; a photographed page is read, not described.
+* **Never repeated by a map refresh or a rebuild**: each description is cached in `<workspace>/describe_cache.sqlite` under the
+  photograph's checksum, the model and the prompt version; `photo.attach` carries the description lines over when the section is
+  renewed (a map refresh rewrites only the place lines); a photograph converted again (a full rebuild) gets its description back from the
+  cache while it is converted, without the model. A new model or prompt makes the photographs candidates again.
+* **Embedding**: describing marks the photograph's index entry out of date and starts `index new`, which reuses the Markdown and embeds the new text.
 
 ### 5.4 Playground (`core/playground.py`)
 

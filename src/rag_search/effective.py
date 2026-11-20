@@ -48,6 +48,7 @@ READ_BY: dict[str, tuple[str, str, str]] = {
     "indexer.vlm": ("rag_search.core.conversion.vlm", "mode",
                     "auto: scans, large pictures and image files are read by the document reader when it can run"),
     "models.reader": ("rag_search.models", "reader_choice", "the vision model behind lanes 3.2c and 3.2d"),
+    "models.describe": ("rag_search.models", "describe_selection", "the vision model that describes photographs (step 9)"),
     "models.memory_limit_gb": ("rag_search.models", "memory_limit_gb",
                                "how much memory the models may count on when the Models tab judges what fits"),
     "indexer.ocr_first": ("rag_search.core.conversion.routed", "ocr_first_mode", "lane b: a clean scan is read by OCR first"),
@@ -178,6 +179,9 @@ def _value(setting: str, t: spec.Tunable | None, cfg: Mapping[str, Any], env: Ma
         if key in ("reader", "repair"):
             from . import models
             return env.get(models.VLM_ENV[key]) or scfg.get(key) or models.VLM_DEFAULTS[key]
+        if key == "describe":
+            from . import models
+            return env.get(models.DESCRIBE_ENV) or scfg.get("describe") or models.DESCRIBE_MODELS[0]
         if key == "memory_limit_gb":
             return scfg.get("memory_limit_gb") or "none (the installed memory)"
     if section == "search":
@@ -199,7 +203,8 @@ def _source(setting: str, t: spec.Tunable | None, cfg: Mapping[str, Any], amb: M
     if t is not None and t.env and amb.get(t.env):
         return "environment"
     envs = {"models.embedding": "RAG_SEARCH_MODEL", "models.reranker": "RAG_SEARCH_RERANK_MODEL",
-            "models.reader": "RAG_SEARCH_VLM_MODEL", "models.repair": "RAG_SEARCH_REPAIR_MODEL"}
+            "models.reader": "RAG_SEARCH_VLM_MODEL", "models.repair": "RAG_SEARCH_REPAIR_MODEL",
+            "models.describe": "RAG_SEARCH_DESCRIBE_MODEL"}
     if setting in envs and amb.get(envs[setting]):
         return "environment"
     v = (cfg.get(section) or {}).get(key)
@@ -250,10 +255,10 @@ def resolve(cfg: Mapping[str, Any], base_env: Mapping[str, str] | None = None) -
 
 _LABELS = {
     "models.embedding": "Embedding model", "models.reranker": "Reranker", "models.reader": "Document reader model",
-    "models.repair": "Repair model", "models.memory_limit_gb": "Memory limit for models (GB)",
+    "models.repair": "Repair model", "models.describe": "Photo description model", "models.memory_limit_gb": "Memory limit for models (GB)",
     "indexer.jobs": "Documents converted side by side", "indexer.auto_publish": "Publish after a run",
     "search.prewarm": "Load the models when the daemon starts",
 }
 _APPLIES = {"models.embedding": "re-embed", "models.reranker": "restart", "models.reader": "next-run",
-            "models.repair": "next-run", "models.memory_limit_gb": "immediate", "indexer.jobs": "next-run",
+            "models.repair": "next-run", "models.describe": "next-run", "models.memory_limit_gb": "immediate", "indexer.jobs": "next-run",
             "indexer.auto_publish": "next-run", "search.prewarm": "restart"}

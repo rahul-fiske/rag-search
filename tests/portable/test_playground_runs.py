@@ -167,7 +167,7 @@ class EffectiveSettingsTests(_Base):
     def test_every_indexing_stage_but_publish(self):
         res = pg.effective_settings(self.paths, "demo")
         ids = [s["id"] for s in res["stages"]]
-        self.assertEqual(ids, ["1", "2", "3", "3.1", "3.2", "3.3", "3.4", "3.5", "4", "5", "6", "7"])
+        self.assertEqual(ids, ["1", "2", "3", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7", "3.8", "4", "5", "6", "7", "9"])
         self.assertIn("8 Publish does not exist", res["note"])
 
     def test_values_and_sources_come_from_the_experiment(self):

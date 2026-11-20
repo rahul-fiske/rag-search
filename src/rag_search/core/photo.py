@@ -27,7 +27,8 @@ from __future__ import annotations
 import contextlib
 import os
 import re
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,10 @@ HEADING = "## Photo details"
 _BLOCK_RE = re.compile(r"^## Photo details\n\n(?:- .*\n?)+\n?", re.M)
 _PAGE_ONE = "<!-- page 1 -->"
 _SEEN = "Text in the picture:"
+# lines that something other than the file's own metadata wrote: kept when the section is renewed (a map refresh
+# rewrites the place lines and nothing else); ``describe.py`` writes the model's lines and the face count
+_KEEP = (_SEEN, "Looks like (model-written):", "Things seen (model-written):", "People in the picture (model count):",
+         "Faces detected:", "Described by:")
 
 # EXIF tags (base IFD, Exif IFD 0x8769, GPS IFD 0x8825)
 _MAKE, _MODEL, _DATETIME, _ORIENT = 0x010F, 0x0110, 0x0132, 0x0112
@@ -122,11 +127,17 @@ def read_exif(src: Path) -> dict[str, Any]:
 Annotator = Callable[[dict[str, Any], Paths], "tuple[list[str], str]"]
 
 
+LAST: dict[str, float] = {}           # seconds the last Locate took, for the stage events of the indexer
+
+
 def _where(meta: dict[str, Any], paths: Paths) -> tuple[list[str], str]:
     """Area, town and the places around (``geo.py``, from the map data that is installed)."""
+    LAST["locate_s"] = 0.0
     if "lat" not in meta:
         return [], ""
+    t0 = time.perf_counter()
     lines, refs = geo.describe(meta["lat"], meta["lon"], paths)
+    LAST["locate_s"] = round(time.perf_counter() - t0, 3)
     return lines, ", ".join(refs)
 
 
@@ -162,7 +173,7 @@ def is_photograph(text: str | None) -> bool:
     return text is not None and amount(text) < DOCUMENT_CHARS
 
 
-def lines(meta: dict[str, Any], paths: Paths, text: str = "") -> list[str]:
+def lines(meta: dict[str, Any], paths: Paths, text: str = "", extra: Sequence[str] = ()) -> list[str]:
     out: list[str] = []
     if "when" in meta:
         when = meta["when"]
@@ -191,29 +202,79 @@ def lines(meta: dict[str, Any], paths: Paths, text: str = "") -> list[str]:
     text = " ".join(text.split())
     if sum(ch.isalpha() for ch in text) >= MIN_LETTERS:                # "2" or "2 102 30" is not text
         out.append(_SEEN + " " + (text if len(text) <= TEXT_LINE_CHARS else text[:TEXT_LINE_CHARS].rstrip() + " ..."))
+    out.extend(extra)
     if refs:
         out.append(f"Reference data: {', '.join(refs)}")
     return out
 
 
-def block(src: Path, paths: Paths, text: str = "") -> str:
+def block(src: Path, paths: Paths, text: str = "", extra: Sequence[str] = ()) -> str:
     """The "Photo details" section for *src* (with the short *text* found in it, when given), or "" when the file has no
     camera metadata."""
     meta = read_exif(src)
     if not meta:
         return ""
-    return HEADING + "\n\n" + "\n".join(f"- {x}" for x in lines(meta, paths, text)) + "\n"
+    return HEADING + "\n\n" + "\n".join(f"- {x}" for x in lines(meta, paths, text, extra)) + "\n"
+
+
+def _carry(old: str, new: str) -> str:
+    """*new* (a section) with the ``_KEEP`` lines of *old* that it lacks, just before its Reference data line."""
+    have = [ln for ln in new.splitlines() if ln.startswith("- ")]
+    kept = [ln for ln in old.splitlines() if ln.startswith("- ")
+            and any(ln.startswith(f"- {k}") for k in _KEEP)
+            and not any(h.startswith(ln[:ln.index(":") + 1]) for h in have)]
+    if not kept:
+        return new
+    head, sep, tail = new.rstrip("\n").rpartition("\n- Reference data")
+    return head + "\n" + "\n".join(kept) + (sep + tail if sep else "") + "\n"
+
+
+def set_extra(md_path: Path, extra: Sequence[str]) -> bool:
+    """Put the lines of *extra* (each starts with one of the ``_KEEP`` labels) into the Photo details section of an
+    existing Markdown file, replacing the lines that have the same label; nothing else in the file changes.  True when
+    the file changed."""
+    text = md_path.read_text(encoding="utf-8", errors="replace")
+    m = _BLOCK_RE.search(text)
+    if not m or not extra:
+        return False
+    labels = [x[:x.index(":") + 1] for x in extra if ":" in x]
+    old = [ln for ln in m.group(0).splitlines() if ln.startswith("- ")]
+    keep = [ln for ln in old if not any(ln.startswith(f"- {lab}") for lab in labels)]
+    at = next((i for i, ln in enumerate(keep) if ln.startswith("- Reference data")), len(keep))
+    new_lines = keep[:at] + [f"- {x}" for x in extra] + keep[at:]
+    section = HEADING + "\n\n" + "\n".join(new_lines) + "\n"
+    new = text[:m.start()] + section + ("\n" if m.group(0).endswith("\n\n") else "") + text[m.end():]
+    if new == text:
+        return False
+    tmp = md_path.with_name(md_path.name + ".partial")
+    tmp.write_text(new, encoding="utf-8")
+    os.replace(tmp, md_path)
+    return True
+
+
+def faces_in(image: Path) -> int | None:
+    """How many faces Apple Vision finds in an (upright) image file; None where Vision is not available.  A count only:
+    nobody is identified."""
+    try:
+        import Vision                                  # type: ignore
+        from Foundation import NSURL                   # type: ignore
+    except ImportError:
+        return None
+    try:
+        req = Vision.VNDetectFaceRectanglesRequest.alloc().init()
+        handler = Vision.VNImageRequestHandler.alloc().initWithURL_options_(NSURL.fileURLWithPath_(str(image)), {})
+        ok, _err = handler.performRequests_error_([req], None)
+        return len(req.results() or []) if ok else None
+    except Exception:  # noqa: BLE001 - no count is better than a failed photograph
+        return None
 
 
 def attach(md_path: Path, section: str) -> bool:
     """Put *section* into the Markdown (under page 1), replacing the one that is there.  True when the file changed."""
     text = md_path.read_text(encoding="utf-8", errors="replace")
     old = _BLOCK_RE.search(text) if HEADING in text else None
-    if old and _SEEN not in section:                 # the text found in the picture is kept when only the rest is renewed
-        kept = next((ln for ln in old.group(0).splitlines() if ln.startswith(f"- {_SEEN}")), "")
-        if kept:
-            head, _, tail = section.rstrip("\n").rpartition("\n- Reference data")
-            section = (head + "\n" + kept + ("\n- Reference data" + tail if _ else "")) + "\n"
+    if old:                                          # what others wrote is kept when only the rest is renewed
+        section = _carry(old.group(0), section)
     new = _BLOCK_RE.sub("", text).lstrip("\n") if old else text
     if new.startswith(_PAGE_ONE):
         body = new[len(_PAGE_ONE):].lstrip("\n")

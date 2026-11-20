@@ -175,6 +175,10 @@ VLM_CATALOG: tuple[ModelSpec, ...] = (
               "A flagged page is not read again by a different model.",
               backend=MLX_VLM, tier="light", style="instruct"),
 )
+# the model that writes a short description of each photograph (``core/describe.py``): chosen from these two, the 8B by
+# default (it made no false statement in the test on 38 photos; the 4B is about 1.7 times faster and needs less memory)
+DESCRIBE_MODELS = ("mlx-community/Qwen3-VL-8B-Instruct-4bit", "mlx-community/Qwen3-VL-4B-Instruct-4bit")
+DESCRIBE_ENV = "RAG_SEARCH_DESCRIBE_MODEL"
 VLM_DEFAULTS = {READER: "mlx-community/Qwen3-VL-4B-Instruct-4bit",
                 REPAIR: "mlx-community/Qwen3-VL-8B-Instruct-4bit"}
 
@@ -277,6 +281,32 @@ def vlm_selection(kind: str) -> tuple[str, str]:
     if cfg:
         return cfg, "config"
     return VLM_DEFAULTS[kind], "default"
+
+
+def describe_selection() -> tuple[str, str]:
+    """(model id, environment | config | default) of the model that describes photographs."""
+    env = os.environ.get(DESCRIBE_ENV)
+    if env:
+        return env, "environment"
+    cfg = configured_model("describe")
+    if cfg:
+        return cfg, "config"
+    return DESCRIBE_MODELS[0], "default"
+
+
+def describe_choice() -> tuple[str, float]:
+    """(model id, GB the process needs) of the photo describer."""
+    mid = describe_selection()[0]
+    spec = vlm_find(READER, mid)
+    return mid, (spec.mem_gb if spec else 4.0) + VLM_OVERHEAD_GB
+
+
+def set_describe_model(paths: Paths, model_id: str) -> None:
+    from .config import update_config
+
+    if model_id not in DESCRIBE_MODELS:
+        raise ModelError(f"choose one of {', '.join(DESCRIBE_MODELS)}")
+    update_config(paths, "models", {"describe": model_id})
 
 
 def set_vlm_selection(paths: Paths, kind: str, model_id: str) -> None:

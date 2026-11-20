@@ -1,7 +1,7 @@
 'use strict';
 /* Models: which embedding model and reranker are in use, what else is available, download and switch; map data. */
 (function () {
-  let refs = {}, data = null, mapData = null, loading = false, lastLoad = 0, error = '';
+  let refs = {}, data = null, mapData = null, photoData = null, loading = false, lastLoad = 0, error = '';
   const FIT = { ok: null, tight: ['tight on memory', 'warn'], too_large: ['too large for the memory budget', 'bad'] };
 
   const taskActive = () => !!(data && data.task && (data.task.status === 'running' || data.task.status === 'queued'));
@@ -9,8 +9,9 @@
   async function load(force) {
     if (loading || (!force && Date.now() - lastLoad < 900)) return;
     loading = true;
-    const [r, m] = await Promise.all([api('models'), api('maps')]);
+    const [r, m, ph] = await Promise.all([api('models'), api('maps'), api('photos')]);
     if (m.ok !== false) mapData = m;
+    if (ph.ok !== false) photoData = ph;
     loading = false; lastLoad = Date.now();
     if (r.ok === false) { error = r.error || 'cannot read the model state'; } else { error = ''; data = r; }
     render();
@@ -344,6 +345,32 @@
         h('span', { class: 'small muted' }, 'after downloading: only the documents whose cells changed')));
   }
 
+  /* ---------- photo descriptions ---------- */
+  async function describePhotos(limit) {
+    const r = await api('photos/describe', { limit });
+    if (r.ok === false) { toast(r.error || 'failed', 'bad'); return; }
+    load(true);
+  }
+
+  function photoCard() {
+    const d = photoData;
+    if (!d) return null;
+    const busy = readOnly() || taskActive() || !!d.unavailable;
+    const sel = h('select', { disabled: readOnly() || taskActive(), on: { change: async () => { const r = await api('photos/model', { model: sel.value }); if (r.ok === false) toast(r.error || 'failed', 'bad'); load(true); } } },
+      (d.choices || []).map(c => h('option', { value: c.id, selected: c.id === d.model }, `${c.label} · needs about ${c.need_gb.toFixed(1)} GB free${c.downloaded ? '' : ' · not downloaded'}`)));
+    return h('div', { class: 'card', style: { marginTop: '16px' } },
+      h('div', { class: 'card-head' }, h('h2', null, 'Photo descriptions'),
+        h('span', { class: 'muted small' }, 'a vision model writes a short description of each photograph · lines are marked as machine-written · runs only when you ask here')),
+      d.unavailable ? h('div', { class: 'notice warn' }, d.unavailable) : null,
+      h('p', { style: { margin: '0 0 8px' } }, h('b', null, `${num(d.photographs)} photograph(s)`), ': ',
+        `${num(d.described)} described by the current model`, d.described_by_another_model ? `, ${num(d.described_by_another_model)} by another model or prompt` : '', `, ${num(d.pending)} to do.`),
+      h('div', { class: 'row' }, h('span', { class: 'small' }, 'Model:'), sel,
+        h('button', { class: 'btn small primary', disabled: busy || !d.pending || !d.downloaded, on: { click: () => describePhotos(0) } }, d.pending ? `Describe ${num(d.pending)} photograph(s)` : 'All described'),
+        h('button', { class: 'btn small', disabled: busy || !d.pending || !d.downloaded, title: 'a trial on the first ten', on: { click: () => describePhotos(10) } }, 'Try 10')),
+      !d.downloaded ? h('p', { class: 'small muted', style: { margin: '8px 0 0' } }, 'This model is not downloaded: ', h('code', null, 'rag-search models download ' + d.model)) : null,
+      h('p', { class: 'small muted', style: { margin: '8px 0 0' } }, 'About 2.5 seconds a photograph with the 8B model and 1.5 with the 4B. Each description is cached by the photograph, the model and the prompt, so downloading map data or refreshing places never describes a photograph again. Only photographs are described; a photographed page is read as text.'));
+  }
+
   function taskCard() {
     const t = data.task;
     if (!t) return null;
@@ -352,19 +379,20 @@
     const p = t.progress || {};
     const pct = p.total ? Math.min(100, Math.round(100 * (p.done || 0) / p.total)) : null;
     const cls = t.status === 'failed' ? 'bad' : t.status === 'succeeded' ? 'ok' : t.status === 'cancelled' ? '' : 'warn';
-    const title = { switch: 'Switching', download: 'Downloading', verify: 'Testing', runtime: 'Installing the document reader runtime', maps: 'Map data:' }[t.op] || t.op;
+    const title = { switch: 'Switching', download: 'Downloading', verify: 'Testing', runtime: 'Installing the document reader runtime', maps: 'Map data:', describe: 'Describing photographs' }[t.op] || t.op;
     const res = t.result || {};
     return h('div', { class: 'card', style: { marginBottom: '16px' } },
       h('div', { class: 'card-head' }, h('h2', null, title + ' ' + (t.model || '')), pill(t.status, cls, active),
         h('div', { class: 'spacer' }, active ? h('button', { class: 'btn small danger', disabled: readOnly(), on: { click: cancelTask } }, 'Cancel') : null)),
       active ? h('p', { class: 'small muted', style: { margin: '0 0 6px' } }, `${t.phase || ''} · running for ${since(t.started_at)}`) : null,
-      p.model && (p.done || p.total) ? h('div', null, h('div', { class: 'small' }, p.unit === 'steps' ? `${p.model} (step ${num(p.done)} of ${num(p.total)})` : `${p.model}: ${bytes(p.done)}${p.total ? ' of ' + bytes(p.total) : ''}${pct !== null ? ' (' + pct + '%)' : ''}`),
+      p.model && (p.done || p.total) ? h('div', null, h('div', { class: 'small' }, p.unit === 'steps' ? `${p.model} (step ${num(p.done)} of ${num(p.total)})` : p.unit === 'photos' ? `${num(p.done)} of ${num(p.total)} photographs · ${p.model}` : `${p.model}: ${bytes(p.done)}${p.total ? ' of ' + bytes(p.total) : ''}${pct !== null ? ' (' + pct + '%)' : ''}`),
         h('div', { class: 'bar', style: { margin: '6px 0 10px' } }, h('i', { style: { width: (pct === null ? 8 : pct) + '%' } }))) : null,
       t.error ? h('div', { class: 'notice bad' }, t.error) : null,
       t.status === 'succeeded' && res.reindex === 'started' ? h('div', { class: 'notice ok' }, `Re-embedding ${num(res.documents)} document(s) has started. Follow it in `, h('a', { href: '#/indexing' }, 'Indexing'), '; search switches to the new model when it is complete.') : null,
       t.status === 'succeeded' && res.reindex === 'not started' ? h('div', { class: 'notice warn' }, 'Saved. Documents are embedded with the new model the next time they are indexed; use “Finish re-embedding now” below.') : null,
       t.status === 'succeeded' && res.applied && !res.reindex ? h('div', { class: 'notice ok' }, res.unchanged ? 'Nothing to change.' : 'Switched.') : null,
       t.status === 'succeeded' && t.op === 'maps' ? h('div', { class: 'notice ok' }, mapResult(res)) : null,
+      t.status === 'succeeded' && t.op === 'describe' ? h('div', { class: 'notice ok' }, `${num(res.described)} described by the model, ${num(res.from_cache)} from the cache, ${num(res.skipped)} skipped; ${num(res.updated)} record(s) updated${res.reindex === 'started' ? '; indexing has started to embed them' : ''}.`) : null,
       (t.log && t.log.length) ? h('div', { class: 'log', style: { maxHeight: '140px', marginTop: '8px' } }, t.log.slice(-8).map(l => h('div', { class: 'ln' }, l.msg))) : null);
   }
 
@@ -374,7 +402,7 @@
     patch(refs.body,
       error ? h('div', { class: 'notice bad', style: { marginBottom: '12px' } }, error) : null,
       taskCard(),
-      embeddingCard(), rerankerCard(), readerCard(), mapsCard(),
+      embeddingCard(), rerankerCard(), readerCard(), photoCard(), mapsCard(),
       h('div', { class: 'grid g2', style: { marginTop: '16px' } }, presetsCard(), machineCard()));
     refs.customBtn.disabled = readOnly() || taskActive();
   }

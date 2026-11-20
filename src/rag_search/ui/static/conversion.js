@@ -16,9 +16,11 @@ const CV = (function () {
     embedded: ['embedded', 'large picture inside a PDF page, read by the document VLM'],
     fallback: ['scanned (OCR)', 'scanned page read by docling with full-page OCR (the document VLM is off, not installed, or could not read this page)'],
     cached: ['cached', 'page result reused from the page cache'],
+    photo: ['photo', 'a photograph: indexed from its details (time, GPS, place, faces), not read by the document reader (steps 3.6, 3.7)'],
+    timeline: ['timeline', 'a Google Maps Timeline: one line per visit and journey, with the places around it (steps 3.8, 3.7)'],
     unknown: ['unprofiled', 'not profiled (the profiling time limit was reached)'],
   };
-  const LETTERS = { c: 'copy', o: 'office', d: 'digital', r: 'raster', i: 'image', e: 'embedded', f: 'fallback', k: 'cached', '?': 'unknown' };
+  const LETTERS = { c: 'copy', o: 'office', d: 'digital', r: 'raster', i: 'image', e: 'embedded', f: 'fallback', k: 'cached', p: 'photo', t: 'timeline', '?': 'unknown' };
   const OUTCOMES = {
     pass: 'passed the quality checks', repaired: 'passed after repair', low: 'low confidence: kept, but flagged',
     no_text: 'no text on the page', error: 'could not be read',
@@ -136,7 +138,30 @@ const CV = (function () {
     const gateFails = Object.keys(gf).length ? Object.entries(gf).map(([k, v]) => `${k.replace('_', ' ')} ${num(v)}`).join(' · ') : (t.pages ? 'no check failed' : 'is the text trustworthy?');
     const moved = Object.entries(mv).map(([k, v]) => `${k.replace('>', ' → ')} ${num(v)}`).join(' · ');
     const eng = l.engines && Object.keys(l.engines).length ? Object.entries(l.engines).map(([k, v]) => `${k} ${num(v)}`).join(' · ') : '';
-    return h('div', { class: 'cv-pipe' },
+    const br = t.branches || {}, nPhoto = br.photo || 0, nTl = br.timeline || 0;
+    const other = h('div', { class: 'cv-other' },
+      h('div', { class: 'small muted cv-other-h' }, 'Two kinds of file do not go page by page through the lanes above: an image that carries camera data, and a Google Maps Timeline .json. What the file is decides the path (3.1 and 3.2 are for pages).'),
+      h('div', { class: 'cv-pipe cv-pipe-other' },
+        h('div', { class: 'cv-col' },
+          h('div', { class: 'cv-other-l' }, 'Image files with camera data'),
+          node('3.6 · Photo details', nPhoto ? `${num(nPhoto)} photograph${nPhoto === 1 ? '' : 's'} this run` : 'time · GPS · camera · faces counted', 'cpu', nPhoto ? 'on' : '',
+            'The camera data (EXIF) and the faces Apple Vision counts become a section of facts. A quick text check then decides: little text = a photograph, indexed from these details and never read by the document reader; a page of text goes down the lanes above and gets the details too.'),
+          h('span', { class: 'cv-arrow down', 'aria-hidden': 'true' }, '↓'),
+          node('photograph or page?', 'little text: details only · a page: lanes 3.2a–d', 'cpu', 'on', 'Fewer than 200 letters and digits found in the picture = a photograph.')),
+        h('span', { class: 'cv-arrow', 'aria-hidden': 'true' }, '→'),
+        h('div', { class: 'cv-col' },
+          h('div', { class: 'cv-other-l' }, 'for every position'),
+          node('3.7 · Locate', 'area · town · places nearby', 'cpu', 'on', 'From the map data that is installed (Models tab, Maps): the Overture area, the GeoNames town and the Overture places within 100 m, as candidates with distances. Nothing is downloaded here.'),
+          h('span', { class: 'cv-arrow down', 'aria-hidden': 'true' }, '↑'),
+          node('Map data', 'GeoNames · Overture areas and places', null, 'planned', 'Downloaded only when you ask (Models tab, rag-search maps).')),
+        h('span', { class: 'cv-arrow', 'aria-hidden': 'true' }, '←'),
+        h('div', { class: 'cv-col' },
+          h('div', { class: 'cv-other-l' }, 'Google Maps Timeline .json'),
+          node('3.8 · Timeline', nTl ? `${num(nTl)} timeline file${nTl === 1 ? '' : 's'} this run` : 'recognised by its content · day-by-day log', 'cpu', nTl ? 'on' : '',
+            'A .json that is a Timeline export (phone, semanticSegments or Takeout) is written as one line per visit and journey, with times, geo: positions and the Google place ID as it is. Any other .json is read as plain structured text.'),
+          h('span', { class: 'cv-arrow down', 'aria-hidden': 'true' }, '↓'),
+          node('9 · Describe', 'on request: a vision model describes each photograph (Models tab)', 'gpu', 'planned', 'Not part of a run: `rag-search photos describe` or the Models tab writes machine-written lines into the photograph\'s record; the next run embeds them. A map refresh never repeats it.'))));
+    const main = h('div', { class: 'cv-pipe' },
       h('div', { class: 'cv-col' },
         node('3.1 · Profile', t.pages ? `${num(t.pages)} pages looked at` : 'what is on each page', 'cpu', 'on', 'Text layer? scan? photo? pictures, ink, resolution, script'),
         h('span', { class: 'cv-arrow down', 'aria-hidden': 'true' }, '↓'),
@@ -160,6 +185,7 @@ const CV = (function () {
         node('3.5 · Reconcile', t.merged_tables ? `${num(t.merged_tables)} tables joined across pages` : 'tables across a page break', 'cpu', 'on', 'A table that continues on the next page is joined (the continuation gets the header) and checked across the break'),
         h('span', { class: 'cv-arrow down', 'aria-hidden': 'true' }, '↓'),
         node('Outcome', [`pass ${num(out.pass || 0)}`, out.repaired ? `repaired ${num(out.repaired)}` : null, out.no_text ? `no text ${num(out.no_text)}` : null, out.error ? `error ${num(out.error)}` : null, out.low ? `low ${num(out.low)}` : null].filter(Boolean).join(' · ') || 'pass / low confidence', null, 'on')));
+    return h('div', null, main, other);
   }
 
   /* Pages per lane as one proportional bar with the figures beside it (what each lane's reader finished). */

@@ -10,7 +10,7 @@ Example ``config.json`` (every key is optional):
                    "table_mode": "", "pdf_backend": "", "pipeline": "", "routing": "", "vlm": "", "repair": "",
                    "ocr_first": "", "residue": "", "escalate_digital": "", "layer_fill": "",
                    "stall_timeout": 0, "doc_timeout": 0, "docling_batch": 0},
-      "models":  {"embedding": "", "reranker": "", "reader": "", "repair": "", "memory_limit_gb": 0,
+      "models":  {"embedding": "", "reranker": "", "reader": "", "repair": "", "describe": "", "memory_limit_gb": 0,
                    "embed_batch": 0, "max_seq": 0, "dtype": "", "rerank_batch": 0,
                    "rerank_max_len": 0, "device": "", "quantize": ""}
     }
@@ -57,7 +57,7 @@ DEFAULTS: dict[str, Any] = {
     # "" = the built-in default model; change with `rag-search models set` or the dashboard.
     # memory_limit_gb: 0 = no limit of your own (models are then judged against the RAM installed)
     "models": {
-        "embedding": "", "reranker": "", "reader": "", "repair": "", "memory_limit_gb": 0,
+        "embedding": "", "reranker": "", "reader": "", "repair": "", "describe": "", "memory_limit_gb": 0,
         "embed_batch": 0, "max_seq": 0, "dtype": "", "rerank_batch": 0, "rerank_max_len": 0,
         "device": "", "quantize": "",
     },

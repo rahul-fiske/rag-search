@@ -251,3 +251,45 @@ class PhotoRefreshTests(IndexedPhotoTests):
         self.assertIn("- Text in the picture: EXIT 4", text)
         self.assertEqual(text.count("## Photo details"), 1)
         self.assertEqual(maps.refresh(self.paths)["refreshed"], 0)          # stamped again: current
+
+
+class PhotoPipelineRecordTests(IndexedPhotoTests):
+    """The dashboard draws the photograph path from what a run records: stage events 3.6 and 3.7, and the page branch."""
+
+    def events(self, log):
+        return [json.loads(x) for x in Path(log).read_text(encoding="utf-8").splitlines() if x.strip()]
+
+    def test_a_photograph_records_photo_and_locate_stages_and_a_photo_branch(self):
+        (self.sdir / "c").mkdir()
+        jpeg(self.sdir / "c" / "p.jpg")
+        log = self.tmp / "stages.jsonl"
+        srcs = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
+        with mock.patch.object(photo, "visible_text", return_value="EXIT 4"):
+            indexer.run_index(self.paths, srcs, self.roots(), jobs=1, embedder=FakeEmbedder(), progress=lambda e: None,
+                              stage_log=log)
+        stages = {(e["stage"], e["id"]): e for e in self.events(log) if e.get("event") == "stage" and e.get("status") == "done"}
+        self.assertEqual(stages[("photo", "3.6")]["photograph"], True)
+        self.assertIn(("locate", "3.7"), stages)                              # it has a position and the town table is installed
+        self.assertIn(("convert", "3"), stages)
+        trace_file = next(self.paths.markup.rglob("p.trace.json"))
+        summary = json.loads(trace_file.read_text(encoding="utf-8"))["summary"]
+        self.assertEqual(summary["branches"], {"photo": 1})
+        self.assertEqual(summary["readers"], ["photo"])
+
+    def test_a_photographed_page_records_the_photo_stage_but_keeps_its_page_branch(self):
+        (self.sdir / "c").mkdir()
+        jpeg(self.sdir / "c" / "page.jpg")
+
+        def convert(src, out, ocr=None):
+            out.write_text("<!-- page 1 -->\n\n" + "The agreement is made between the parties. " * 10 + "\n", encoding="utf-8")
+            return {"pages": 1, "seconds": 0.0}
+        log = self.tmp / "stages2.jsonl"
+        srcs = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
+        with mock.patch.object(photo, "visible_text", return_value="word " * 120), \
+                mock.patch("rag_search.core.docling_convert.convert_file", convert):
+            indexer.run_index(self.paths, srcs, self.roots(), jobs=1, embedder=FakeEmbedder(), progress=lambda e: None,
+                              stage_log=log)
+        stages = {e["stage"]: e for e in self.events(log) if e.get("event") == "stage" and e.get("status") == "done"}
+        self.assertEqual(stages["photo"]["photograph"], False)
+        summary = json.loads(next(self.paths.markup.rglob("page.trace.json")).read_text(encoding="utf-8"))["summary"]
+        self.assertNotIn("photo", summary["branches"])

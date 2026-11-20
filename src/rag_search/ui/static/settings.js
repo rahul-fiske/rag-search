@@ -11,7 +11,7 @@
   const tkey = t => t.section + '.' + t.key;
 
   function whereToChange(row) {
-    if (row.id.startsWith('models.') && ['models.embedding', 'models.reranker', 'models.reader', 'models.repair', 'models.memory_limit_gb'].includes(row.id))
+    if (row.id.startsWith('models.') && ['models.embedding', 'models.reranker', 'models.reader', 'models.repair', 'models.describe', 'models.memory_limit_gb'].includes(row.id))
       return h('span', { class: 'small muted' }, 'chosen on the ', h('a', { href: '#/models' }, 'Models'), ' tab');
     return h('span', { class: 'small muted' }, 'set in config.json as ', h('code', null, row.id));
   }
@@ -65,7 +65,7 @@
       !block.count ? h('p', { class: 'small muted', style: { margin: 0 } }, 'Nothing to configure.') : null);
   }
 
-  /* One stage = one card.  Its sub-stages (3.1 - 3.5 of 3 Convert) are cards inside it, and a stage whose settings
+  /* One stage = one card.  Its sub-stages (3.1 - 3.8 of 3 Convert) are cards inside it, and a stage whose settings
      belong to several parts (3.2: the router and the four lanes) shows one card per part. */
   function stageCard(s, all) {
     const kids = all.filter(x => x.parent === s.id);
@@ -150,7 +150,7 @@
         refs.errorNote,
         h('div', { class: 'set-pipeline' },
           h('div', { class: 'card-head' }, h('h3', null, 'Indexing pipeline'), h('span', { class: 'applies-tag' }, 'applies to the next indexing run, unless a field says otherwise'),
-            h('span', { class: 'small muted' }, 'one card per stage; the steps of 3 Convert and the lanes of 3.2 Read have cards of their own')),
+            h('span', { class: 'small muted' }, 'one card per stage; the steps of 3 Convert (the photograph and Timeline paths too) and the lanes of 3.2 Read have cards of their own')),
           refs.idxBody, bar(refs.saveIdx)),
         h('div', { class: 'set-pipeline', style: { marginTop: '22px' } },
           h('div', { class: 'card-head' }, h('h3', null, 'Search pipeline'), h('span', { class: 'applies-tag' }, 'applies immediately, to the very next search, unless a field says otherwise')),

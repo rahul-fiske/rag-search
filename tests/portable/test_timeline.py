@@ -102,6 +102,16 @@ class IndexedTimelineTests(TempHome):
         self.use_fake_backends()
         os.environ["RAG_SEARCH_ROUTING"] = "document"
 
+    def test_a_timeline_records_the_timeline_stage(self):
+        (self.sdir / "maps").mkdir()
+        (self.sdir / "maps" / "Timeline.json").write_text(json.dumps(PHONE), encoding="utf-8")
+        log = self.tmp / "stages.jsonl"
+        srcs = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
+        indexer.run_index(self.paths, srcs, self.roots(), jobs=1, embedder=FakeEmbedder(), progress=lambda e: None, stage_log=log)
+        done = {(e["stage"], e["id"]) for e in (json.loads(x) for x in log.read_text(encoding="utf-8").splitlines() if x.strip())
+                if e.get("event") == "stage" and e.get("status") == "done"}
+        self.assertIn(("timeline", "3.8"), done)
+
     def test_a_timeline_is_indexed_and_other_json_is_not_treated_as_one(self):
         (self.sdir / "maps").mkdir()
         (self.sdir / "maps" / "Timeline.json").write_text(json.dumps(PHONE), encoding="utf-8")
@@ -123,4 +133,6 @@ class IndexedTimelineTests(TempHome):
         self.assertEqual(maps.refresh(self.paths)["reconverted"], 1)
         indexer.run_index(self.paths, srcs, self.roots(), jobs=1, embedder=FakeEmbedder(), progress=lambda e: None)
         self.assertIn("  - Nearby: Hotel Sai Krishna", md.read_text(encoding="utf-8"))
+        summary = json.loads(next(self.paths.markup.rglob("Timeline.trace.json")).read_text(encoding="utf-8"))["summary"]
+        self.assertEqual(summary["branches"], {"timeline": 1})                          # drawn as its own branch
         self.assertEqual(maps.refresh(self.paths)["refreshed"], 0)

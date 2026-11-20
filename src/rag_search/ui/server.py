@@ -429,6 +429,12 @@ class Handler(BaseHTTPRequestHandler):
         if name == "models":
             return self._json({"ok": True, **models.state(app.paths),
                                "task": model_tasks.read_task(app.paths)})
+        if name == "photos":
+            from ..core import describe
+
+            task = model_tasks.read_task(app.paths)
+            return self._json({"ok": True, **describe.status(app.paths, (q.get("collection") or [""])[0]),
+                               "task": task if task and task.get("op") == "describe" else None})
         if name == "maps":
             from .. import maps
 
@@ -594,6 +600,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._models_post(name[len("models/"):], body)
             if name.startswith("maps/"):
                 return self._maps_post(name[len("maps/"):], body)
+            if name.startswith("photos/"):
+                return self._photos_post(name[len("photos/"):], body)
             if name.startswith("playground/"):
                 return self._playground_post(name[len("playground/"):], body)
         except ValueError as exc:
@@ -789,6 +797,31 @@ class Handler(BaseHTTPRequestHandler):
         except (models.ModelError, model_tasks.TaskError) as exc:
             return self._error(400, str(exc))
         self.app.live.nudge(catalog=True)
+        self._json({"ok": True, "task": rec})
+
+    def _photos_post(self, action: str, body: dict[str, Any]) -> None:
+        """Describing photographs runs as a detached task like a model download (op "describe"); the page polls GET /api/photos."""
+        paths = self.app.paths
+        if action == "model":
+            try:
+                models.set_describe_model(paths, str(body.get("model") or ""))
+            except models.ModelError as exc:
+                return self._error(400, str(exc))
+            return self._json({"ok": True, "model": body.get("model")})
+        if action != "describe":
+            return self._error(404, "not found")
+        try:
+            limit = int(body.get("limit") or 0)
+        except (TypeError, ValueError):
+            return self._error(400, "limit must be a whole number")
+        req = {"op": "describe", "model": "describe photos", "collection": str(body.get("collection") or ""),
+               "limit": max(0, limit), "redo": body.get("redo") is True}
+        try:
+            rec = model_tasks.start_detached(paths, req)
+        except model_tasks.TaskBusy as exc:
+            return self._error(409, str(exc))
+        except model_tasks.TaskError as exc:
+            return self._error(400, str(exc))
         self._json({"ok": True, "task": rec})
 
     def _maps_post(self, action: str, body: dict[str, Any]) -> None:

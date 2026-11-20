@@ -20,6 +20,7 @@ Indexing (one run)::
     6  Write           nodes.json, embeddings, index.meta.json    (document)
     7  Merge           per-collection index for search            (collection)
     8  Publish         swap the serving generation                (collection)
+    9  Describe        a vision model describes each photograph   (document; on request, then 4-6 again)
 
 Search (one query): S1 Access, S2 Keyword, S3 Vectors, S4 Fuse, S5 Rerank, S6 Top k.
 
@@ -143,6 +144,22 @@ INDEXING: tuple[Stage, ...] = (
     Stage("3.5", "reconcile", "Reconcile", DOCUMENT, CPU,
           "a table that runs across a page break is joined (the continuation gets the header) and checked across "
           "the break"),
+    Stage("3.6", "photo", "Photo details", DOCUMENT, CPU,
+          "an image that carries camera data (EXIF) gets a section of facts: when (with the time zone), the GPS position, "
+          "camera and size, and the faces Apple Vision counts; a quick text check (Apple Vision, else Tesseract) tells a "
+          "photograph, which is indexed from these details and never read by the document reader, from a photographed "
+          "page, which goes down the lanes of 3.2 and gets the details too",
+          optional=True, constants=(("letters a picture needs to count as a page", 200), ("letters of text found in a picture kept", 4))),
+    Stage("3.7", "locate", "Locate", DOCUMENT, CPU,
+          "for every position (a photograph's GPS, the coordinates of a Timeline): the Overture area it is in, the GeoNames "
+          "town it is near, and the Overture places within 100 m (the nearest place to eat within 150 m) as candidates with "
+          "their distance; only the map data that is installed is used, nothing is downloaded here (Models tab, Maps)",
+          optional=True, constants=(("places listed at most", 5), ("map cell (degrees)", 0.05))),
+    Stage("3.8", "timeline", "Timeline", DOCUMENT, CPU,
+          "a .json file that is a Google Maps Timeline export (phone, semanticSegments or Takeout; recognised by its "
+          "content) becomes a day-by-day log: one line per visit and journey with times, geo: positions, the Google place "
+          "ID as it is, and the 3.7 lines; any other .json is read as plain structured text",
+          optional=True),
     Stage("4", "chunk", "Chunk", DOCUMENT, CPU,
           "split the Markdown into passages that never cross a page; tables and code stay whole where they fit",
           settings=("indexer.chunk_size", "indexer.chunk_overlap")),
@@ -159,6 +176,11 @@ INDEXING: tuple[Stage, ...] = (
     Stage("8", "publish", "Publish", COLLECTION, CPU,
           "hard-link the new generation, switch the \"current\" symlink, tell the search daemon to reload; the "
           "last three generations are kept", settings=("indexer.auto_publish",), constants=(("generations kept", 3),)),
+    Stage("9", "describe", "Describe", DOCUMENT, GPU,
+          "not part of a run: on request (Models tab, `rag-search photos describe`) a vision model writes a short description "
+          "of each photograph into its record, marked as machine-written; the next run (4, 5, 6) embeds it. One process, "
+          "cached by the photograph, the model and the prompt, so a map refresh or a rebuild never repeats it",
+          settings=("models.describe",), optional=True, constants=(("photographs of the test described without a false statement (8B)", "38 of 38"),)),
 )
 
 SEARCH: tuple[Stage, ...] = (
@@ -195,7 +217,7 @@ FINGERPRINT_INPUTS: tuple[tuple[str, str], ...] = (
 )
 
 # Settings that are `config.json` keys but not tunables of spec.py (a model choice, a switch, a limit).
-MODEL_KEYS = ("models.embedding", "models.reranker", "models.reader", "models.repair", "models.memory_limit_gb")
+MODEL_KEYS = ("models.embedding", "models.reranker", "models.reader", "models.repair", "models.describe", "models.memory_limit_gb")
 CONFIG_KEYS = MODEL_KEYS + ("indexer.jobs", "indexer.auto_publish", "search.prewarm")
 
 

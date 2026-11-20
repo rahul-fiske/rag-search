@@ -1096,6 +1096,49 @@ def _cmd_maps(a: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_photos(a: argparse.Namespace) -> int:
+    from . import model_tasks, models
+    from .core import describe
+
+    p = get_paths()
+    if a.action == "model":
+        if not a.value:
+            _err(f"which model? choose from {', '.join(models.DESCRIBE_MODELS)}")
+            return EXIT_USAGE
+        try:
+            models.set_describe_model(p, a.value)
+        except models.ModelError as exc:
+            _err(str(exc))
+            return EXIT_USAGE
+        print(f"photographs will be described by {describe.model_label(a.value)}; already described ones are described again "
+              f"by `rag-search photos describe`", file=sys.stderr)
+        return EXIT_OK
+    if a.action == "describe":
+        req = {"op": "describe", "model": "describe photos", "collection": a.collection, "limit": a.limit, "redo": a.redo}
+        try:
+            rec = model_tasks.run(p, req, echo=lambda m: print(m, file=sys.stderr))
+        except model_tasks.TaskBusy as exc:
+            _err(str(exc))
+            return EXIT_FAIL
+        if rec.get("status") != "succeeded":
+            _err(rec.get("error") or rec.get("status", "failed"))
+            return EXIT_FAIL
+        _json(rec.get("result") or {})
+        return EXIT_OK
+    st = describe.status(p, a.collection)
+    if a.json:
+        _json(st)
+        return EXIT_OK
+    print(f"{st['photographs']} photograph(s): {st['described']} described by the current model ({st['made_by']}), "
+          f"{st['described_by_another_model']} by another model or prompt, {st['pending']} to do")
+    print(f"model: {st['model_label']} ({st['source']}), needs about {st['need_gb']:.1f} GB free, "
+          f"{'downloaded' if st['downloaded'] else 'NOT downloaded (rag-search models download ' + st['model'] + ')'}")
+    if st["unavailable"]:
+        print(st["unavailable"])
+    print("`rag-search photos describe [--limit N]` describes the rest; the descriptions are written by a model and can be wrong.")
+    return EXIT_OK
+
+
 def _cmd_config(a: argparse.Namespace) -> int:
     from .config import ConfigStore, update_config, write_default_config
 
@@ -2917,6 +2960,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--bbox", default="", help="WEST,SOUTH,EAST,NORTH in degrees (download overture for this box)")
     p.add_argument("--all", action="store_true",
                    help="refresh: every document with positions, not only those whose map data changed")
+
+    p = add("photos", "a short description of each photograph, written by a vision model", _cmd_photos,
+            description="status: how many photographs are described. describe: describe the ones that are not (a model "
+            "of several GB runs in one process; each description is cached by the photograph's checksum, the model and the "
+            "prompt version, and written into the photograph's record as machine-written lines). model NAME: choose the 8B "
+            "(default) or the 4B model. Map downloads and refreshes never repeat a description.")
+    p.add_argument("action", nargs="?", choices=["status", "describe", "model"], default="status")
+    p.add_argument("value", nargs="?", default="", help="model: the model id")
+    p.add_argument("--collection", default="", help="only this collection")
+    p.add_argument("--limit", type=int, default=0, help="describe: at most this many photographs (a trial)")
+    p.add_argument("--redo", action="store_true", help="describe: also the ones already described by the current model")
 
     p = add("paths", "print data and index folder locations", _cmd_paths)
     p.add_argument("name", nargs="?", default="")

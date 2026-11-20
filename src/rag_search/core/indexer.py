@@ -58,7 +58,7 @@ from ..paths import (
     sha256_file,
     write_json_atomic,
 )
-from . import chunker, photo, stallwatch, timeline
+from . import chunker, describe, photo, stallwatch, timeline
 from .bm25 import TOKENIZER_VERSION
 from .conversion import (
     applevision,
@@ -628,18 +628,31 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         info: dict[str, Any] = {}
         route_note = ""
         how = ""
-        if not reused_md and src.suffix.lower() == ".json" and timeline.convert(src, md_path, get_paths()):
-            md_path.with_name(md_path.name + ".sha256").write_text(
-                f"{sha}\n{convert_profile(task.get('ocr'))}\n", encoding="utf-8")
-            how = "converted"
-            route_note = "a Google Maps Timeline: one line per visit and journey, with what the map data says"
+        timeline_done = False
+        if not reused_md and src.suffix.lower() == ".json":
+            t_tl = time.perf_counter()
+            if timeline.convert(src, md_path, get_paths()):
+                md_path.with_name(md_path.name + ".sha256").write_text(
+                    f"{sha}\n{convert_profile(task.get('ocr'))}\n", encoding="utf-8")
+                how = "converted"
+                timeline_done = True
+                route_note = "a Google Maps Timeline: one line per visit and journey, with what the map data says"
+                stage_event(slog, rel_name, "timeline", "done", seconds=round(time.perf_counter() - t_tl, 2))
+        t_ph = time.perf_counter()
         photo_section = photo.block(src, get_paths()) if kind == "image" else ""
         photograph = False
         if photo_section and not reused_md:
             seen = photo.visible_text(src)            # a photograph is not read by the document reader (made for pages)
             if photo.is_photograph(seen):
                 photograph = True
-                photo_section = photo.block(src, get_paths(), seen or "")
+                photo_section = photo.block(src, get_paths(), seen or "", describe.indexing_lines(get_paths(), src, sha))
+        if photo_section:                              # 3.6 Photo details (3.7 Locate is part of it: the map lines)
+            loc_s = float(photo.LAST.get("locate_s") or 0.0)
+            stage_event(slog, rel_name, "photo", "done", seconds=round(max(0.0, time.perf_counter() - t_ph - loc_s), 2),
+                        photograph=photograph)
+            if "- Area:" in photo_section or "- Town:" in photo_section:
+                stage_event(slog, rel_name, "locate", "done", seconds=round(loc_s, 3),
+                            nearby="- Nearby:" in photo_section)
         try:
             if photograph:
                 raise NoTextError("a photograph: only its details are indexed")
@@ -746,7 +759,13 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
                 note = ("" if how == "converted" else
                         "Markdown made by an earlier run: no per-page read facts")
                 note = route_note or note
-                if info.get("page_records"):
+                if timeline_done or photograph:
+                    branch, why = (("timeline", "a Google Maps Timeline export: a day-by-day log written by 3.8, places by 3.7")
+                                   if timeline_done else
+                                   ("photo", "a photograph: indexed from its details (3.6, 3.7), not read by the document reader"))
+                    pages = [trace.page_record(1, branch, why, reader={"tool": branch}, outcome="pass",
+                                               out={"chars": len(text)}, note=route_note)]
+                elif info.get("page_records"):
                     pages = info["page_records"]
                 else:
                     pages = records.build_pages(

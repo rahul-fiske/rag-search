@@ -109,12 +109,13 @@
     const e = A.models.embedding, c = A.chunking;
     const E = (...a) => dedge('idx', ...a);
     const rw = t.runways || {}, rwn = Object.values(rw).reduce((x, y) => x + y, 0);
+    const nPhoto = br.photo || 0, nTl = br.timeline || 0;
     const mv = Object.entries(t.moves || {}).filter(([k]) => k.endsWith('>d')).reduce((x, [, y]) => x + y, 0);
     const envOf = name => { const key = { RAG_SEARCH_LAYER_FILL: 'indexer.layer_fill', RAG_SEARCH_OCR_FIRST: 'indexer.ocr_first', RAG_SEARCH_RESIDUE: 'indexer.residue' }[name]; const r = (stageOf('3.2').settings || []).find(x => x.id === key); return r ? String(r.value || '') : ''; };
     const lane = (k, y, title, l1, l2, hwk) => [
       dbox(420, y, 340, 70, title, [l1, l2], k === 'd' ? 'hl' : (rw[k] ? 'hl' : null)), hwchip(718, y + 6, hwk)];
-    return dsvg('idx', 1180, 700,
-      'The indexing pipeline as one numbered list. 1 Discover lists the files of every collection; 2 Fingerprint skips unchanged documents; 3 Convert turns a file into page-marked Markdown through five steps: 3.1 Profile looks at every page, 3.2 Read sends each page down one of four lanes (a: docling on the text layer, b: OCR for a clean scan, c: the text layer plus the document reader on pictures, d: the document reader for every other scan and photo; a page a cheaper lane doubts goes on to d), 3.3 Gate checks the result, 3.4 Repair re-reads a suspect table cell of a scanned page, 3.5 Reconcile joins tables that run across pages. Then 4 Chunk, 5 Embed with the model loaded once per run, 6 Write, 7 Merge per collection and 8 Publish.',
+    return dsvg('idx', 1180, 975,
+      'The indexing pipeline as one numbered list. 1 Discover lists the files of every collection; 2 Fingerprint skips unchanged documents; 3 Convert turns a file into page-marked Markdown. Documents go page by page through 3.1 Profile looks at every page, 3.2 Read sends each page down one of four lanes (a: docling on the text layer, b: OCR for a clean scan, c: the text layer plus the document reader on pictures, d: the document reader for every other scan and photo; a page a cheaper lane doubts goes on to d), 3.3 Gate checks the result, 3.4 Repair re-reads a suspect table cell of a scanned page, 3.5 Reconcile joins tables that run across pages. An image with camera data takes 3.6 Photo details (a photograph is indexed from its details; a page goes to the lanes), a Google Maps Timeline .json takes 3.8 Timeline, and both use 3.7 Locate for every position (area, town, places nearby from the installed map data). 9 Describe runs on request after indexing and writes a machine-written description of each photograph. Then 4 Chunk, 5 Embed with the model loaded once per run, 6 Write, 7 Merge per collection and 8 Publish.',
       dhead(20, 24, 'PER RUN, THEN PER DOCUMENT'),
       dbox(20, 40, 170, 90, '1 · Discover', ['every collection:', 'registered folders', 'and imports'], 'store'),
       dbox(240, 40, 180, 90, '2 · Fingerprint', ['SHA-256 of the file +', 'chunk, model and', 'conversion settings'], 'hl'),
@@ -124,8 +125,8 @@
       dbox(880, 40, 280, 90, 'One numbered pipeline', ['the numbers are the same in the Indexing', 'tab, Settings, page traces and logs', 'CPU outlined · GPU dark'], 'store'),
       E('M190,85 H236', 'each file', 213, 79), E('M420,85 H451', null), E('M575,85 H636', 'yes', 605, 79), E('M515,130 V166', 'no', 523, 154, 'start'),
       // 3 · Convert: the container
-      sv('rect', { x: 20, y: 170, width: 1140, height: 350, rx: 14, class: 'grp' }),
-      sv('text', { x: 36, y: 192, class: 'hd' }, '3 · CONVERT, PAGE BY PAGE · several documents side by side · one lane per page'),
+      sv('rect', { x: 20, y: 170, width: 1140, height: 622, rx: 14, class: 'grp' }),
+      sv('text', { x: 36, y: 192, class: 'hd' }, '3 · CONVERT · several documents side by side · documents go page by page, one lane per page; images with camera data and Timeline files take the path below'),
       dbox(40, 300, 150, 76, '3.1 · Profile', [t.pages ? `${num(t.pages)} pages this run` : 'text layer? scan? photo?', 'pictures · ink · script'], 'hl'), hwchip(148, 306, 'cpu'),
       dbox(222, 300, 150, 76, '3.2 · Router', [rwn ? `${num(rwn)} pages sent` : 'cheapest lane that', 'is sure enough'], 'hl'), hwchip(330, 306, 'cpu'),
       lane('a', 204, '3.2a · text layer', `${num(rw.a || 0)} pages · docling, tables ${setting('3.2', 'indexer.table_mode')}`, `compared with the PDF's text layer · ${envOf('RAG_SEARCH_LAYER_FILL') || 'fill'}`, 'cpu'),
@@ -141,15 +142,32 @@
       E('M946,338 H966 V240 H986', 'suspect', 976, 232, 'middle'), E('M946,350 H966 V432 H986', 'pass', 976, 450, 'middle'),
       E('M1065,282 V390', 'repaired', 1072, 336, 'start'),
       sv('text', { x: 36, y: 514, class: 's' }, 'A page that lane a, b or c doubts after the gate is read again by lane d (b tries Tesseract first). Outcome per page: pass · repaired · low confidence (kept, flagged) · no text · error.'),
-      sv('text', { x: 126, y: 540, class: 's' }, 'page-marked Markdown + a trace of every page'), E('M115,520 V566', null),
+      // 3.6 .. 3.8 and 9: what is not a page
+      sv('line', { x1: 40, y1: 534, x2: 1140, y2: 534, class: 'edge dash' }),
+      dhead(36, 556, 'IMAGES WITH CAMERA DATA AND GOOGLE TIMELINE FILES · what the file is decides the path · 3.1–3.5 are for pages'),
+      sv('text', { x: 40, y: 578, class: 's' }, 'an image file with EXIF'),
+      dbox(40, 586, 200, 84, '3.6 · Photo details', ['time + zone · GPS · camera', 'faces counted (Apple Vision)', nPhoto ? `${num(nPhoto)} photographs this run` : 'text check: photo or page?'], 'hl'), hwchip(198, 592, 'cpu'),
+      sv('g', { class: 'box hl' }, sv('polygon', { points: '350,586 420,628 350,670 280,628' }),
+        sv('text', { x: 350, y: 624, class: 't', 'text-anchor': 'middle' }, 'a photograph?'), sv('text', { x: 350, y: 641, class: 't', 'text-anchor': 'middle' }, 'little text')),
+      E('M240,628 H276', null), E('M420,628 H452', 'yes', 436, 620),
+      E('M350,586 V562', 'a page: 3.1 and the lanes above', 362, 578, 'start'),
+      sv('text', { x: 40, y: 704, class: 's' }, 'a Google Maps Timeline .json'),
+      dbox(40, 712, 200, 84 - 20, '3.8 · Timeline', ['recognised by its content', nTl ? `${num(nTl)} timeline files this run` : 'a day-by-day log'], 'hl'), hwchip(198, 718, 'cpu'),
+      dbox(456, 586, 230, 176, '3.7 · Locate', ['for every position:', 'the Overture area it is in', 'the GeoNames town it is near', 'the Overture places within 100 m', '(candidates, with distances)', 'only the map data installed;', 'nothing is downloaded here'], 'hl'), hwchip(644, 592, 'cpu'),
+      E('M240,742 H452', 'positions', 346, 734),
+      dbox(730, 586, 220, 84, 'Map data', ['GeoNames · Overture areas', 'Overture places, by cell', 'downloaded only on request'], 'store'),
+      E('M730,628 H690', 'read', 710, 620),
+      dbox(984, 586, 166, 176, '9 · Describe', ['not part of a run:', 'on request a vision', 'model writes a short', 'description of each', 'photograph, marked as', 'machine-written; then', '4–6 embed it'], 'dim'), hwchip(1108, 592, 'gpu'),
+      sv('text', { x: 126, y: 814, class: 's' }, 'page-marked Markdown + a trace of every page'), E('M115,792 V846', null),
       // 4 .. 8
+      sv('g', { transform: 'translate(0,275)' },
       dhead(132, 560, 'THEN: 4 PER DOCUMENT · 5 ONCE PER RUN, MODEL LOADED A SINGLE TIME · 6 PER DOCUMENT · 7–8 PER COLLECTION'),
       dbox(20, 576, 190, 100, '4 · Chunk', [`~${c.size} tokens, ~${c.overlap} overlap`, 'never across a page', 'page + heading kept'], null), hwchip(168, 582, 'cpu'),
       dbox(257, 576, 190, 100, '5 · Embed', [shortName(e.name), `${e.dim || 1024}-d vectors, batch ${e.batch}`, `≤ ${e.max_seq} tokens per chunk`], 'hl'), hwchip(405, 582, 'gpu'),
       dbox(494, 576, 190, 100, '6 · Write', ['nodes.json', 'embeddings.npy', 'index.meta.json last'], 'store'),
       dbox(731, 576, 190, 100, '7 · Merge', ['_all/ per collection', 'concatenate, no', 're-embedding']),
       dbox(968, 576, 190, 100, '8 · Publish', ['hard-link → serving/gen-N', 'switch “current” symlink', 'old generation removed after reload'], 'hl'),
-      E('M210,626 H253', 'new chunks', 232, 620), E('M447,626 H490', null), E('M684,626 H727', null), E('M921,626 H964', null));
+      E('M210,626 H253', 'new chunks', 232, 620), E('M447,626 H490', null), E('M684,626 H727', null), E('M921,626 H964', null)));
   }
 
   function searchDiagram() {
@@ -191,7 +209,7 @@
     const c = A.chunking;
     return [
       card('The indexing pipeline, one numbered list', 'the same numbers are used in the Indexing tab, Settings, page traces and logs',
-        figure(pipelineDiagram(), 'Each document is handled on its own: fingerprinted, then converted (3.1–3.5) and chunked only if something changed. The embedding model is loaded once per run for all new chunks. index.meta.json is written last, so a half-written document is never mistaken for a finished one, and nothing becomes searchable until publish.'),
+        figure(pipelineDiagram(), 'Each document is handled on its own: fingerprinted, then converted and chunked only if something changed. A document goes page by page (3.1–3.5); an image with camera data takes 3.6 (a photograph is indexed from its details and never read by the document reader), a Google Timeline .json takes 3.8, and both use 3.7 for every position. 9 Describe runs later, on request. The embedding model is loaded once per run for all new chunks. index.meta.json is written last, so a half-written document is never mistaken for a finished one, and nothing becomes searchable until publish.'),
         h('ul', { class: 'tight' },
           h('li', null, h('b', null, 'Chunks: '), `split at the page markers, so a chunk never straddles two pages; tables and code are kept whole where they fit; packed to about ${c.size} estimated tokens with about ${c.overlap} of overlap; each records page, nearest heading and source.`),
           h('li', null, h('b', null, 'Keyword index: '), `built in memory by the search daemon from the chunk text, not stored. Compound tokens such as `, code('9.16.1'), ` are kept whole and also split, so identifiers and their parts both match (BM25, k1 ${A.keyword.k1}, b ${A.keyword.b}).`)),
@@ -202,6 +220,8 @@
           ['chunk size / overlap, chunker version, tokenizer version, index format', '4 chunk · 5 embed · 6 write (the Markdown is reused)'],
           ['embedding model', '5 embed · 6 write (chunks are reused)'],
           ['conversion settings (OCR, tables, routing, a lane switched on, the document reader or repair switched off)', '3 convert · 4 chunk · 5 embed · 6 write (pages come from the page cache)'],
+          ['map data downloaded or updated (Models tab, Maps) · Refresh places', '3.7 locate again, only for the photographs and Timeline files whose map cells changed · 4 chunk · 5 embed · 6 write (a photograph is updated in place: its picture is not read again, its description is kept)'],
+          ['a photograph description (Describe, or a new model or prompt)', '9 describe · 4 chunk · 5 embed · 6 write (cached by photograph, model and prompt; nothing else is converted again)'],
           ['nothing', '2 fingerprint only: skipped, seconds for a whole collection']]))];
   }
 
