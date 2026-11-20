@@ -221,3 +221,27 @@ class IndexedPhotographTests(IndexedPhotoTests):
         text = next(self.paths.markup.rglob("page.md")).read_text(encoding="utf-8")
         self.assertIn("## Photo details", text)
         self.assertIn("The agreement is made", text)
+
+
+class PhotoRefreshTests(IndexedPhotoTests):
+    def test_new_map_data_rewrites_the_section_in_place_without_reading_the_picture(self):
+        from rag_search import maps
+        from tests.portable.test_maps import fake_reader
+
+        (self.sdir / "c").mkdir()
+        jpeg(self.sdir / "c" / "p.jpg")
+        with mock.patch.object(photo, "visible_text", return_value="EXIT 4"):
+            self.run_index()
+        md = next(self.paths.markup.rglob("p.md"))
+        self.assertTrue(maps.stamp_path(md).exists())
+        self.assertNotIn("Nearby:", md.read_text(encoding="utf-8"))
+        maps.download_overture(self.paths, ["19.0,78.0"], release="r1", reader=fake_reader())
+        self.assertEqual(maps.refresh(self.paths)["in_place"], 1)
+        with mock.patch.object(photo, "visible_text", side_effect=AssertionError("the picture must not be read")), \
+                mock.patch("rag_search.core.docling_convert.convert_file", side_effect=AssertionError("nor converted")):
+            self.run_index()
+        text = md.read_text(encoding="utf-8")
+        self.assertIn("- Nearby: Hotel Sai Krishna (restaurant, ", text)
+        self.assertIn("- Text in the picture: EXIT 4", text)
+        self.assertEqual(text.count("## Photo details"), 1)
+        self.assertEqual(maps.refresh(self.paths)["refreshed"], 0)          # stamped again: current

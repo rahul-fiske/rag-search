@@ -784,9 +784,12 @@ by date and place.
 Overture is kept per *cell* (a square of 0.5°, about 55 km). `rag-search maps plan` reads every `geo:` position in the
 indexed documents and lists the cells they need ("where my data is"); `rag-search maps download overture` fetches them
 (or `--bbox WEST,SOUTH,EAST,NORTH` for an area of your choice), `rag-search maps download geonames` the town list,
-`rag-search maps update overture` moves every cell to the newest Overture release, and `rag-search maps refresh`
-converts the documents that mention positions again, so data downloaded after they were indexed reaches them. The data
-lives in `<data folder>/reference/`.
+`rag-search maps update overture` moves every cell to the newest Overture release, and `rag-search maps refresh` (the
+*Refresh places* button) brings new map data to documents indexed before it. Every document with positions records which
+map data described each of its cells (`<doc>.md.geo.json` next to its Markdown), so a refresh touches only the documents
+whose cells changed: a photo is updated in place (its Photo details section is rewritten and embedded again, the picture
+is not read again), a timeline is converted again. `--all` refreshes every document with positions. The data lives in
+`<data folder>/reference/`.
 
 Legacy `.doc`/`.xls`/`.ppt` are not read (docling needs LibreOffice for them); a
 file with any other extension is skipped and shown in the Indexing tab / `index status` as

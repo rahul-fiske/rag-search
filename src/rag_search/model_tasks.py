@@ -533,17 +533,19 @@ def run_maps(paths: Paths, task: Task, req: dict[str, Any]) -> dict[str, Any]:
     if action == "remove":
         return {"removed": maps.remove(paths, name), "dataset": name}
     if action == "refresh":
-        task.phase("refresh", "marking the documents that mention positions out of date")
-        n = maps.refresh(paths)
+        task.phase("refresh", "finding the documents whose map data changed")
+        res = maps.refresh(paths, everything=req.get("all") is True)
+        task.log(f"{res['refreshed']} of {res['checked']} document(s) with positions to describe again "
+                 f"({res['in_place']} photo(s) in place, {res['reconverted']} converted again)")
         started = ""
-        if n:
+        if res["refreshed"]:
             try:
                 api.index_start(paths, mode="new")
                 started = "started"
             except Exception as exc:  # noqa: BLE001 - the marks stay; the next run picks them up
                 task.log(f"could not start indexing ({exc}); the next run converts them")
                 started = "not started"
-        return {"refreshed": n, "reindex": started}
+        return {**res, "reindex": started}
     if action not in ("download", "update"):
         raise TaskError(f"unknown maps action {action!r}")
     if name == "geonames":

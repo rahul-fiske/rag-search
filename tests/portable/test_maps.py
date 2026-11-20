@@ -140,21 +140,37 @@ class PlanTests(TempHome):
         (idx / META_FILE).write_text("{}", encoding="utf-8")
         return p
 
-    def test_plan_counts_positions_and_missing_cells_and_refresh_marks_them(self):
-        self.write_md("photos/a.md", "- Position: 19.09 N (geo:19.09056,78.34111)\n")
+    def test_plan_counts_positions_and_missing_cells(self):
+        self.write_md("photos/a.md", "## Photo details\n\n- Position: 19.09 N (geo:19.09056,78.34111)\n")
         self.write_md("trips/t.md", "VISIT geo:19.091000,78.341200 then geo:41.9,12.5 and geo:91.0,0.0\n")
-        plain = self.write_md("docs/plain.md", "no positions here\n")
+        self.write_md("docs/plain.md", "no positions here\n")
         pl = maps.plan(self.paths)
         self.assertEqual((pl["positions"], pl["cells_needed"], pl["cells_missing"]), (2, 2, 2))   # a and t: one place
         self.assertEqual(pl["missing"], ["19.0,78.0", "41.5,12.5"])
         self.assertEqual(pl["fetches"], 2)
         maps.download_overture(self.paths, ["19.0,78.0"], release="r1", reader=fake_reader())
         self.assertEqual(maps.plan(self.paths)["missing"], ["41.5,12.5"])
-        self.assertEqual(maps.refresh(self.paths), 2)
-        self.assertFalse((self.paths.markup / "photos/a.md.sha256").exists())
+
+    def test_refresh_marks_only_documents_whose_cells_changed(self):
+        photo = self.write_md("photos/a.md", "## Photo details\n\n- Position: 19.09 N (geo:19.09056,78.34111)\n")
+        trip = self.write_md("trips/t.md", "VISIT geo:41.900000,12.500000\n")
+        plain = self.write_md("docs/plain.md", "no positions here\n")
+        res = maps.refresh(self.paths)                       # no stamps yet: both are described again, once
+        self.assertEqual((res["checked"], res["refreshed"], res["in_place"], res["reconverted"]), (2, 2, 1, 1))
+        self.assertTrue(photo.with_name("a.md.sha256").exists())             # a photo keeps its Markdown
         self.assertFalse((self.paths.index / "photos/a" / META_FILE).exists())
+        self.assertFalse(trip.with_name("t.md.sha256").exists())            # a timeline is converted again
         self.assertTrue(plain.with_name("plain.md.sha256").exists())
         self.assertTrue((self.paths.index / "docs/plain" / META_FILE).exists())
+        for md in (photo, trip):                                             # the next run stamps them
+            maps.write_stamp(self.paths, md, md.read_text(encoding="utf-8"))
+        self.assertEqual(maps.refresh(self.paths)["refreshed"], 0)
+        maps.download_overture(self.paths, ["19.0,78.0"], release="r1", reader=fake_reader())
+        res = maps.refresh(self.paths)                       # only the photo's cell changed
+        self.assertEqual((res["refreshed"], res["in_place"], res["current"]), (1, 1, 1))
+        reference.download(self.paths, "geonames", fetch=fake_fetch)
+        self.assertEqual(maps.refresh(self.paths)["refreshed"], 2)            # GeoNames describes every cell
+        self.assertEqual(maps.refresh(self.paths, everything=True)["refreshed"], 2)
 
 
 class TaskAndRouteTests(TempHome):

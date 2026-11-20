@@ -12,14 +12,20 @@ position a converted document mentions is written as ``geo:LAT,LON`` (photos, Go
 cells those positions fall in that are not downloaded yet.  Both are stored in SQLite files with a spatial index under
 ``<home>/reference/overture/`` and pinned to one Overture release; ``update`` moves every cell to the newest release.
 
+Each converted document with positions gets a *stamp* (``<doc>.md.geo.json``): for every cell it touches, which map
+data described it (the GeoNames download, the Overture release and download time of that cell).  ``refresh`` compares
+the stamps with what is installed now and marks only the documents whose cells changed.
+
 Overture is read straight from its public bucket with pyarrow (row groups outside the cells are not transferred);
-pyarrow and shapely come with docling's dependencies and are imported only here.  ``refresh`` makes every document
-with positions be converted again by the next indexing run, so new map data reaches documents indexed before it.
+pyarrow and shapely come with docling's dependencies and are imported only here.  ``refresh`` makes the documents whose
+map data changed be described again by the next indexing run: a photo in place (its Markdown is kept and only its Photo
+details section is rewritten; the picture is not read again), anything else (a timeline) converted again.
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
 import math
 import os
 import re
@@ -52,6 +58,8 @@ SIMPLIFY_DEG = 0.0005              # area outlines are kept to about 50 m: enoug
 SKIP_SUBTYPES = {"country"}        # a country's outline is large; its name comes from the country code
 GEO_RE = re.compile(r"geo:(-?\d{1,2}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)")
 MAX_SCAN_BYTES = 64 * 1024 * 1024
+STAMP_SUFFIX = ".geo.json"         # <doc>.md.geo.json
+PHOTO_HEADING = "## Photo details"
 
 
 class MapsError(RuntimeError):
@@ -401,16 +409,91 @@ def remove(paths: Paths, name: str) -> bool:
     raise MapsError(f"unknown map dataset {name!r}; choose from geonames, overture")
 
 
-# ── refresh ──────────────────────────────────────────────────────────────────
+# ── stamps and refresh ───────────────────────────────────────────────────────
 
-def refresh(paths: Paths) -> int:
-    """Make the next indexing run convert every document with positions again (its Markdown and its index are marked
-    out of date; the published index keeps serving until then).  Returns how many were marked."""
-    n = 0
-    for md in documents_with_positions(paths):
+def stamp_path(md: Path) -> Path:
+    return md.with_name(md.name + STAMP_SUFFIX)
+
+
+def cells_in_text(text: str) -> set[str]:
+    out = set()
+    for m in GEO_RE.finditer(text):
+        lat, lon = float(m.group(1)), float(m.group(2))
+        if -90 <= lat <= 90 and -180 <= lon <= 180:
+            out.add(cell_of(lat, lon))
+    return out
+
+
+def _cell_rows(paths: Paths, kind: str) -> dict[str, str]:
+    con = connect(paths, kind)
+    if con is None:
+        return {}
+    with contextlib.closing(con):
+        try:
+            return {c: f"{r}/{at}" for c, r, at in con.execute("select cell, release, at from cell")}
+        except sqlite3.Error:
+            return {}
+
+
+def map_state(paths: Paths) -> dict[str, Any]:
+    """What is installed now, in the form the stamps are compared with."""
+    return {"geonames": reference.ref(paths, "geonames"), "divisions": _cell_rows(paths, "divisions"),
+            "places": _cell_rows(paths, "places")}
+
+
+def cell_stamp(cell: str, state: dict[str, Any]) -> str:
+    return f"{state['geonames']}|{state['divisions'].get(cell, '')}|{state['places'].get(cell, '')}"
+
+
+def write_stamp(paths: Paths, md: Path, text: str, state: dict[str, Any] | None = None) -> None:
+    """Record which map data described the positions of *md* (called when its Markdown was made or its photo section
+    renewed)."""
+    state = state or map_state(paths)
+    cells = cells_in_text(text)
+    with contextlib.suppress(OSError):
+        stamp_path(md).write_text(json.dumps({"cells": {c: cell_stamp(c, state) for c in sorted(cells)}}),
+                                  encoding="utf-8")
+
+
+def is_current(md: Path, text: str, state: dict[str, Any]) -> bool:
+    try:
+        saved = json.loads(stamp_path(md).read_text(encoding="utf-8"))["cells"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return False                       # converted before stamps existed, or the stamp is unreadable
+    return all(saved.get(c) == cell_stamp(c, state) for c in cells_in_text(text))
+
+
+def refresh(paths: Paths, *, everything: bool = False) -> dict[str, int]:
+    """Mark the documents whose map data changed (every document with positions, with *everything*) so the next
+    indexing run describes them again.  A photo keeps its Markdown (only its index is marked out of date: the run
+    rewrites its Photo details section and embeds it again, without reading the picture); any other document has its
+    Markdown marked out of date too and is converted again.  The published index keeps serving until then."""
+    res = {"checked": 0, "current": 0, "refreshed": 0, "in_place": 0, "reconverted": 0}
+    if not paths.markup.is_dir():
+        return res
+    state = map_state(paths)
+    for md in paths.markup.rglob("*.md"):
+        try:
+            if md.stat().st_size > MAX_SCAN_BYTES:
+                continue
+            text = md.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if not GEO_RE.search(text):
+            continue
+        res["checked"] += 1
+        if not everything and is_current(md, text, state):
+            res["current"] += 1
+            continue
         rel = md.relative_to(paths.markup).with_suffix("")
-        for stale in (md.with_name(md.name + ".sha256"), paths.index / rel / META_FILE):
+        stale = [paths.index / rel / META_FILE]
+        if PHOTO_HEADING in text:
+            res["in_place"] += 1
+        else:
+            stale.append(md.with_name(md.name + ".sha256"))
+            res["reconverted"] += 1
+        for f in stale:
             with contextlib.suppress(OSError):
-                os.unlink(stale)
-        n += 1
-    return n
+                os.unlink(f)
+        res["refreshed"] += 1
+    return res

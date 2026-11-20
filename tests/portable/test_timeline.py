@@ -116,3 +116,11 @@ class IndexedTimelineTests(TempHome):
         self.assertIn("- VISIT 12:52-13:40 +05:30", text)
         self.assertIn("geo:19.090600,78.341200", text)
         self.assertEqual(maps.plan(self.paths)["cells_needed"], 2)             # Nirmal and Hyderabad
+        md = next(self.paths.markup.rglob("Timeline.md"))
+        self.assertTrue(maps.stamp_path(md).exists())
+        self.assertEqual(maps.refresh(self.paths)["refreshed"], 0)
+        maps.download_overture(self.paths, ["19.0,78.0"], release="r1", reader=fake_reader())
+        self.assertEqual(maps.refresh(self.paths)["reconverted"], 1)
+        indexer.run_index(self.paths, srcs, self.roots(), jobs=1, embedder=FakeEmbedder(), progress=lambda e: None)
+        self.assertIn("  - Nearby: Hotel Sai Krishna", md.read_text(encoding="utf-8"))
+        self.assertEqual(maps.refresh(self.paths)["refreshed"], 0)

@@ -287,7 +287,7 @@
 
   /* ---------- maps ---------- */
   function mapResult(res) {
-    if (res.refreshed !== undefined) return res.refreshed ? `${num(res.refreshed)} document(s) will be converted again${res.reindex === 'started' ? '; indexing has started' : ' by the next indexing run'}.` : 'No indexed document mentions a position.';
+    if (res.refreshed !== undefined) return res.refreshed ? `${num(res.refreshed)} of ${num(res.checked)} document(s) with positions will be described again (${num(res.in_place)} photo(s) in place, ${num(res.reconverted)} converted again)${res.reindex === 'started' ? '; indexing has started' : ' by the next indexing run'}.` : (res.checked ? `All ${num(res.checked)} document(s) with positions already use the map data installed now.` : 'No indexed document mentions a position.');
     if (res.removed !== undefined) return res.removed ? 'Removed.' : 'Nothing was installed.';
     if (res.dataset === 'geonames') return `GeoNames installed (${res.release}).`;
     if (res.note) return res.note;
@@ -338,8 +338,8 @@
       h('div', { class: 'row', style: { marginTop: '10px' } }, h('span', { class: 'small' }, 'Add an area:'), refs.bbox,
         h('button', { class: 'btn small', disabled: busy, on: { click: () => { const v = refs.bbox.value.trim(); if (!v) { toast('Enter WEST,SOUTH,EAST,NORTH', 'bad'); return; } mapAction('download', 'overture', { bbox: v }); } } }, 'Download this area')),
       h('div', { class: 'row', style: { marginTop: '10px' } },
-        h('button', { class: 'btn small', disabled: busy, on: { click: () => mapAction('refresh', '', null, ['Refresh places?', 'Every indexed document that mentions a position (photos, timelines) is converted again with the map data installed now, and indexing starts. The published index keeps serving until it is done.', 'Refresh and index']) } }, 'Refresh places in indexed documents'),
-        h('span', { class: 'small muted' }, 'after downloading, so documents indexed earlier get the new data')));
+        h('button', { class: 'btn small', disabled: busy, on: { click: () => mapAction('refresh', '', null, ['Refresh places?', 'The indexed documents whose map data changed since they were indexed are described again with the data installed now (photos in place, without reading the picture again; a timeline is converted again), and indexing starts. The published index keeps serving until it is done.', 'Refresh and index']) } }, 'Refresh places in indexed documents'),
+        h('span', { class: 'small muted' }, 'after downloading: only the documents whose cells changed')));
   }
 
   function taskCard() {

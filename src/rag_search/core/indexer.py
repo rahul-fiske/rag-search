@@ -29,7 +29,7 @@ from typing import Any
 
 import numpy as np
 
-from .. import machine, stages
+from .. import machine, maps, stages
 from ..locations import ScanPlan, index_is_imported, scan_tree, workspace_excludes
 from ..paths import (
     ALL_DIR,
@@ -696,6 +696,8 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         stage_event(slog, rel_name, "convert", "done", seconds=convert_s, how=how,
                     profile_s=prof_s)
         text = md_path.read_text(encoding="utf-8", errors="replace")
+        if "geo:" in text and (not reused_md or photo_section):    # described with the map data installed now
+            maps.write_stamp(get_paths(), md_path, text)
         t_chunk = time.perf_counter()
         raw_nodes = chunker.markdown_to_nodes(text, cs, co)
         chunk_s = round(time.perf_counter() - t_chunk, 2)
@@ -1040,6 +1042,8 @@ def prune_orphans(paths: Paths, roots: SourceRoots, sources: list[Path],
                     md = f.with_name(f.name[:-len(trace.TRACE_SUFFIX)] + ".md")
                 elif f.name.endswith(".md.sha256"):
                     md = f.with_name(f.name[:-len(".sha256")])
+                elif f.name.endswith(".md" + maps.STAMP_SUFFIX):
+                    md = f.with_name(f.name[:-len(maps.STAMP_SUFFIX)])
                 else:
                     md = f
                 if md.suffix != ".md" or md in expect_md or _identity(md) in keep_md:
@@ -1088,7 +1092,7 @@ def _wipe(paths: Paths, roots: SourceRoots, sources: list[Path]) -> int:
             _remove_doc_index(idx)
             n += 1
         md = markup_path_for(src, roots, paths.markup)
-        for f in (md, md.with_name(md.name + ".sha256"), trace.trace_path_for(md)):
+        for f in (md, md.with_name(md.name + ".sha256"), trace.trace_path_for(md), maps.stamp_path(md)):
             with contextlib.suppress(OSError):
                 f.unlink()
     for c in colls:

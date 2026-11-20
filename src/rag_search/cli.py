@@ -1080,6 +1080,8 @@ def _cmd_maps(a: argparse.Namespace) -> int:
             _err(f"--bbox WEST,SOUTH,EAST,NORTH: {exc}")
             return EXIT_USAGE
         req["bbox"] = box
+    if a.all:
+        req["all"] = True
     try:
         rec = model_tasks.run(p, req, echo=lambda m: print(m, file=sys.stderr))
     except model_tasks.TaskBusy as exc:
@@ -2905,11 +2907,14 @@ def build_parser() -> argparse.ArgumentParser:
             description="Map data is downloaded only by these commands (or the Models tab); indexing never uses the "
             "network. status: what is installed. plan: the cells (about 55 km squares) your indexed documents need. "
             "download overture: those cells (or --bbox); download geonames: the worldwide town list. update: the newest "
-            "release. refresh: convert the documents that mention positions again, so new map data reaches them.")
+            "release. refresh: describe again the documents whose map data changed since they were indexed (photos in place, "
+            "without reading the picture again; --all for every document with positions).")
     p.add_argument("action", nargs="?", choices=["status", "plan", "download", "update", "remove", "refresh"],
                    default="status")
     p.add_argument("dataset", nargs="?", default="", help="geonames or overture")
     p.add_argument("--bbox", default="", help="WEST,SOUTH,EAST,NORTH in degrees (download overture for this box)")
+    p.add_argument("--all", action="store_true",
+                   help="refresh: every document with positions, not only those whose map data changed")
 
     p = add("paths", "print data and index folder locations", _cmd_paths)
     p.add_argument("name", nargs="?", default="")

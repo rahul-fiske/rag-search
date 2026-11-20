@@ -1001,8 +1001,12 @@ processes, runs without downloading models.
     pinned to one release; touching cells are fetched in one read; `update` moves every cell to the newest release.
 * **Positions are `geo:LAT,LON` in the converted Markdown** (photos' Position line, Timeline visits and journeys).
   `maps.plan` scans the workspace Markdown for them and lists the cells they need and are missing ("where my data is");
-  `maps.refresh` deletes the `.md.sha256` sidecar and `index.meta.json` of every document with positions, so the next
-  `index new` converts them again with the data installed now.
+  When a document with positions is converted (or a photo's section renewed), `_prepare_document` writes a stamp,
+  `<doc>.md.geo.json`: for each cell its positions touch, the GeoNames download and the Overture release and download
+  time of that cell. `maps.refresh` compares the stamps with what is installed and marks only the documents whose
+  cells changed (all of them with `--all`; a document without a stamp counts as changed): a photo loses only its
+  `index.meta.json`, so the next `index new` reuses its Markdown, rewrites the Photo details section with the current
+  data (no OCR, no reader) and embeds it again; any other document also loses its `.md.sha256` and is converted again.
 * **`core/geo.py`** turns a position into lines: `Area:` (the Overture areas it is inside, smallest first), `Town:`
   (GeoNames), `Nearby:` (Overture places within 100 m, at most 5, nearest first, plus the nearest place to eat within
   150 m) - candidates with category and distance, never one chosen place - and the `Reference data:` they came from.
