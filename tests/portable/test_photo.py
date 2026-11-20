@@ -182,6 +182,12 @@ class PhotographOrPageTests(TempHome):
         self.assertFalse(photo.is_photograph("lorem ipsum " * 40))
         self.assertFalse(photo.is_photograph(None))                  # no OCR on this machine: cannot tell
 
+    def test_a_digit_or_two_is_not_text_in_the_picture(self):
+        src = jpeg(self.tmp / "n.jpg")
+        for noise in ("2", "2 102 30", "16000 goo"):
+            self.assertNotIn("Text in the picture", photo.block(src, self.paths, noise))
+        self.assertIn("Text in the picture: RJ26TA 0769", photo.block(src, self.paths, "RJ26TA 0769"))
+
     def test_the_text_found_in_a_picture_survives_a_renewed_section(self):
         src = jpeg(self.tmp / "e.jpg")
         md = self.tmp / "e.md"

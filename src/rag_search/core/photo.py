@@ -135,6 +135,7 @@ ANNOTATORS: list[Annotator] = [_where]
 
 DOCUMENT_CHARS = 200             # this many letters and digits in the picture: it is a page, not a photograph
 TEXT_LINE_CHARS = 400            # most of the text of a photograph that is kept in its section
+MIN_LETTERS = 4                  # fewer letters than this found in a picture are not worth a line
 
 
 def visible_text(src: Path) -> str | None:
@@ -188,7 +189,7 @@ def lines(meta: dict[str, Any], paths: Paths, text: str = "") -> list[str]:
     if "size" in meta:
         out.append(f"Size: {meta['size'][0]} x {meta['size'][1]} pixels")
     text = " ".join(text.split())
-    if text and amount(text):
+    if sum(ch.isalpha() for ch in text) >= MIN_LETTERS:                # "2" or "2 102 30" is not text
         out.append(_SEEN + " " + (text if len(text) <= TEXT_LINE_CHARS else text[:TEXT_LINE_CHARS].rstrip() + " ..."))
     if refs:
         out.append(f"Reference data: {', '.join(refs)}")
