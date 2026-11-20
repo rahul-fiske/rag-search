@@ -1,7 +1,7 @@
 'use strict';
-/* Models: which embedding model and reranker are in use, what else is available, download and switch. */
+/* Models: which embedding model and reranker are in use, what else is available, download and switch; map data. */
 (function () {
-  let refs = {}, data = null, loading = false, lastLoad = 0, error = '';
+  let refs = {}, data = null, mapData = null, loading = false, lastLoad = 0, error = '';
   const FIT = { ok: null, tight: ['tight on memory', 'warn'], too_large: ['too large for the memory budget', 'bad'] };
 
   const taskActive = () => !!(data && data.task && (data.task.status === 'running' || data.task.status === 'queued'));
@@ -9,7 +9,8 @@
   async function load(force) {
     if (loading || (!force && Date.now() - lastLoad < 900)) return;
     loading = true;
-    const r = await api('models');
+    const [r, m] = await Promise.all([api('models'), api('maps')]);
+    if (m.ok !== false) mapData = m;
     loading = false; lastLoad = Date.now();
     if (r.ok === false) { error = r.error || 'cannot read the model state'; } else { error = ''; data = r; }
     render();
@@ -283,6 +284,64 @@
     if (p.reranker !== data.reranker.active && p.embedding !== data.embedding.active) toast('When this finishes, choose the preset again to switch the embedding model too.', '', 8000);
   }
 
+
+  /* ---------- maps ---------- */
+  function mapResult(res) {
+    if (res.refreshed !== undefined) return res.refreshed ? `${num(res.refreshed)} document(s) will be converted again${res.reindex === 'started' ? '; indexing has started' : ' by the next indexing run'}.` : 'No indexed document mentions a position.';
+    if (res.removed !== undefined) return res.removed ? 'Removed.' : 'Nothing was installed.';
+    if (res.dataset === 'geonames') return `GeoNames installed (${res.release}).`;
+    if (res.note) return res.note;
+    return `Overture ${res.release}: ${num(res.cells)} cell(s), ${num(res.places)} places, ${num(res.areas)} areas. Use “Refresh places” so documents indexed before get them.`;
+  }
+
+  async function mapAction(action, dataset, extra, question) {
+    if (question && !await confirmDialog(question[0], h('p', null, question[1]), question[2])) return;
+    const r = await api('maps/' + action, Object.assign({ dataset }, extra || {}));
+    if (r.ok === false) { toast(r.error || 'failed', 'bad'); return; }
+    load(true);
+  }
+
+  function mapsCard() {
+    const m = mapData;
+    if (!m) return null;
+    const pl = m.plan || {}, busy = readOnly() || taskActive();
+    const row = d => {
+      const geo = d.name === 'geonames';
+      const covers = geo ? 'the whole world' : (d.cells ? `${num(d.cells)} cell(s) of about ${pl.cell_km || 55} km` : 'no cells yet');
+      const actions = [];
+      if (geo) actions.push(h('button', { class: 'btn small' + (d.installed ? '' : ' primary'), disabled: busy, on: { click: () => mapAction('download', 'geonames') } }, d.installed ? 'Update' : 'Download'));
+      else if (d.installed) actions.push(h('button', { class: 'btn small', disabled: busy, title: 'move every downloaded cell to the newest Overture release', on: { click: () => mapAction('update', 'overture', null, ['Update Overture?', 'Every downloaded cell is fetched again from the newest Overture release (both areas and places). Use “Refresh places” afterwards.', 'Update']) } }, 'Update release'));
+      if (d.installed) actions.push(h('button', { class: 'btn small danger', disabled: busy, on: { click: () => mapAction('remove', geo ? 'geonames' : 'overture', null, ['Remove map data?', geo ? 'GeoNames is deleted from this computer. Documents keep what was written into them.' : 'Both Overture datasets (areas and places) are deleted from this computer. Documents keep what was written into them.', 'Remove']) } }, 'Remove'));
+      return h('tr', null,
+        h('td', null, h('b', null, d.title), h('div', { class: 'small muted' }, d.used_for)),
+        h('td', null, covers),
+        h('td', null, d.installed ? pill('installed', 'ok') : pill('not installed', '')),
+        h('td', { class: 'num' }, d.bytes ? bytes(d.bytes) : h('span', { class: 'muted' }, d.size_hint)),
+        h('td', null, d.release || '—'),
+        h('td', null, h('div', { class: 'row', style: { gap: '6px' } }, actions)),
+        h('td', { class: 'small muted' }, d.license));
+    };
+    refs.bbox = refs.bbox || h('input', { type: 'text', placeholder: 'WEST,SOUTH,EAST,NORTH e.g. 72.6,15.6,80.9,22.1', style: { minWidth: '300px' } });
+    const where = pl.positions
+      ? h('p', { style: { margin: '0 0 8px' } }, h('b', null, 'Where my data is: '),
+        `${num(pl.positions)} position(s) in your indexed documents fall in ${num(pl.cells_needed)} cell(s); `,
+        pl.cells_missing ? h('span', null, h('b', null, `${num(pl.cells_missing)} not downloaded`), ` (roughly ${num(pl.estimate_mb)} MB, ${num(pl.fetches)} fetch(es)). `) : 'all of them are downloaded. ',
+        pl.cells_missing ? h('button', { class: 'btn small primary', disabled: busy, on: { click: () => mapAction('download', 'overture') } }, 'Download missing cells') : null)
+      : h('p', { class: 'muted', style: { margin: '0 0 8px' } }, 'No indexed document mentions a position yet. Photos with GPS and Google Timeline files do; index them first, then come back for their cells.');
+    return h('div', { class: 'card', style: { marginTop: '16px' } },
+      h('div', { class: 'card-head' }, h('h2', null, 'Maps'),
+        h('span', { class: 'muted small' }, 'place data for positions in photos and timelines · downloaded only when you ask here · indexing and search never use the network')),
+      where,
+      h('div', { class: 'table-wrap' }, h('table', null,
+        h('thead', null, h('tr', null, ['Data', 'Covers', 'State', 'Size', 'Release', '', 'License'].map(x => h('th', null, x)))),
+        h('tbody', null, (m.datasets || []).map(row)))),
+      h('div', { class: 'row', style: { marginTop: '10px' } }, h('span', { class: 'small' }, 'Add an area:'), refs.bbox,
+        h('button', { class: 'btn small', disabled: busy, on: { click: () => { const v = refs.bbox.value.trim(); if (!v) { toast('Enter WEST,SOUTH,EAST,NORTH', 'bad'); return; } mapAction('download', 'overture', { bbox: v }); } } }, 'Download this area')),
+      h('div', { class: 'row', style: { marginTop: '10px' } },
+        h('button', { class: 'btn small', disabled: busy, on: { click: () => mapAction('refresh', '', null, ['Refresh places?', 'Every indexed document that mentions a position (photos, timelines) is converted again with the map data installed now, and indexing starts. The published index keeps serving until it is done.', 'Refresh and index']) } }, 'Refresh places in indexed documents'),
+        h('span', { class: 'small muted' }, 'after downloading, so documents indexed earlier get the new data')));
+  }
+
   function taskCard() {
     const t = data.task;
     if (!t) return null;
@@ -291,18 +350,19 @@
     const p = t.progress || {};
     const pct = p.total ? Math.min(100, Math.round(100 * (p.done || 0) / p.total)) : null;
     const cls = t.status === 'failed' ? 'bad' : t.status === 'succeeded' ? 'ok' : t.status === 'cancelled' ? '' : 'warn';
-    const title = { switch: 'Switching', download: 'Downloading', verify: 'Testing', runtime: 'Installing the document reader runtime' }[t.op] || t.op;
+    const title = { switch: 'Switching', download: 'Downloading', verify: 'Testing', runtime: 'Installing the document reader runtime', maps: 'Map data:' }[t.op] || t.op;
     const res = t.result || {};
     return h('div', { class: 'card', style: { marginBottom: '16px' } },
       h('div', { class: 'card-head' }, h('h2', null, title + ' ' + (t.model || '')), pill(t.status, cls, active),
         h('div', { class: 'spacer' }, active ? h('button', { class: 'btn small danger', disabled: readOnly(), on: { click: cancelTask } }, 'Cancel') : null)),
       active ? h('p', { class: 'small muted', style: { margin: '0 0 6px' } }, `${t.phase || ''} · running for ${since(t.started_at)}`) : null,
-      p.model && (p.done || p.total) ? h('div', null, h('div', { class: 'small' }, `${p.model}: ${bytes(p.done)}${p.total ? ' of ' + bytes(p.total) : ''}${pct !== null ? ' (' + pct + '%)' : ''}`),
+      p.model && (p.done || p.total) ? h('div', null, h('div', { class: 'small' }, p.unit === 'steps' ? `${p.model} (step ${num(p.done)} of ${num(p.total)})` : `${p.model}: ${bytes(p.done)}${p.total ? ' of ' + bytes(p.total) : ''}${pct !== null ? ' (' + pct + '%)' : ''}`),
         h('div', { class: 'bar', style: { margin: '6px 0 10px' } }, h('i', { style: { width: (pct === null ? 8 : pct) + '%' } }))) : null,
       t.error ? h('div', { class: 'notice bad' }, t.error) : null,
       t.status === 'succeeded' && res.reindex === 'started' ? h('div', { class: 'notice ok' }, `Re-embedding ${num(res.documents)} document(s) has started. Follow it in `, h('a', { href: '#/indexing' }, 'Indexing'), '; search switches to the new model when it is complete.') : null,
       t.status === 'succeeded' && res.reindex === 'not started' ? h('div', { class: 'notice warn' }, 'Saved. Documents are embedded with the new model the next time they are indexed; use “Finish re-embedding now” below.') : null,
       t.status === 'succeeded' && res.applied && !res.reindex ? h('div', { class: 'notice ok' }, res.unchanged ? 'Nothing to change.' : 'Switched.') : null,
+      t.status === 'succeeded' && t.op === 'maps' ? h('div', { class: 'notice ok' }, mapResult(res)) : null,
       (t.log && t.log.length) ? h('div', { class: 'log', style: { maxHeight: '140px', marginTop: '8px' } }, t.log.slice(-8).map(l => h('div', { class: 'ln' }, l.msg))) : null);
   }
 
@@ -312,7 +372,7 @@
     patch(refs.body,
       error ? h('div', { class: 'notice bad', style: { marginBottom: '12px' } }, error) : null,
       taskCard(),
-      embeddingCard(), rerankerCard(), readerCard(),
+      embeddingCard(), rerankerCard(), readerCard(), mapsCard(),
       h('div', { class: 'grid g2', style: { marginTop: '16px' } }, presetsCard(), machineCard()));
     refs.customBtn.disabled = readOnly() || taskActive();
   }

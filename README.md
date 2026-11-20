@@ -126,7 +126,7 @@ rag-search index cancel | publish | foreground                 stop / publish no
 rag-search daemon status|start|stop|restart [search|indexer]   state, warm-up time and memory; control
 rag-search service install|uninstall|status                    launchd or systemd: daemons start at login
 rag-search config show|init|path                               settings file (see below)
-rag-search reference [download NAME]                           lookup tables used while indexing (place names for photos)
+rag-search maps [status|plan|download|update|remove|refresh]    place data for photos and timelines (GeoNames, Overture)
 rag-search doctor [--roundtrip] | setup | paths [name] | convert FILE
 rag-search location list|add NAME FOLDER|remove NAME [-y]     register the folders documents are read from
 rag-search collection info NAME                                documents, folders, sizes, dates and state of one collection
@@ -750,17 +750,43 @@ with the model that built it, until a re-embedded index is complete.
 (macro-enabled Word) as a `.docx`; neither needs LibreOffice or any other tool, and macros are never read or run.
 **Photographs.** An image that carries camera metadata (EXIF) gets a short "Photo details" section at the top of its
 Markdown: when it was taken (an ISO date and time with the camera's time zone, so `rag-search grep 2024-03-14` finds a
-day), the GPS position, the camera and the size; with the `places` reference data (below), also the town it was taken
-near (`near Nirmal, Telangana, India (about 4 km NE of it)`). Nothing is guessed from the pixels. A picture with no text
-is indexed from this section alone; one with text (a photographed page) has both. Pictures without metadata (scans,
-screenshots) are read as before. Which photos belong together (a trip) is for the one searching to work out from the
-dates and places, across collections.
+day), the GPS position (also written `geo:LAT,LON`), the camera and the size, and what the installed map data (below)
+says about the position:
 
-**Reference data.** Lookup tables that indexing consults live in `<data folder>/reference/` and are fetched only by
-`rag-search reference download NAME` (indexing never uses the network; a table that is not installed is not used).
-`rag-search reference` lists them. `places` is GeoNames (towns and villages of 1,000 people or more, about 10 MB,
-CC BY 4.0, <https://www.geonames.org>). The section of a photo already indexed is updated the next time the photo is indexed
-(a full rebuild does all of them).
+```
+- Area: Aundh, Pune, Maharashtra, India                                   (Overture areas)
+- Town: near Pune, Maharashtra, India (about 6 km NW of it)               (GeoNames)
+- Nearby: Quick Bite (restaurant, 6 m); Green Gate Resort (resort, 29 m)  (Overture places within 100 m)
+```
+
+The places nearby are candidates with their distance, never one chosen place: a phone's GPS is off by tens of metres.
+Nothing is guessed from the pixels. A quick text check (Apple Vision, else Tesseract) tells a photograph from a
+photographed page: a photograph is indexed from its details (plus any short text in it, such as a sign) and never sent
+to the document reader, which would make up text for it; a page is read as before and gets the details too. Pictures
+without camera metadata (scans, screenshots) are read as before.
+
+**Google Maps Timeline.** A `.json` file that is a Timeline export (the phone export, the newer `semanticSegments`
+export or the older Takeout `timelineObjects`) is recognised by its content and written as a day-by-day log: one line
+per visit and journey with its times and offset, its positions as `geo:LAT,LON`, the Google place ID as it is, and the
+area, town and places nearby from the map data. rag-search does not resolve place IDs (an agent with Google Maps can)
+and does not group journeys into trips: that is for the one searching, who can put photos and the timeline side by side
+by date and place.
+
+**Maps.** The place data comes from three datasets, each downloaded only when you ask (the Models tab's *Maps* card, or
+`rag-search maps`); indexing and search never use the network, and a dataset that is not installed adds nothing:
+
+| Data | Gives | Size | License |
+|---|---|---|---|
+| GeoNames | the nearest town or village of 1,000+ people, worldwide | about 10 MB (32 MB unpacked) | CC BY 4.0, geonames.org |
+| Overture areas (divisions) | the locality, district, state and country a position is in | by cell | ODbL (built from OpenStreetMap) |
+| Overture places | restaurants, shops, temples, fuel ... around a position | by cell, about 1 MB a cell (a state is ~130 MB) | CDLA Permissive 2.0 / Apache 2.0 |
+
+Overture is kept per *cell* (a square of 0.5°, about 55 km). `rag-search maps plan` reads every `geo:` position in the
+indexed documents and lists the cells they need ("where my data is"); `rag-search maps download overture` fetches them
+(or `--bbox WEST,SOUTH,EAST,NORTH` for an area of your choice), `rag-search maps download geonames` the town list,
+`rag-search maps update overture` moves every cell to the newest Overture release, and `rag-search maps refresh`
+converts the documents that mention positions again, so data downloaded after they were indexed reaches them. The data
+lives in `<data folder>/reference/`.
 
 Legacy `.doc`/`.xls`/`.ppt` are not read (docling needs LibreOffice for them); a
 file with any other extension is skipped and shown in the Indexing tab / `index status` as

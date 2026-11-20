@@ -6,16 +6,19 @@ facts only -- nothing is looked at or guessed from the pixels -- and reads like 
     ## Photo details
 
     - Taken: 2024-03-14 13:12:05 +05:30 (Thursday)
-    - Position: 19.09050 N, 78.34120 E, altitude 312 m
-    - Place: near Nirmal, Telangana, India (about 4 km NE of it)
+    - Position: 19.09050 N, 78.34120 E, altitude 312 m (geo:19.09050,78.34120)
+    - Area: Nirmal, Telangana, India
+    - Town: near Nirmal, Telangana, India (about 4 km NE of it)
+    - Nearby: Hotel Sai Krishna (restaurant, 25 m); HP Petrol Pump (gas station, 60 m)
     - Camera: Apple iPhone 13 Pro
     - Size: 4032 x 3024 pixels
-    - Reference data: places@2026-11-20
+    - Reference data: geonames@2026-11-20, overture-divisions@2026-11-18.0, overture-places@2026-11-18.0
 
 The times are written as an ISO date and time with the offset the camera recorded, so ``rag_grep 2024-03-14`` finds a
-day.  What else is known about a photograph comes from *annotators*: functions that take the metadata and return lines
-(and the reference data they used).  ``places`` is the first; a face or object lookup is added to ``ANNOTATORS`` the
-same way.  The section is kept apart from the text read from the picture, so it can be replaced when the data
+day; the position is also written as ``geo:LAT,LON``, which is how ``maps.plan`` finds the parts of the map the
+documents need.  What else is known about a photograph comes from *annotators*: functions that take the metadata and
+return lines (and the reference data they used).  ``_where`` (``geo.py``: area, town, places around) is the first; a
+face or object lookup is added to ``ANNOTATORS`` the same way.  The section is kept apart from the text read from the picture, so it can be replaced when the data
 behind it changes, without reading the picture again.
 """
 
@@ -29,9 +32,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .. import reference
 from ..paths import Paths
-from . import places
+from . import geo
 
 HEADING = "## Photo details"
 _BLOCK_RE = re.compile(r"^## Photo details\n\n(?:- .*\n?)+\n?", re.M)
@@ -120,15 +122,15 @@ def read_exif(src: Path) -> dict[str, Any]:
 Annotator = Callable[[dict[str, Any], Paths], "tuple[list[str], str]"]
 
 
-def _place(meta: dict[str, Any], paths: Paths) -> tuple[list[str], str]:
-    """The nearest place (``reference`` dataset ``places``); nothing when it is not installed."""
+def _where(meta: dict[str, Any], paths: Paths) -> tuple[list[str], str]:
+    """Area, town and the places around (``geo.py``, from the map data that is installed)."""
     if "lat" not in meta:
         return [], ""
-    found = places.near(meta["lat"], meta["lon"], paths)
-    return ([f"Place: {found.text()}"] if found else []), reference.ref(paths, "places")
+    lines, refs = geo.describe(meta["lat"], meta["lon"], paths)
+    return lines, ", ".join(refs)
 
 
-ANNOTATORS: list[Annotator] = [_place]
+ANNOTATORS: list[Annotator] = [_where]
 
 
 DOCUMENT_CHARS = 200             # this many letters and digits in the picture: it is a page, not a photograph
@@ -171,7 +173,7 @@ def lines(meta: dict[str, Any], paths: Paths, text: str = "") -> list[str]:
                f"{abs(meta['lon']):.5f} {'E' if meta['lon'] >= 0 else 'W'}")
         if "altitude" in meta:
             pos += f", altitude {meta['altitude']:.0f} m"
-        out.append(f"Position: {pos}")
+        out.append(f"Position: {pos} (geo:{meta['lat']:.5f},{meta['lon']:.5f})")
     refs: list[str] = []
     for annotate in ANNOTATORS:
         try:

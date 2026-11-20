@@ -524,8 +524,58 @@ def run_runtime(paths: Paths, task: Task, req: dict[str, Any]) -> dict[str, Any]
             "missing": [x["package"] for x in state["packages"] if not x["installed"]]}
 
 
+def run_maps(paths: Paths, task: Task, req: dict[str, Any]) -> dict[str, Any]:
+    """Map data (``maps.py``): download / update GeoNames or Overture cells, remove a dataset, or refresh the documents
+    that mention positions."""
+    from . import api, maps, reference
+
+    action, name = req.get("action", ""), req.get("dataset", "")
+    if action == "remove":
+        return {"removed": maps.remove(paths, name), "dataset": name}
+    if action == "refresh":
+        task.phase("refresh", "marking the documents that mention positions out of date")
+        n = maps.refresh(paths)
+        started = ""
+        if n:
+            try:
+                api.index_start(paths, mode="new")
+                started = "started"
+            except Exception as exc:  # noqa: BLE001 - the marks stay; the next run picks them up
+                task.log(f"could not start indexing ({exc}); the next run converts them")
+                started = "not started"
+        return {"refreshed": n, "reindex": started}
+    if action not in ("download", "update"):
+        raise TaskError(f"unknown maps action {action!r}")
+    if name == "geonames":
+        task.phase("download", "downloading GeoNames (about 10 MB)")
+        try:
+            man = reference.download(paths, "geonames")
+        except reference.ReferenceDataError as exc:
+            raise TaskError(str(exc)) from exc
+        return {"dataset": "geonames", "release": man["fetched"]}
+    if name != "overture":
+        raise TaskError(f"unknown map dataset {name!r}")
+    try:
+        if action == "update":
+            release = maps.latest_release()
+            cells: set[str] = set()
+        else:
+            release = ""
+            box = req.get("bbox")
+            cells = maps.cells_in_box(*[float(x) for x in box]) if box else set(maps.plan(paths)["missing"])
+        if action == "download" and not cells:
+            return {"dataset": "overture", "cells": 0, "note": "no cells to download: every position is covered"}
+        task.phase("download", "reading Overture Maps")
+        res = maps.download_overture(
+            paths, cells, release=release, log=task.log,
+            progress=lambda done, total, what: task.progress(done=done, total=total, unit="steps", model=what))
+    except maps.MapsError as exc:
+        raise TaskError(str(exc)) from exc
+    return {"dataset": "overture", **res}
+
+
 RUNNERS: dict[str, Callable[[Paths, Task, dict[str, Any]], dict[str, Any]]] = {
-    "switch": run_switch, "download": run_download, "verify": run_verify, "runtime": run_runtime}
+    "switch": run_switch, "download": run_download, "verify": run_verify, "runtime": run_runtime, "maps": run_maps}
 
 
 def run(paths: Paths, request: dict[str, Any], echo: Callable[[str], None] | None = None,

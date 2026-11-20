@@ -1047,28 +1047,48 @@ def _cmd_paths(a: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def _cmd_reference(a: argparse.Namespace) -> int:
-    from . import reference
+def _cmd_maps(a: argparse.Namespace) -> int:
+    from . import maps, model_tasks
 
     p = get_paths()
-    if a.action == "download":
-        if not a.name:
-            _err(f"which dataset? choose from {', '.join(reference.DATASETS)}")
-            return EXIT_USAGE
-        spec = reference.DATASETS.get(a.name)
-        if spec is None:
-            _err(f"unknown dataset {a.name!r}; choose from {', '.join(reference.DATASETS)}")
-            return EXIT_USAGE
-        print(f"downloading {spec.title} ({spec.size_hint}; {spec.license}) ...", file=sys.stderr)
-        try:
-            man = reference.download(p, a.name)
-        except reference.ReferenceDataError as exc:
-            _err(str(exc))
-            return EXIT_FAIL
-        _json({"name": a.name, "fetched": man["fetched"], "folder": str(reference.folder(p, a.name)),
-               "note": "photos are described with it from their next indexing (a full rebuild refreshes the ones already indexed)"})
+    if a.action in ("status", "plan"):
+        out: dict[str, Any] = {"datasets": maps.status(p)}
+        if a.action == "plan" or a.json:
+            pl = maps.plan(p)
+            out["plan"] = {k: v for k, v in pl.items() if k != "missing"} | ({"missing": pl["missing"]} if a.action == "plan" else {})
+        if a.json or a.action == "plan":
+            _json(out)
+            return EXIT_OK
+        for d in out["datasets"]:
+            state = "installed" if d["installed"] else "not installed"
+            extra = f", {d['cells']} cell(s)" if d["cells"] is not None else ""
+            size = f", {d['bytes'] / 2**20:.1f} MB" if d["bytes"] else ""
+            print(f"{d['name']:20s} {state}{extra}{size}{', release ' + d['release'] if d['release'] else ''}")
+            print(f"{'':20s} {d['used_for']} ({d['license']})")
+        print("\n`rag-search maps plan` lists the cells your documents need.")
         return EXIT_OK
-    _json({"folder": str(reference.root(p)), "datasets": reference.status(p)})
+    if a.action in ("download", "update", "remove") and a.dataset not in ("geonames", "overture"):
+        _err("which data? geonames or overture")
+        return EXIT_USAGE
+    req: dict[str, Any] = {"op": "maps", "action": a.action, "dataset": a.dataset or "",
+                           "model": f"maps {a.action} {a.dataset or ''}".strip()}
+    if a.bbox:
+        try:
+            box = [float(x) for x in a.bbox.split(",")]
+            maps.cells_in_box(*box)
+        except (ValueError, TypeError, maps.MapsError) as exc:
+            _err(f"--bbox WEST,SOUTH,EAST,NORTH: {exc}")
+            return EXIT_USAGE
+        req["bbox"] = box
+    try:
+        rec = model_tasks.run(p, req, echo=lambda m: print(m, file=sys.stderr))
+    except model_tasks.TaskBusy as exc:
+        _err(str(exc))
+        return EXIT_FAIL
+    if rec.get("status") != "succeeded":
+        _err(rec.get("error") or rec.get("status", "failed"))
+        return EXIT_FAIL
+    _json(rec.get("result") or {})
     return EXIT_OK
 
 
@@ -2880,11 +2900,16 @@ def build_parser() -> argparse.ArgumentParser:
             kw["type"] = int
         p.add_argument(t.cli_flag, **kw)
 
-    p = add("reference", "lookup tables used while indexing (place names for photographs)", _cmd_reference,
-            description="Reference datasets are fetched only by `reference download NAME`; indexing never uses the "
-            "network. Without an action: what exists and what is installed.")
-    p.add_argument("action", nargs="?", choices=["list", "download"], default="list")
-    p.add_argument("name", nargs="?", default="")
+    p = add("maps", "place data for positions in photos and timelines: GeoNames towns, Overture areas and places",
+            _cmd_maps,
+            description="Map data is downloaded only by these commands (or the Models tab); indexing never uses the "
+            "network. status: what is installed. plan: the cells (about 55 km squares) your indexed documents need. "
+            "download overture: those cells (or --bbox); download geonames: the worldwide town list. update: the newest "
+            "release. refresh: convert the documents that mention positions again, so new map data reaches them.")
+    p.add_argument("action", nargs="?", choices=["status", "plan", "download", "update", "remove", "refresh"],
+                   default="status")
+    p.add_argument("dataset", nargs="?", default="", help="geonames or overture")
+    p.add_argument("--bbox", default="", help="WEST,SOUTH,EAST,NORTH in degrees (download overture for this box)")
 
     p = add("paths", "print data and index folder locations", _cmd_paths)
     p.add_argument("name", nargs="?", default="")

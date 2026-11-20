@@ -1,14 +1,15 @@
 """Reference data: lookup tables that indexing consults to describe what it reads (stdlib only).
 
-A reference dataset is a few files that come from outside rag-search and are needed only while documents are
-converted: GeoNames for the name of the place a photograph was taken, and later, say, a face gallery or an object
-vocabulary for what a photograph shows.  The answer is written into the document's Markdown, so search never reads
-the dataset.
+A reference dataset comes from outside rag-search and is needed only while documents are converted: GeoNames for the
+town a position is near, Overture Maps for the area it is in and the places around it (``maps.py``), and later, say, a
+face gallery or an object vocabulary for what a photograph shows.  The answer is written into the document's Markdown,
+so search never reads the dataset.
 
-Datasets live in ``<home>/reference/<name>/`` with a ``manifest.json`` (where each file came from, when, its size and
-checksum).  Nothing is fetched while indexing: a dataset that is not installed is simply not used, and
-``rag-search reference download NAME`` is the one place that goes to the network.  The ``ref`` string of an installed
-dataset (``places@2026-11-20``) goes into what was derived from it, so it is visible which data a record used.
+A file dataset (this module) lives in ``<home>/reference/<name>/`` with a ``manifest.json`` (where each file came from,
+when, its size and checksum).  Nothing is fetched while indexing: a dataset that is not installed is simply not used,
+and ``rag-search maps download`` (or the Models tab) is the one place that goes to the network.  The ``ref`` string of
+an installed dataset (``geonames@2026-11-20``) goes into what was derived from it, so it is visible which data a record
+used.
 """
 
 from __future__ import annotations
@@ -43,7 +44,7 @@ class Dataset:
 
 DATASETS: dict[str, Dataset] = {d.name: d for d in (
     Dataset(
-        "places", "GeoNames: towns and villages with 1,000 or more people",
+        "geonames", "GeoNames: towns and villages with 1,000 or more people",
         "the place a photograph was taken near, from its GPS position",
         "CC BY 4.0, https://www.geonames.org",
         (("cities1000.zip", "https://download.geonames.org/export/dump/cities1000.zip"),
@@ -57,8 +58,18 @@ class ReferenceDataError(RuntimeError):
     """A dataset cannot be used or fetched; the message says what to do."""
 
 
+OLD_NAMES = {"places": "geonames"}           # 4.0.0.dev2 called GeoNames "places"
+
+
 def root(paths: Paths) -> Path:
     return paths.home / "reference"
+
+
+def _migrate(paths: Paths, name: str) -> None:
+    for old, new in OLD_NAMES.items():
+        if new == name and (root(paths) / old / MANIFEST).is_file() and not (root(paths) / new).exists():
+            with contextlib.suppress(OSError):
+                os.replace(root(paths) / old, root(paths) / new)
 
 
 def folder(paths: Paths, name: str) -> Path:
@@ -66,6 +77,7 @@ def folder(paths: Paths, name: str) -> Path:
 
 
 def manifest(paths: Paths, name: str) -> dict:
+    _migrate(paths, name)
     try:
         return json.loads((folder(paths, name) / MANIFEST).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -114,9 +126,10 @@ def _fetch(url: str, dest: Path) -> None:
         shutil.copyfileobj(resp, out, CHUNK)
 
 
-def download(paths: Paths, name: str, *, fetch: Callable[[str, Path], None] = _fetch) -> dict:
+def download(paths: Paths, name: str, *, fetch: Callable[[str, Path], None] | None = None) -> dict:
     """Fetch every file of the dataset into a new folder and put it in place when all of them arrived (an interrupted
     download leaves the installed copy as it was).  Returns the manifest."""
+    fetch = fetch or _fetch
     spec = DATASETS.get(name)
     if spec is None:
         raise ReferenceDataError(f"unknown reference dataset {name!r}; choose from {', '.join(DATASETS)}")

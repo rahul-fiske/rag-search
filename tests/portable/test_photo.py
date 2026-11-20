@@ -13,7 +13,7 @@ from unittest import mock
 from tests.helpers import FakeEmbedder, TempHome
 
 from rag_search import reference
-from rag_search.core import indexer, photo, places
+from rag_search.core import geo, indexer, photo
 from rag_search.core.docling_convert import NoTextError
 
 try:
@@ -60,28 +60,28 @@ def jpeg(path: Path, *, when="2024:03:14 13:12:05", offset="+05:30", gps=True, c
 
 class ReferenceTests(TempHome):
     def test_download_installs_and_gives_a_ref(self):
-        self.assertFalse(reference.installed(self.paths, "places"))
-        self.assertEqual(reference.ref(self.paths, "places"), "")
-        man = reference.download(self.paths, "places", fetch=fake_fetch)
-        self.assertTrue(reference.installed(self.paths, "places"))
-        self.assertEqual(reference.ref(self.paths, "places"), f"places@{man['fetched']}")
-        self.assertTrue(reference.path(self.paths, "places", "cities1000.txt").is_file())
+        self.assertFalse(reference.installed(self.paths, "geonames"))
+        self.assertEqual(reference.ref(self.paths, "geonames"), "")
+        man = reference.download(self.paths, "geonames", fetch=fake_fetch)
+        self.assertTrue(reference.installed(self.paths, "geonames"))
+        self.assertEqual(reference.ref(self.paths, "geonames"), f"geonames@{man['fetched']}")
+        self.assertTrue(reference.path(self.paths, "geonames", "cities1000.txt").is_file())
         self.assertEqual(len(man["files"]["cities1000.txt"]["sha256"]), 64)
         self.assertTrue(reference.status(self.paths)[0]["installed"])
 
     def test_a_failed_download_keeps_the_installed_copy(self):
-        reference.download(self.paths, "places", fetch=fake_fetch)
-        before = reference.manifest(self.paths, "places")
+        reference.download(self.paths, "geonames", fetch=fake_fetch)
+        before = reference.manifest(self.paths, "geonames")
 
         def broken(url, dest):
             if url.endswith("countryInfo.txt"):
                 raise OSError("offline")
             fake_fetch(url, dest)
         with self.assertRaises(reference.ReferenceDataError):
-            reference.download(self.paths, "places", fetch=broken)
-        self.assertEqual(reference.manifest(self.paths, "places"), before)
-        self.assertTrue(reference.installed(self.paths, "places"))
-        self.assertEqual([p.name for p in reference.root(self.paths).iterdir()], ["places"])
+            reference.download(self.paths, "geonames", fetch=broken)
+        self.assertEqual(reference.manifest(self.paths, "geonames"), before)
+        self.assertTrue(reference.installed(self.paths, "geonames"))
+        self.assertEqual([p.name for p in reference.root(self.paths).iterdir()], ["geonames"])
 
     def test_unknown_dataset(self):
         with self.assertRaises(reference.ReferenceDataError):
@@ -90,16 +90,16 @@ class ReferenceTests(TempHome):
 
 class PlacesTests(TempHome):
     def test_nothing_without_the_dataset(self):
-        self.assertIsNone(places.near(19.09, 78.34, self.paths))
+        self.assertIsNone(geo.near(19.09, 78.34, self.paths))
 
     def test_nearest_place_with_state_country_and_direction(self):
-        reference.download(self.paths, "places", fetch=fake_fetch)
-        near = places.near(19.12, 78.40, self.paths)
+        reference.download(self.paths, "geonames", fetch=fake_fetch)
+        near = geo.near(19.12, 78.40, self.paths)
         self.assertEqual((near.name, near.admin1, near.country), ("Nirmal", "Telangana", "India"))
         self.assertTrue(near.text().startswith("near Nirmal, Telangana, India (about "))
-        self.assertTrue(places.near(19.0901, 78.3401, self.paths).text().startswith("at Nirmal"))
-        self.assertIsNone(places.near(10.0, 20.0, self.paths))          # nothing within 50 km
-        self.assertIsNone(places.near(95.0, 0.0, self.paths))
+        self.assertTrue(geo.near(19.0901, 78.3401, self.paths).text().startswith("at Nirmal"))
+        self.assertIsNone(geo.near(10.0, 20.0, self.paths))          # nothing within 50 km
+        self.assertIsNone(geo.near(95.0, 0.0, self.paths))
 
 
 class PhotoTests(TempHome):
@@ -109,11 +109,11 @@ class PhotoTests(TempHome):
         for line in ("- Taken: 2024-03-14 13:12:05 +05:30 (Thursday)", "- Position: 19.09056 N, 78.34111 E, altitude 312 m",
                      "- Camera: Apple iPhone 13 Pro", "- Size: 64 x 48 pixels"):
             self.assertIn(line, text)
-        self.assertNotIn("Place:", text)
-        reference.download(self.paths, "places", fetch=fake_fetch)
+        self.assertNotIn("Town:", text)
+        reference.download(self.paths, "geonames", fetch=fake_fetch)
         text = photo.block(src, self.paths)
-        self.assertIn("- Place: at Nirmal, Telangana, India", text)
-        self.assertIn("- Reference data: places@", text)
+        self.assertIn("- Town: at Nirmal, Telangana, India", text)
+        self.assertIn("- Reference data: geonames@", text)
 
     def test_no_zone_no_gps_and_no_metadata(self):
         text = photo.block(jpeg(self.tmp / "b.jpg", offset="", gps=False), self.paths)
@@ -152,7 +152,7 @@ class IndexedPhotoTests(TempHome):
         super().setUp()
         self.use_fake_backends()
         os.environ["RAG_SEARCH_ROUTING"] = "document"
-        reference.download(self.paths, "places", fetch=fake_fetch)
+        reference.download(self.paths, "geonames", fetch=fake_fetch)
 
     def run_index(self):
         srcs = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
@@ -169,7 +169,7 @@ class IndexedPhotoTests(TempHome):
         md = next(self.paths.markup.rglob("IMG_1.md"))
         text = md.read_text(encoding="utf-8")
         self.assertIn("Taken: 2024-03-14 13:12:05 +05:30", text)
-        self.assertIn("Place: at Nirmal, Telangana, India", text)
+        self.assertIn("Town: at Nirmal, Telangana, India", text)
         nodes = json.loads(next(self.paths.index.rglob("IMG_1/nodes.json")).read_text())["nodes"]
         self.assertTrue(any("2024-03-14" in n["text"] for n in nodes))
         self.assertFalse(list(self.paths.markup.rglob("scan.md")))
@@ -188,11 +188,11 @@ class PhotographOrPageTests(TempHome):
         md.write_text("<!-- page 1 -->\n\n", encoding="utf-8")
         photo.attach(md, photo.block(src, self.paths, "Hotel   Sai Krishna\nVeg Meals"))
         self.assertIn("- Text in the picture: Hotel Sai Krishna Veg Meals\n", md.read_text(encoding="utf-8"))
-        reference.download(self.paths, "places", fetch=fake_fetch)
+        reference.download(self.paths, "geonames", fetch=fake_fetch)
         photo.attach(md, photo.block(src, self.paths))                # places data arrived; the text is not read again
         text = md.read_text(encoding="utf-8")
         self.assertEqual(text.count("Text in the picture"), 1)
-        self.assertIn("- Place: at Nirmal", text)
+        self.assertIn("- Town: at Nirmal", text)
         self.assertTrue(text.index("Text in the picture") < text.index("Reference data"))
 
 

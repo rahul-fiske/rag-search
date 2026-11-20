@@ -429,6 +429,12 @@ class Handler(BaseHTTPRequestHandler):
         if name == "models":
             return self._json({"ok": True, **models.state(app.paths),
                                "task": model_tasks.read_task(app.paths)})
+        if name == "maps":
+            from .. import maps
+
+            task = model_tasks.read_task(app.paths)
+            return self._json({"ok": True, "datasets": maps.status(app.paths), "plan": maps.plan(app.paths),
+                               "task": task if task and task.get("op") == "maps" else None})
         if name == "models/plan":
             try:
                 pl = model_tasks.plan_switch(app.paths, (q.get("kind") or [""])[0],
@@ -586,6 +592,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "values": store.get(), "changed": validated})
             if name.startswith("models/"):
                 return self._models_post(name[len("models/"):], body)
+            if name.startswith("maps/"):
+                return self._maps_post(name[len("maps/"):], body)
             if name.startswith("playground/"):
                 return self._playground_post(name[len("playground/"):], body)
         except ValueError as exc:
@@ -781,6 +789,37 @@ class Handler(BaseHTTPRequestHandler):
         except (models.ModelError, model_tasks.TaskError) as exc:
             return self._error(400, str(exc))
         self.app.live.nudge(catalog=True)
+        self._json({"ok": True, "task": rec})
+
+    def _maps_post(self, action: str, body: dict[str, Any]) -> None:
+        """Map data downloads run as detached tasks like model downloads (`model_tasks` op "maps"); the page polls
+        GET /api/maps."""
+        from .. import maps
+
+        paths = self.app.paths
+        dataset = body.get("dataset") or ""
+        if action == "cancel":
+            return self._json({"ok": True, "cancelled": model_tasks.cancel(paths)})
+        if action not in ("download", "update", "remove", "refresh"):
+            return self._error(404, "not found")
+        if action != "refresh" and dataset not in ("geonames", "overture"):
+            return self._error(400, "dataset must be geonames or overture")
+        req: dict[str, Any] = {"op": "maps", "action": action, "dataset": dataset,
+                               "model": f"maps {action} {dataset}".strip()}
+        box = body.get("bbox")
+        if box:
+            try:
+                box = [float(x) for x in (box.split(",") if isinstance(box, str) else box)]
+                maps.cells_in_box(*box)
+            except (TypeError, ValueError, maps.MapsError) as exc:
+                return self._error(400, f"box: {exc}")
+            req["bbox"] = box
+        try:
+            rec = model_tasks.start_detached(paths, req)
+        except model_tasks.TaskBusy as exc:
+            return self._error(409, str(exc))
+        except model_tasks.TaskError as exc:
+            return self._error(400, str(exc))
         self._json({"ok": True, "task": rec})
 
     def _collection_action(self, name: str, body: dict[str, Any]) -> None:

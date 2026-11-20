@@ -413,7 +413,7 @@ class LayeringTests(unittest.TestCase):
                     "rag_search.models", "rag_search.model_tasks", "rag_search.spec",
                     "rag_search.locations", "rag_search.bundle", "rag_search.lifecycle",
                     "rag_search.descriptions", "rag_search.access", "rag_search.api",
-                    "rag_search.inventory"):
+                    "rag_search.inventory", "rag_search.maps", "rag_search.reference"):
             self.assertEqual(self._imports(mod), "", mod)
 
 

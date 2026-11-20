@@ -58,7 +58,7 @@ from ..paths import (
     sha256_file,
     write_json_atomic,
 )
-from . import chunker, photo, stallwatch
+from . import chunker, photo, stallwatch, timeline
 from .bm25 import TOKENIZER_VERSION
 from .conversion import (
     applevision,
@@ -628,6 +628,11 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         info: dict[str, Any] = {}
         route_note = ""
         how = ""
+        if not reused_md and src.suffix.lower() == ".json" and timeline.convert(src, md_path, get_paths()):
+            md_path.with_name(md_path.name + ".sha256").write_text(
+                f"{sha}\n{convert_profile(task.get('ocr'))}\n", encoding="utf-8")
+            how = "converted"
+            route_note = "a Google Maps Timeline: one line per visit and journey, with what the map data says"
         photo_section = photo.block(src, get_paths()) if kind == "image" else ""
         photograph = False
         if photo_section and not reused_md:

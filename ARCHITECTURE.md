@@ -250,8 +250,8 @@ collections it may use. The MCP adapter fixes it from `--profile NAME`; it is de
 
 | Layer | Modules | May import |
 |---|---|---|
-| light (stdlib) | `paths config policy access descriptions locations bundle lifecycle inventory spec protocol client jobs publish catalog grep readdoc api service register cli models model_tasks`, `ui/*`, `core/daemon_base`, `core/indexer_daemon`, `core/conversion/{trace,costs,router,profiler,records,runview,estimate,pageimage}` | stdlib only (`profiler` and `pageimage` import pypdfium2 / Pillow inside functions) |
-| core (heavy) | `core/{bm25,chunker,embedding,indexer,search,search_daemon,worker,docling_convert,diagnostics,playground}` | numpy, torch, docling (lazily) |
+| light (stdlib) | `paths config policy access descriptions locations bundle lifecycle inventory spec protocol client jobs publish catalog grep readdoc api service register cli models model_tasks maps reference`, `ui/*`, `core/daemon_base`, `core/indexer_daemon`, `core/conversion/{trace,costs,router,profiler,records,runview,estimate,pageimage}` | stdlib only (`profiler` and `pageimage` import pypdfium2 / Pillow, `maps` pyarrow / shapely, inside functions) |
+| core (heavy) | `core/{bm25,chunker,embedding,indexer,search,search_daemon,worker,docling_convert,diagnostics,playground,photo,geo,timeline}` | numpy, torch, docling (lazily) |
 | adapter | `mcp/*` | the `mcp` package, light layer |
 
 `tests` check that importing the light modules never pulls in numpy/torch/docling/mcp, that
@@ -987,6 +987,33 @@ processes, runs without downloading models.
 * `models.cached_revision(id)` reads the commit `refs/main` points at in the cache; the embedder records it and
   the indexer writes it to `index.meta.json` as `model_revision` (a model id names a repository, not fixed weights).
 * Publishing cannot mix embedding models (`publish._collect`), so a half-finished re-embedding never goes live.
+
+### 5.3a Map data and positions (`maps.py`, `reference.py`, `core/geo.py`, `core/photo.py`, `core/timeline.py`)
+
+* **Three datasets, downloaded only on request** (`rag-search maps`, the Models tab's Maps card; a `model_tasks` task
+  with `op: "maps"`, so one download runs at a time and the dashboard polls it like a model download). Indexing and
+  search never use the network; a dataset that is not installed adds nothing.
+  * `geonames` (`reference.py`, a file dataset with a manifest): towns of 1,000+ people worldwide, for the nearest town.
+  * `overture-divisions` / `overture-places` (`maps.py`): Overture Maps areas (polygons, simplified to ~50 m; country
+    outlines are dropped, the country name comes from its code) and places of interest, read straight from Overture's
+    public bucket with pyarrow (row groups outside the request are not transferred) and stored in
+    `reference/overture/{divisions,places}.sqlite` with an R*Tree index. Both are kept per **cell** (0.5°, ~55 km),
+    pinned to one release; touching cells are fetched in one read; `update` moves every cell to the newest release.
+* **Positions are `geo:LAT,LON` in the converted Markdown** (photos' Position line, Timeline visits and journeys).
+  `maps.plan` scans the workspace Markdown for them and lists the cells they need and are missing ("where my data is");
+  `maps.refresh` deletes the `.md.sha256` sidecar and `index.meta.json` of every document with positions, so the next
+  `index new` converts them again with the data installed now.
+* **`core/geo.py`** turns a position into lines: `Area:` (the Overture areas it is inside, smallest first), `Town:`
+  (GeoNames), `Nearby:` (Overture places within 100 m, at most 5, nearest first, plus the nearest place to eat within
+  150 m) - candidates with category and distance, never one chosen place - and the `Reference data:` they came from.
+* **Photos** (`core/photo.py`, step 3 of `_prepare_document`): an image with EXIF gets a "Photo details" section
+  (time with offset, position, the `geo.py` lines, camera, size). A quick OCR (Apple Vision / Tesseract) decides
+  photograph or page: a photograph (< 200 letters and digits) is indexed from its details alone and never reaches the
+  document reader; a page is converted as usual and the section is attached (and replaced in place later, keeping the
+  text found in the picture).
+* **Google Timeline** (`core/timeline.py`, before conversion in `_prepare_document`): a `.json` whose first 256 KB look
+  like one of the three export shapes is written as a day-by-day log (visits and journeys with times, `geo:`
+  positions, the Google place ID as it is, the `geo.py` lines); any other `.json` goes to the generic JSON converter.
 
 ### 5.4 Playground (`core/playground.py`)
 
