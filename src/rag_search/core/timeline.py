@@ -191,10 +191,18 @@ def to_markdown(data: Any, shape: str, paths: Paths, *, source: str = "") -> str
     return "\n".join(head + body) + "\n"
 
 
+def recognise(src: Path) -> str:
+    """The Timeline shape a ``.json`` file looks like from its first 256 KB ("" when it is not one): cheap, nothing is converted."""
+    try:
+        with open(src, encoding="utf-8", errors="replace") as fh:
+            return sniff(fh.read(SNIFF_BYTES))
+    except OSError:
+        return ""
+
+
 def convert(src: Path, md_path: Path, paths: Paths) -> bool:
     """Write the Markdown of *src* when it is a Google Timeline export; False (nothing written) when it is not."""
-    with open(src, encoding="utf-8", errors="replace") as fh:
-        shape = sniff(fh.read(SNIFF_BYTES))
+    shape = recognise(src)
     if not shape:
         return False
     try:

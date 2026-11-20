@@ -604,12 +604,50 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         trace_file = trace.trace_path_for(md_path)
         stage_event(slog, rel_name, "convert", "start")
 
-        # Page profile (step 1): skipped when this document's Markdown *and* trace are current
         reused_md = md_is_current(md_path, sha, force=task["force_md"], ocr=task.get("ocr"))
         old = trace.read_trace(trace_file) if reused_md else {}
         reuse_trace = bool(old and old.get("src_sha256") == sha
                            and old.get("convert") == convert_profile(task.get("ocr")))
-        if not reuse_trace:
+
+        # 3.0 Sniff: what kind of file is this?  Decided from the file itself, before any page is looked at:
+        # a Google Timeline .json -> "timeline"; an image with camera data and little text -> "photograph";
+        # everything else, a photographed page too -> "pages" (3.1-3.5).  A document whose Markdown and trace are
+        # current keeps the route its trace records.
+        t_sn = time.perf_counter()
+        route = "pages"
+        meta = photo.read_exif(src) if kind == "image" else {}
+        seen: str | None = None
+        known = {trace.page_kind(p) for p in old.get("pages", [])} if reuse_trace else set()
+        if known == {"photo"}:
+            route = "photograph"
+        elif known == {"timeline"}:
+            route = "timeline"
+        elif src.suffix.lower() == ".json" and not reused_md and timeline.recognise(src):
+            route = "timeline"
+        elif meta and not reused_md:
+            seen = photo.visible_text(src)            # a quick text check: a photograph, or a photographed page
+            if photo.is_photograph(seen):
+                route = "photograph"
+        stage_event(slog, rel_name, "sniff", "done", seconds=round(time.perf_counter() - t_sn, 3), route=route)
+
+        t_conv = time.perf_counter()
+        info: dict[str, Any] = {}
+        route_note = ""
+        how = ""
+        timeline_done = False
+        if route == "timeline" and not reused_md:      # 3.8 Timeline
+            if timeline.convert(src, md_path, get_paths()):
+                md_path.with_name(md_path.name + ".sha256").write_text(
+                    f"{sha}\n{convert_profile(task.get('ocr'))}\n", encoding="utf-8")
+                how = "converted"
+                timeline_done = True
+                route_note = "a Google Maps Timeline: one line per visit and journey, with what the map data says"
+                stage_event(slog, rel_name, "timeline", "done", seconds=round(time.perf_counter() - t_conv, 2))
+            else:
+                route = "pages"                        # it was not one after all: read like any other file
+
+        # 3.1 Profile (pages only): skipped when this document's Markdown *and* trace are current
+        if route == "pages" and not reuse_trace:
             t_prof = time.perf_counter()
             profile = profiler.profile_file(src)
             prof_s = round(time.perf_counter() - t_prof, 2)
@@ -618,38 +656,26 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
             for _n, branch, _why in profiler.route_pages(profile) or [(1, router.decide(kind)[0], "")]:
                 planned[branch] = planned.get(branch, 0) + 1
             plan_event(slog, rel_name, planned)
-        else:                                                    # the stored trace says what the pages are
+            t_conv = time.perf_counter()
+        elif reuse_trace:                                        # the stored trace says what the pages are
             planned = {}
             for rec in old.get("pages", []):
                 planned[trace.page_kind(rec)] = planned.get(trace.page_kind(rec), 0) + 1
             plan_event(slog, rel_name, planned)
+        else:                                                    # a photograph or a Timeline: no page to profile
+            plan_event(slog, rel_name, {"photo" if route == "photograph" else "timeline": 1})
 
-        t_conv = time.perf_counter()
-        info: dict[str, Any] = {}
-        route_note = ""
-        how = ""
-        timeline_done = False
-        if not reused_md and src.suffix.lower() == ".json":
-            t_tl = time.perf_counter()
-            if timeline.convert(src, md_path, get_paths()):
-                md_path.with_name(md_path.name + ".sha256").write_text(
-                    f"{sha}\n{convert_profile(task.get('ocr'))}\n", encoding="utf-8")
-                how = "converted"
-                timeline_done = True
-                route_note = "a Google Maps Timeline: one line per visit and journey, with what the map data says"
-                stage_event(slog, rel_name, "timeline", "done", seconds=round(time.perf_counter() - t_tl, 2))
+        # 3.6 Photo details (3.7 Locate is part of it: the map lines): a photograph, and a photographed page after its lanes
         t_ph = time.perf_counter()
-        photo_section = photo.block(src, get_paths()) if kind == "image" else ""
-        photograph = False
-        if photo_section and not reused_md:
-            seen = photo.visible_text(src)            # a photograph is not read by the document reader (made for pages)
-            if photo.is_photograph(seen):
-                photograph = True
-                photo_section = photo.block(src, get_paths(), seen or "", describe.indexing_lines(get_paths(), src, sha))
-        if photo_section:                              # 3.6 Photo details (3.7 Locate is part of it: the map lines)
+        photograph = route == "photograph" and not reused_md      # made now: only its details are indexed
+        photo_section = ""
+        if meta:
+            photo_section = (photo.block(src, get_paths(), seen or "", describe.indexing_lines(get_paths(), src, sha))
+                             if photograph and not reused_md else photo.block(src, get_paths()))
+        if photo_section:
             loc_s = float(photo.LAST.get("locate_s") or 0.0)
             stage_event(slog, rel_name, "photo", "done", seconds=round(max(0.0, time.perf_counter() - t_ph - loc_s), 2),
-                        photograph=photograph)
+                        photograph=route == "photograph")
             if "- Area:" in photo_section or "- Town:" in photo_section:
                 stage_event(slog, rel_name, "locate", "done", seconds=round(loc_s, 3),
                             nearby="- Nearby:" in photo_section)

@@ -5,7 +5,7 @@
    key (time breakdowns, events); tests/test_stages.py keeps the two equal. */
 const STAGE_KEYS = {
   discover: ['1', 'Discover'], fingerprint: ['2', 'Fingerprint'], convert: ['3', 'Convert'],
-  profile: ['3.1', 'Profile'], read: ['3.2', 'Read'], gate: ['3.3', 'Gate'], repair: ['3.4', 'Repair'],
+  sniff: ['3.0', 'Sniff'], profile: ['3.1', 'Profile'], read: ['3.2', 'Read'], gate: ['3.3', 'Gate'], repair: ['3.4', 'Repair'],
   reconcile: ['3.5', 'Reconcile'], photo: ['3.6', 'Photo details'], locate: ['3.7', 'Locate'], timeline: ['3.8', 'Timeline'],
   chunk: ['4', 'Chunk'], embed: ['5', 'Embed'], write: ['6', 'Write'],
   merge: ['7', 'Merge'], publish: ['8', 'Publish'], describe: ['9', 'Describe'],

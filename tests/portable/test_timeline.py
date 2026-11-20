@@ -111,6 +111,10 @@ class IndexedTimelineTests(TempHome):
         done = {(e["stage"], e["id"]) for e in (json.loads(x) for x in log.read_text(encoding="utf-8").splitlines() if x.strip())
                 if e.get("event") == "stage" and e.get("status") == "done"}
         self.assertIn(("timeline", "3.8"), done)
+        sniff = [e for e in (json.loads(x) for x in log.read_text(encoding="utf-8").splitlines() if x.strip())
+                 if e.get("event") == "stage" and e.get("stage") == "sniff"]
+        self.assertEqual([e["route"] for e in sniff], ["timeline"])
+        self.assertNotIn(("profile", "3.1"), done)                             # not a page: nothing to profile
 
     def test_a_timeline_is_indexed_and_other_json_is_not_treated_as_one(self):
         (self.sdir / "maps").mkdir()

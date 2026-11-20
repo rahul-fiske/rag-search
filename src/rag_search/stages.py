@@ -10,7 +10,8 @@ Indexing (one run)::
     1  Discover        which files, in which collections          (run)
     2  Fingerprint     unchanged since last time? skip            (document)
     3  Convert         file -> page-marked Markdown               (document)
-         3.1 Profile     what is on each page                      CPU
+         3.0 Sniff       what kind of file? pages, a photograph or a Timeline  CPU
+         3.1 Profile     what is on each page (pages only)         CPU
          3.2 Read        the reader each page needs                (lanes a: text layer  b: OCR  c: text layer + pictures  d: document reader)
          3.3 Gate        does the result look right
          3.4 Repair      re-read suspect table cells               GPU
@@ -88,8 +89,15 @@ INDEXING: tuple[Stage, ...] = (
           "converted side by side when the machine has the memory for it; a conversion process that goes silent is "
           "stopped and its document reported, so one stuck document never holds the run",
           settings=("indexer.jobs", "indexer.stall_timeout")),
+    Stage("3.0", "sniff", "Sniff", DOCUMENT, CPU,
+          "what kind of file is this? decided from the file itself, before any page is looked at: a Google Maps Timeline "
+          ".json goes to 3.8; an image with camera data gets a quick text check (Apple Vision, else Tesseract) and, with "
+          "little text, is a photograph and goes to 3.6; everything else, a photographed page too, is a document of pages and "
+          "goes to 3.1. A document that is already converted keeps the route its trace records",
+          constants=(("letters of text that make a picture a page", 200),)),
     Stage("3.1", "profile", "Profile", DOCUMENT, CPU,
-          "look at every page once: text layer, scan or photo, pictures, ink, resolution, script"),
+          "look at every page once: text layer, scan or photo, pictures, ink, resolution, script (pages only: a photograph "
+          "or a Timeline file, which 3.0 sent elsewhere, is not profiled)"),
     Stage("3.2", "read", "Read", DOCUMENT, BOTH,
           "each page goes down the lane it needs: 3.2a docling on the text layer (and Office files), 3.2b OCR for a "
           "clean scan (docling's OCR, or Tesseract for a skewed page and image files), 3.2c docling on the text layer "
@@ -145,11 +153,11 @@ INDEXING: tuple[Stage, ...] = (
           "a table that runs across a page break is joined (the continuation gets the header) and checked across "
           "the break"),
     Stage("3.6", "photo", "Photo details", DOCUMENT, CPU,
-          "an image that carries camera data (EXIF) gets a section of facts: when (with the time zone), the GPS position, "
-          "camera and size, and the faces Apple Vision counts; a quick text check (Apple Vision, else Tesseract) tells a "
-          "photograph, which is indexed from these details and never read by the document reader, from a photographed "
-          "page, which goes down the lanes of 3.2 and gets the details too",
-          optional=True, constants=(("letters a picture needs to count as a page", 200), ("letters of text found in a picture kept", 4))),
+          "a photograph (3.0 decided) is indexed from a section of facts, never read by the document reader: when it was taken (with "
+          "the time zone), the GPS position, camera and size, the faces Apple Vision counts, a text found in the picture of at least "
+          "four letters, and a description from the cache; a photographed page goes down the lanes and gets the same section "
+          "added at the end",
+          optional=True, constants=(("letters of text found in a picture kept", 4),)),
     Stage("3.7", "locate", "Locate", DOCUMENT, CPU,
           "for every position (a photograph's GPS, the coordinates of a Timeline): the Overture area it is in, the GeoNames "
           "town it is near, and the Overture places within 100 m (the nearest place to eat within 150 m) as candidates with "
@@ -158,7 +166,8 @@ INDEXING: tuple[Stage, ...] = (
     Stage("3.8", "timeline", "Timeline", DOCUMENT, CPU,
           "a .json file that is a Google Maps Timeline export (phone, semanticSegments or Takeout; recognised by its "
           "content) becomes a day-by-day log: one line per visit and journey with times, geo: positions, the Google place "
-          "ID as it is, and the 3.7 lines; any other .json is read as plain structured text",
+          "ID as it is, and the 3.7 lines; a .json that is not one (3.0 found out, or the file proved not to be) is read as "
+          "plain structured text",
           optional=True),
     Stage("4", "chunk", "Chunk", DOCUMENT, CPU,
           "split the Markdown into passages that never cross a page; tables and code stay whole where they fit",

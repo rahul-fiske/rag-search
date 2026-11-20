@@ -271,6 +271,10 @@ class PhotoPipelineRecordTests(IndexedPhotoTests):
         self.assertEqual(stages[("photo", "3.6")]["photograph"], True)
         self.assertIn(("locate", "3.7"), stages)                              # it has a position and the town table is installed
         self.assertIn(("convert", "3"), stages)
+        self.assertEqual(stages[("sniff", "3.0")]["route"], "photograph")      # decided first, from the file itself ...
+        self.assertNotIn(("profile", "3.1"), stages)                          # ... so no page is profiled
+        plans = [e for e in self.events(log) if e.get("event") == "plan"]
+        self.assertEqual([p["branches"] for p in plans], [{"photo": 1}])      # and the plan says photo, not lane d
         trace_file = next(self.paths.markup.rglob("p.trace.json"))
         summary = json.loads(trace_file.read_text(encoding="utf-8"))["summary"]
         self.assertEqual(summary["branches"], {"photo": 1})
@@ -291,5 +295,7 @@ class PhotoPipelineRecordTests(IndexedPhotoTests):
                               stage_log=log)
         stages = {e["stage"]: e for e in self.events(log) if e.get("event") == "stage" and e.get("status") == "done"}
         self.assertEqual(stages["photo"]["photograph"], False)
+        self.assertEqual(stages["sniff"]["route"], "pages")                   # a page: profiled and read down the lanes
+        self.assertIn("profile", stages)
         summary = json.loads(next(self.paths.markup.rglob("page.trace.json")).read_text(encoding="utf-8"))["summary"]
         self.assertNotIn("photo", summary["branches"])
