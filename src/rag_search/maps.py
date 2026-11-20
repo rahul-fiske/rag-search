@@ -6,11 +6,14 @@ Three datasets, each downloaded only when asked (``rag-search maps`` or the Mode
     overture-divisions   Overture Maps areas (district, state, locality ...): the area a position is inside
     overture-places      Overture Maps places of interest (restaurants, fuel, temples ...): what is around it
 
-The two Overture datasets are kept per *cell* of the map, a square of ``CELL_DEG`` degrees (about 55 km), so only the
-parts of the world that matter are on disk.  Which cells matter is read from the indexed documents themselves: every
-position a converted document mentions is written as ``geo:LAT,LON`` (photos, Google Timeline), and ``plan`` lists the
-cells those positions fall in that are not downloaded yet.  Both are stored in SQLite files with a spatial index under
-``<home>/reference/overture/`` and pinned to one Overture release; ``update`` moves every cell to the newest release.
+The two Overture datasets are kept per *cell* of the map, a square of ``CELL_DEG`` degrees (0.05, about 6 km), so only
+the parts of the world that matter are on disk.  Which cells matter is read from the indexed documents themselves:
+every position a converted document mentions is written as ``geo:LAT,LON`` (photos, Google Timeline), and ``plan``
+lists the cells those positions fall in that are not downloaded yet.  Cells are *fetched* in larger groups (``FETCH_DEG``,
+0.5 degree squares that touch are read together: a read costs about the same whatever its size) and only the needed
+cells are kept.  Both are stored in SQLite files under ``<home>/reference/overture/``, pinned to one Overture release
+(``update`` moves every cell to the newest one).  Places are stored compactly: no Overture id, the category as a small
+number, positions as integers (about 1 m), and one ``(cell, lat)`` index instead of a spatial index.
 
 Each converted document with positions gets a *stamp* (``<doc>.md.geo.json``): for every cell it touches, which map
 data described it (the GeoNames download, the Overture release and download time of that cell).  ``refresh`` compares
@@ -39,7 +42,14 @@ from typing import Any
 from . import reference
 from .paths import META_FILE, Paths
 
-CELL_DEG = 0.5
+PER_DEG = 20                       # store cells per degree of latitude or longitude
+CELL_DEG = 1 / PER_DEG             # a store cell: 0.05 degree, about 6 km
+FETCH_DEG = 0.5                    # cells are read from Overture in groups inside squares of this size
+FETCH_CELLS = round(FETCH_DEG * PER_DEG)
+GRID = "0.05"                      # stored in each database: the cell size it was made with
+E5 = 100_000                       # positions are stored as integers: degrees x E5 (about 1 m)
+MAX_BOX_CELLS = 250_000
+MARGIN_M = 150                     # what a lookup reads around a position: a position needs every cell this reaches into
 BUCKET = "overturemaps-us-west-2/release"
 REGION = "us-west-2"
 KINDS = ("divisions", "places")
@@ -53,7 +63,7 @@ USED_FOR = {"geonames": "the town a position is near",
 LICENSES = {"geonames": "CC BY 4.0, geonames.org",
             "overture-divisions": "ODbL (built from OpenStreetMap), overturemaps.org",
             "overture-places": "CDLA Permissive 2.0 / Apache 2.0 (per record), overturemaps.org"}
-EST_MB_PER_CELL = 1.0              # rough: a town cell is a fraction of this, a big city several times it
+EST_MB_PER_CELL = 0.15             # measured: 528 cells around Pune, Mumbai, Delhi, Bengaluru ... are 58 MB of places and 15 MB of areas
 SIMPLIFY_DEG = 0.0005              # area outlines are kept to about 50 m: enough to say which side of a border
 SKIP_SUBTYPES = {"country"}        # a country's outline is large; its name comes from the country code
 GEO_RE = re.compile(r"geo:(-?\d{1,2}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)")
@@ -68,49 +78,83 @@ class MapsError(RuntimeError):
 
 # ── cells ────────────────────────────────────────────────────────────────────
 
+def cell_index(lat: float, lon: float) -> tuple[int, int]:
+    return math.floor(lat * PER_DEG), math.floor(lon * PER_DEG)
+
+
+def label(i: int, j: int) -> str:
+    return f"{i / PER_DEG:.2f},{j / PER_DEG:.2f}"
+
+
+def parse(cell: str) -> tuple[int, int]:
+    s, w = cell.split(",")
+    return round(float(s) * PER_DEG), round(float(w) * PER_DEG)
+
+
 def cell_of(lat: float, lon: float) -> str:
-    return f"{math.floor(lat / CELL_DEG) * CELL_DEG:.1f},{math.floor(lon / CELL_DEG) * CELL_DEG:.1f}"
+    """The cell of a position, named by its south-west corner: ``19.05,78.30``."""
+    return label(*cell_index(lat, lon))
+
+
+def cells_around(lat: float, lon: float) -> set[str]:
+    """The cells a lookup at this position reads: its own and, near an edge, the neighbours the ``MARGIN_M`` around it
+    reaches into (a place across the edge is as near as one on this side)."""
+    dlat = MARGIN_M / 111_000
+    dlon = MARGIN_M / (111_000 * max(0.01, math.cos(math.radians(lat))))
+    i0, j0 = cell_index(max(-90.0, lat - dlat), max(-180.0, lon - dlon))
+    i1, j1 = cell_index(min(89.999999, lat + dlat), min(179.999999, lon + dlon))
+    return {label(i, j) for i in range(i0, i1 + 1) for j in range(j0, j1 + 1)}
+
+
+def cell_no(i: int, j: int) -> int:
+    """The number a cell has in the places table (positive, fits in four bytes)."""
+    return (i + 90 * PER_DEG) * 10_000 + (j + 180 * PER_DEG)
 
 
 def cell_box(cell: str) -> tuple[float, float, float, float]:
     """(west, south, east, north) of a cell."""
-    s, w = (float(x) for x in cell.split(","))
-    return w, s, w + CELL_DEG, s + CELL_DEG
+    i, j = parse(cell)
+    return j / PER_DEG, i / PER_DEG, (j + 1) / PER_DEG, (i + 1) / PER_DEG
 
 
 def cells_in_box(west: float, south: float, east: float, north: float) -> set[str]:
     if not (-180 <= west < east <= 180 and -90 <= south < north <= 90):
         raise MapsError("a box is WEST,SOUTH,EAST,NORTH in degrees, west < east and south < north")
-    out = set()
-    lat = math.floor(south / CELL_DEG) * CELL_DEG
-    while lat < north:
-        lon = math.floor(west / CELL_DEG) * CELL_DEG
-        while lon < east:
-            out.add(cell_of(lat + 1e-9, lon + 1e-9))
-            lon += CELL_DEG
-        lat += CELL_DEG
-    if len(out) > 20_000:
-        raise MapsError(f"that box is {len(out)} cells; download a smaller area (a state or a country)")
-    return out
+    i0, i1 = math.floor(south * PER_DEG), math.ceil(north * PER_DEG)
+    j0, j1 = math.floor(west * PER_DEG), math.ceil(east * PER_DEG)
+    if (i1 - i0) * (j1 - j0) > MAX_BOX_CELLS:
+        raise MapsError(f"that box is {(i1 - i0) * (j1 - j0):,} cells of about 6 km; download a smaller area "
+                        f"(a state, not a country)")
+    return {label(i, j) for i in range(i0, i1) for j in range(j0, j1)}
+
+
+def fetch_cell(cell: str) -> tuple[int, int]:
+    """The 0.5 degree square a cell is read in."""
+    i, j = parse(cell)
+    return i // FETCH_CELLS, j // FETCH_CELLS
 
 
 def clusters(cells: Iterable[str]) -> list[list[str]]:
-    """Cells that touch (sides or corners) are fetched together: one read of their box costs about what one cell does."""
-    todo = set(cells)
+    """Cells are fetched together with the cells of the 0.5 degree squares that touch theirs (sides or corners): one
+    read of the group costs about what one square does.  Returns the groups of cells."""
+    by_square: dict[tuple[int, int], list[str]] = {}
+    for c in cells:
+        by_square.setdefault(fetch_cell(c), []).append(c)
+    todo = set(by_square)
     out = []
     while todo:
         first = todo.pop()
-        group, stack = [first], [first]
+        squares, stack = [first], [first]
         while stack:
-            s, w = (round(float(x) / CELL_DEG) for x in stack.pop().split(","))
-            for ds in (-1, 0, 1):
-                for dw in (-1, 0, 1):
-                    n = f"{(s + ds) * CELL_DEG:.1f},{(w + dw) * CELL_DEG:.1f}"
+            a, b = stack.pop()
+            for da in (-1, 0, 1):
+                for db in (-1, 0, 1):
+                    n = (a + da, b + db)
                     if n in todo:
                         todo.remove(n)
-                        group.append(n)
+                        squares.append(n)
                         stack.append(n)
-        out.append(sorted(group))
+        out.append(sorted(c for sq in squares for c in by_square[sq]))
     return sorted(out, key=lambda g: g[0])
 
 
@@ -156,7 +200,8 @@ def plan(paths: Paths) -> dict[str, Any]:
     pos = positions(paths)
     need = Counter()
     for (lat, lon), n in pos.items():
-        need[cell_of(lat, lon)] += n
+        for c in cells_around(lat, lon):
+            need[c] += n
     have = {k: set(installed_cells(paths, k)) for k in KINDS}
     missing = sorted(c for c in need if any(c not in have[k] for k in KINDS))
     return {"positions": len(pos), "cells_needed": len(need), "cells_missing": len(missing), "missing": missing,
@@ -175,10 +220,10 @@ def db_path(paths: Paths, kind: str) -> Path:
 
 
 SCHEMA = {
-    "places": ("create table if not exists place(id integer primary key, oid text, name text, category text, "
-               "confidence real, lat real, lon real, cell text)",
-               "create virtual table if not exists place_rt using rtree(id, minx, maxx, miny, maxy)",
-               "create index if not exists place_cell on place(cell)"),
+    "places": ("create table if not exists place(cell integer, lat integer, lon integer, name text, cat integer, "
+               "conf integer)",
+               "create index if not exists place_cell on place(cell, lat)",
+               "create table if not exists cat(id integer primary key, name text unique)"),
     "divisions": ("create table if not exists area(id integer primary key, oid text unique, name text, subtype text, "
                   "country text, wkb blob)",
                   "create virtual table if not exists area_rt using rtree(id, minx, maxx, miny, maxy)"),
@@ -196,6 +241,7 @@ def connect(paths: Paths, kind: str, *, create: bool = False) -> sqlite3.Connect
         con.execute("create table if not exists cell(cell text primary key, rows integer, release text, at text)")
         for sql in SCHEMA[kind]:
             con.execute(sql)
+        con.execute("insert or ignore into meta values ('grid', ?)", (GRID,))
     return con
 
 
@@ -211,11 +257,15 @@ def meta(paths: Paths, kind: str) -> dict[str, str]:
 
 
 def installed_cells(paths: Paths, kind: str) -> dict[str, str]:
+    """The cells downloaded for *kind* and the Overture release of each (a store made with the old 0.5 degree cells
+    counts as empty until ``migrate`` converts it)."""
     con = connect(paths, kind)
     if con is None:
         return {}
     with contextlib.closing(con):
         try:
+            if (dict(con.execute("select key, value from meta")).get("grid") or "") != GRID:
+                return {}
             return dict(con.execute("select cell, release from cell"))
         except sqlite3.Error:
             return {}
@@ -240,7 +290,8 @@ def status(paths: Paths) -> list[dict[str, Any]]:
         rows.append({"name": name, "title": TITLES[name], "used_for": USED_FOR[name], "license": LICENSES[name],
                      "scope": "by cell", "installed": bool(cells), "release": meta(paths, kind).get("release", ""),
                      "cells": len(cells), "bytes": p.stat().st_size if p.exists() else 0,
-                     "size_hint": f"about {EST_MB_PER_CELL:g} MB per cell", "folder": str(store_dir(paths))})
+                     "size_hint": f"about {EST_MB_PER_CELL:g} MB per cell", "folder": str(store_dir(paths)),
+                     "needs_convert": is_old_grid(paths, kind)})
     return rows
 
 
@@ -295,7 +346,7 @@ def overture_rows(kind: str, box: tuple[float, float, float, float], release: st
             if not name or b.get("xmin") is None:
                 continue
             c = r.get(cat)
-            out.append({"oid": r["id"], "name": name, "category": (c or {}).get("primary") if isinstance(c, dict) else c,
+            out.append({"name": name, "category": (c or {}).get("primary") if isinstance(c, dict) else c,
                         "confidence": r.get("confidence"), "lat": b["ymin"], "lon": b["xmin"]})
         return out
     cols = [c for c in ("id", "names", "subtype", "country", "geometry", "bbox") if c in names]
@@ -308,18 +359,42 @@ def overture_rows(kind: str, box: tuple[float, float, float, float], release: st
     return out
 
 
+def _cat_ids(con: sqlite3.Connection) -> dict[str, int]:
+    return {name: i for i, name in con.execute("select id, name from cat")}
+
+
+def _cat_id(con: sqlite3.Connection, ids: dict[str, int], name: str | None) -> int:
+    """The small number of a category name (0: none), added to the ``cat`` table the first time it is seen."""
+    if not name:
+        return 0
+    if name not in ids:
+        ids[name] = con.execute("insert into cat(name) values (?)", (name,)).lastrowid or 0
+    return ids[name]
+
+
+def _delete_cells(con: sqlite3.Connection, cells: Iterable[str]) -> None:
+    nos = [cell_no(*parse(c)) for c in cells]
+    for k in range(0, len(nos), 500):
+        part = nos[k:k + 500]
+        con.execute(f"delete from place where cell in ({','.join('?' * len(part))})", part)
+
+
 def _store_places(con: sqlite3.Connection, rows: list[dict[str, Any]], cells: set[str]) -> Counter:
+    """Replace the places of *cells* with those of *rows* that lie in them (a read covers more than was asked for)."""
     counts: Counter = Counter()
-    con.execute(f"delete from place_rt where id in (select id from place where cell in ({','.join('?' * len(cells))}))", sorted(cells))
-    con.execute(f"delete from place where cell in ({','.join('?' * len(cells))})", sorted(cells))
+    _delete_cells(con, cells)
+    ids = _cat_ids(con)
+    batch = []
     for r in rows:
-        c = cell_of(r["lat"], r["lon"])
+        i, j = cell_index(r["lat"], r["lon"])
+        c = label(i, j)
         if c not in cells:
             continue
-        cur = con.execute("insert into place(oid, name, category, confidence, lat, lon, cell) values (?,?,?,?,?,?,?)",
-                          (r["oid"], r["name"], r["category"], r["confidence"], r["lat"], r["lon"], c))
-        con.execute("insert into place_rt values (?,?,?,?,?)", (cur.lastrowid, r["lon"], r["lon"], r["lat"], r["lat"]))
+        conf = r.get("confidence")
+        batch.append((cell_no(i, j), round(r["lat"] * E5), round(r["lon"] * E5), r["name"],
+                      _cat_id(con, ids, r.get("category")), None if conf is None else round(conf * 100)))
         counts[c] += 1
+    con.executemany("insert into place(cell, lat, lon, name, cat, conf) values (?,?,?,?,?,?)", batch)
     return counts
 
 
@@ -358,7 +433,7 @@ def download_overture(paths: Paths, cells: Iterable[str], *, release: str = "", 
     if not wanted:
         return {"release": release, "cells": 0, "places": 0, "areas": 0}
     groups = clusters(wanted)
-    say(f"Overture {release}: {len(wanted)} cell(s) in {len(groups)} fetch(es)")
+    say(f"Overture {release}: {len(wanted)} cell(s) of about 6 km in {len(groups)} fetch(es)")
     places = areas = 0
     stamp = time.strftime("%Y-%m-%d %H:%M")
     for k in KINDS:
@@ -409,6 +484,89 @@ def remove(paths: Paths, name: str) -> bool:
     raise MapsError(f"unknown map dataset {name!r}; choose from geonames, overture")
 
 
+# ── conversion of a store made with 0.5 degree cells ─────────────────────────
+
+def is_old_grid(paths: Paths, kind: str) -> bool:
+    return db_path(paths, kind).exists() and meta(paths, kind).get("grid", "") != GRID
+
+
+def _parent_label(cell: str) -> str:
+    i, j = fetch_cell(cell)
+    return f"{i * FETCH_DEG:.1f},{j * FETCH_DEG:.1f}"
+
+
+def migrate(paths: Paths, log: Callable[[str], None] | None = None) -> dict[str, Any] | None:
+    """Convert a store made with 0.5 degree cells (4.0.0.dev3 and dev4) to the 0.05 degree cells and the compact places
+    table, keeping only the cells the indexed documents need now: nothing is downloaded, and what was downloaded for
+    the rest of each big cell is dropped (a later position there fetches it again).  None when there is nothing old."""
+    old = [k for k in KINDS if is_old_grid(paths, k)]
+    if not old:
+        return None
+    say = log or (lambda _m: None)
+    need = {c for la, lo in positions(paths) for c in cells_around(la, lo)}
+    res: dict[str, Any] = {"cells": 0, "places": 0}
+    for kind in old:
+        path = db_path(paths, kind)
+        before = path.stat().st_size
+        src = sqlite3.connect(path, timeout=30)
+        try:
+            old_cells = {c: (rel, at) for c, rel, at in src.execute("select cell, release, at from cell")}
+            release = dict(src.execute("select key, value from meta")).get("release", "")
+            keep = {c: old_cells[_parent_label(c)] for c in need if _parent_label(c) in old_cells}
+            say(f"converting {kind}: {len(keep)} of the {len(need)} cells your documents need were downloaded")
+            if kind == "divisions":
+                with src:
+                    src.execute("delete from cell")
+                    src.executemany("insert into cell values (?,?,?,?)", [(c, 0, rel, at) for c, (rel, at) in keep.items()])
+                    src.execute("insert or replace into meta values ('grid', ?)", (GRID,))
+                src.close()
+                src = None
+                with contextlib.closing(sqlite3.connect(path)) as con:
+                    con.execute("vacuum")
+                res["cells"] = max(res["cells"], len(keep))
+            else:
+                tmp = path.with_name(path.name + ".new")
+                with contextlib.suppress(OSError):
+                    tmp.unlink()
+                new = sqlite3.connect(tmp)
+                new.execute("create table meta(key text primary key, value text)")
+                new.execute("create table cell(cell text primary key, rows integer, release text, at text)")
+                for sql in SCHEMA["places"]:
+                    new.execute(sql)
+                ids: dict[str, int] = {}
+                counts: Counter = Counter()
+                batch: list[tuple] = []
+                for name, cat, conf, lat, lon in src.execute("select name, category, confidence, lat, lon from place"):
+                    i, j = cell_index(lat, lon)
+                    c = label(i, j)
+                    if c not in keep:
+                        continue
+                    batch.append((cell_no(i, j), round(lat * E5), round(lon * E5), name, _cat_id(new, ids, cat),
+                                  None if conf is None else round(conf * 100)))
+                    counts[c] += 1
+                    if len(batch) >= 50_000:
+                        new.executemany("insert into place values (?,?,?,?,?,?)", batch)
+                        batch = []
+                new.executemany("insert into place values (?,?,?,?,?,?)", batch)
+                new.executemany("insert into cell values (?,?,?,?)", [(c, counts[c], rel, at) for c, (rel, at) in keep.items()])
+                new.executemany("insert into meta values (?,?)", [("release", release), ("grid", GRID)])
+                new.commit()
+                new.execute("vacuum")
+                new.close()
+                src.close()
+                src = None
+                os.replace(tmp, path)
+                res["cells"] = len(keep)
+                res["places"] = sum(counts.values())
+        finally:
+            if src is not None:
+                src.close()
+        say(f"  {kind}: {before / 2**20:.0f} MB -> {path.stat().st_size / 2**20:.0f} MB")
+        res[f"{kind}_mb"] = round(path.stat().st_size / 2**20, 1)
+        res[f"{kind}_was_mb"] = round(before / 2**20, 1)
+    return res
+
+
 # ── stamps and refresh ───────────────────────────────────────────────────────
 
 def stamp_path(md: Path) -> Path:
@@ -416,11 +574,11 @@ def stamp_path(md: Path) -> Path:
 
 
 def cells_in_text(text: str) -> set[str]:
-    out = set()
+    out: set[str] = set()
     for m in GEO_RE.finditer(text):
         lat, lon = float(m.group(1)), float(m.group(2))
         if -90 <= lat <= 90 and -180 <= lon <= 180:
-            out.add(cell_of(lat, lon))
+            out |= cells_around(lat, lon)
     return out
 
 

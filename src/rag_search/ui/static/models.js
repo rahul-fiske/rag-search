@@ -289,6 +289,7 @@
   function mapResult(res) {
     if (res.refreshed !== undefined) return res.refreshed ? `${num(res.refreshed)} of ${num(res.checked)} document(s) with positions will be described again (${num(res.in_place)} photo(s) in place, ${num(res.reconverted)} converted again)${res.reindex === 'started' ? '; indexing has started' : ' by the next indexing run'}.` : (res.checked ? `All ${num(res.checked)} document(s) with positions already use the map data installed now.` : 'No indexed document mentions a position.');
     if (res.removed !== undefined) return res.removed ? 'Removed.' : 'Nothing was installed.';
+    if (res.converted !== undefined) return res.converted ? `Converted: ${num(res.cells)} cell(s), ${num(res.places)} places; ${res.places_was_mb} MB became ${res.places_mb} MB.` : 'Nothing to convert.';
     if (res.dataset === 'geonames') return `GeoNames installed (${res.release}).`;
     if (res.note) return res.note;
     return `Overture ${res.release}: ${num(res.cells)} cell(s), ${num(res.places)} places, ${num(res.areas)} areas. Use “Refresh places” so documents indexed before get them.`;
@@ -311,11 +312,12 @@
       const actions = [];
       if (geo) actions.push(h('button', { class: 'btn small' + (d.installed ? '' : ' primary'), disabled: busy, on: { click: () => mapAction('download', 'geonames') } }, d.installed ? 'Update' : 'Download'));
       else if (d.installed) actions.push(h('button', { class: 'btn small', disabled: busy, title: 'move every downloaded cell to the newest Overture release', on: { click: () => mapAction('update', 'overture', null, ['Update Overture?', 'Every downloaded cell is fetched again from the newest Overture release (both areas and places). Use “Refresh places” afterwards.', 'Update']) } }, 'Update release'));
-      if (d.installed) actions.push(h('button', { class: 'btn small danger', disabled: busy, on: { click: () => mapAction('remove', geo ? 'geonames' : 'overture', null, ['Remove map data?', geo ? 'GeoNames is deleted from this computer. Documents keep what was written into them.' : 'Both Overture datasets (areas and places) are deleted from this computer. Documents keep what was written into them.', 'Remove']) } }, 'Remove'));
+      if (d.needs_convert) actions.push(h('button', { class: 'btn small primary', disabled: busy, title: 'made with the earlier 0.5 degree cells: converted to 0.05 degree cells, nothing is downloaded', on: { click: () => mapAction('convert', 'overture') } }, 'Convert'));
+      if (d.installed || d.needs_convert) actions.push(h('button', { class: 'btn small danger', disabled: busy, on: { click: () => mapAction('remove', geo ? 'geonames' : 'overture', null, ['Remove map data?', geo ? 'GeoNames is deleted from this computer. Documents keep what was written into them.' : 'Both Overture datasets (areas and places) are deleted from this computer. Documents keep what was written into them.', 'Remove']) } }, 'Remove'));
       return h('tr', null,
         h('td', null, h('b', null, d.title), h('div', { class: 'small muted' }, d.used_for)),
         h('td', null, covers),
-        h('td', null, d.installed ? pill('installed', 'ok') : pill('not installed', '')),
+        h('td', null, d.needs_convert ? pill('old format', 'warn') : d.installed ? pill('installed', 'ok') : pill('not installed', '')),
         h('td', { class: 'num' }, d.bytes ? bytes(d.bytes) : h('span', { class: 'muted' }, d.size_hint)),
         h('td', null, d.release || '—'),
         h('td', null, h('div', { class: 'row', style: { gap: '6px' } }, actions)),

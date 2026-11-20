@@ -60,7 +60,7 @@ class MarkdownTests(TempHome):
     def setUp(self):
         super().setUp()
         reference.download(self.paths, "geonames", fetch=fake_fetch)
-        maps.download_overture(self.paths, ["19.0,78.0"], release="r1", reader=fake_reader())
+        maps.download_overture(self.paths, ["19.05,78.30"], release="r1", reader=fake_reader())
 
     def convert(self, data, name="Timeline.json"):
         src = self.tmp / name
@@ -119,7 +119,7 @@ class IndexedTimelineTests(TempHome):
         md = next(self.paths.markup.rglob("Timeline.md"))
         self.assertTrue(maps.stamp_path(md).exists())
         self.assertEqual(maps.refresh(self.paths)["refreshed"], 0)
-        maps.download_overture(self.paths, ["19.0,78.0"], release="r1", reader=fake_reader())
+        maps.download_overture(self.paths, ["19.05,78.30"], release="r1", reader=fake_reader())
         self.assertEqual(maps.refresh(self.paths)["reconverted"], 1)
         indexer.run_index(self.paths, srcs, self.roots(), jobs=1, embedder=FakeEmbedder(), progress=lambda e: None)
         self.assertIn("  - Nearby: Hotel Sai Krishna", md.read_text(encoding="utf-8"))

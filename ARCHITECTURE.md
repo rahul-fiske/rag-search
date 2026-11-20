@@ -997,8 +997,13 @@ processes, runs without downloading models.
   * `overture-divisions` / `overture-places` (`maps.py`): Overture Maps areas (polygons, simplified to ~50 m; country
     outlines are dropped, the country name comes from its code) and places of interest, read straight from Overture's
     public bucket with pyarrow (row groups outside the request are not transferred) and stored in
-    `reference/overture/{divisions,places}.sqlite` with an R*Tree index. Both are kept per **cell** (0.5°, ~55 km),
-    pinned to one release; touching cells are fetched in one read; `update` moves every cell to the newest release.
+    `reference/overture/{divisions,places}.sqlite`. Both are kept per **cell** of 0.05° (~6 km), pinned to one
+    release; cells are *fetched* in groups (0.5° squares that touch are read in one request, with a box only as big as
+    the cells needed) and only the needed cells are kept; `update` moves every cell to the newest release. A position
+    needs its own cell and, near an edge, the neighbours the 150 m a lookup reads reaches into (`cells_around`).
+    The places table is compact: no Overture id, the category as a number (`cat` table), the confidence as a percent,
+    positions as integers (degrees x 1e5, ~1 m), one `(cell, lat)` index, about 60 bytes a place. `maps.migrate` turns a
+    store made with the 0.5° cells into this (keeping only the needed cells; nothing is downloaded).
 * **Positions are `geo:LAT,LON` in the converted Markdown** (photos' Position line, Timeline visits and journeys).
   `maps.plan` scans the workspace Markdown for them and lists the cells they need and are missing ("where my data is");
   When a document with positions is converted (or a photo's section renewed), `_prepare_document` writes a stamp,

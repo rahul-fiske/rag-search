@@ -778,18 +778,21 @@ by date and place.
 | Data | Gives | Size | License |
 |---|---|---|---|
 | GeoNames | the nearest town or village of 1,000+ people, worldwide | about 10 MB (32 MB unpacked) | CC BY 4.0, geonames.org |
-| Overture areas (divisions) | the locality, district, state and country a position is in | by cell | ODbL (built from OpenStreetMap) |
-| Overture places | restaurants, shops, temples, fuel ... around a position | by cell, about 1 MB a cell (a state is ~130 MB) | CDLA Permissive 2.0 / Apache 2.0 |
+| Overture areas (divisions) | the locality, district, state and country a position is in | by cell, about 15 MB for a few hundred cells | ODbL (built from OpenStreetMap) |
+| Overture places | restaurants, shops, temples, fuel ... around a position | by cell, about 0.1-0.2 MB a cell (528 cells around Pune, Mumbai, Delhi and Bengaluru are 58 MB) | CDLA Permissive 2.0 / Apache 2.0 |
 
-Overture is kept per *cell* (a square of 0.5°, about 55 km). `rag-search maps plan` reads every `geo:` position in the
-indexed documents and lists the cells they need ("where my data is"); `rag-search maps download overture` fetches them
-(or `--bbox WEST,SOUTH,EAST,NORTH` for an area of your choice), `rag-search maps download geonames` the town list,
+Overture is kept per *cell* (a square of 0.05°, about 6 km). `rag-search maps plan` reads every `geo:` position in the
+indexed documents and lists the cells they need ("where my data is": a position needs its own cell and, near an edge,
+the neighbours its 150 m reach into); `rag-search maps download overture` fetches them, reading nearby cells together
+in 0.5° groups and keeping only the cells needed (or `--bbox WEST,SOUTH,EAST,NORTH` for an area of your choice, up to
+250,000 cells: a state, not a country), `rag-search maps download geonames` the town list,
 `rag-search maps update overture` moves every cell to the newest Overture release, and `rag-search maps refresh` (the
 *Refresh places* button) brings new map data to documents indexed before it. Every document with positions records which
 map data described each of its cells (`<doc>.md.geo.json` next to its Markdown), so a refresh touches only the documents
 whose cells changed: a photo is updated in place (its Photo details section is rewritten and embedded again, the picture
-is not read again), a timeline is converted again. `--all` refreshes every document with positions. The data lives in
-`<data folder>/reference/`.
+is not read again), a timeline is converted again. `--all` refreshes every document with positions. `rag-search maps
+convert` turns a store made with the earlier 0.5° cells into the 0.05° cells without downloading anything. The data lives
+in `<data folder>/reference/`.
 
 Legacy `.doc`/`.xls`/`.ppt` are not read (docling needs LibreOffice for them); a
 file with any other extension is skipped and shown in the Indexing tab / `index status` as

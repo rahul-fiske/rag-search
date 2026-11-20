@@ -800,9 +800,9 @@ class Handler(BaseHTTPRequestHandler):
         dataset = body.get("dataset") or ""
         if action == "cancel":
             return self._json({"ok": True, "cancelled": model_tasks.cancel(paths)})
-        if action not in ("download", "update", "remove", "refresh"):
+        if action not in ("download", "update", "remove", "refresh", "convert"):
             return self._error(404, "not found")
-        if action != "refresh" and dataset not in ("geonames", "overture"):
+        if action not in ("refresh", "convert") and dataset not in ("geonames", "overture"):
             return self._error(400, "dataset must be geonames or overture")
         req: dict[str, Any] = {"op": "maps", "action": action, "dataset": dataset,
                                "model": f"maps {action} {dataset}".strip()}

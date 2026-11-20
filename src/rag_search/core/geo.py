@@ -29,7 +29,7 @@ MAX_KM = 50.0                    # a town further than this is not "near"
 AT_KM = 1.0                      # closer than this: "at", not "near"
 NEARBY_M = 100.0
 NEARBY_MAX = 5
-FOOD_M = 150.0                   # the nearest place to eat is named even when it is a little further than NEARBY_M
+FOOD_M = float(maps.MARGIN_M)    # the nearest place to eat is named even when it is a little further than NEARBY_M
 FOOD_RE = re.compile(r"restaurant|food|cafe|coffee|tea|bakery|dhaba|diner|eatery|canteen|sweet|dessert|ice_cream|"
                      r"pizza|burger|bar\b|pub\b|juice|snack", re.I)
 EARTH_KM = 6371.0
@@ -150,6 +150,7 @@ def near(lat: float, lon: float, paths: Paths) -> Place | None:
 
 _DB: dict[str, tuple[float, sqlite3.Connection]] = {}
 _SHAPES: dict[int, Any] = {}
+_CATS: dict[str, dict[int, str]] = {}
 
 
 def _db(paths: Paths, kind: str) -> sqlite3.Connection | None:
@@ -168,21 +169,25 @@ def _db(paths: Paths, kind: str) -> sqlite3.Connection | None:
             _SHAPES.clear()
     try:
         con = sqlite3.connect(f"file:{p}?mode=ro", uri=True, check_same_thread=False)
+        if kind == "places":
+            _CATS[key] = {i: name for i, name in con.execute("select id, name from cat")}
     except sqlite3.Error:
-        return None
+        return None                      # a store made with the old cells, until it is converted
     _DB[key] = (mtime, con)
     return con
 
 
 def covered(lat: float, lon: float, paths: Paths, kind: str) -> bool:
-    """Is the cell of this position downloaded for *kind*?"""
+    """Is everything a lookup at this position reads downloaded for *kind* (its cell and, near an edge, the neighbours)?"""
     con = _db(paths, kind)
     if con is None:
         return False
+    want = sorted(maps.cells_around(lat, lon))
     try:
-        return con.execute("select 1 from cell where cell = ?", (maps.cell_of(lat, lon),)).fetchone() is not None
+        have, = con.execute(f"select count(*) from cell where cell in ({','.join('?' * len(want))})", want).fetchone()
     except sqlite3.Error:
         return False
+    return have == len(want)
 
 
 LOCAL = {"microhood", "neighborhood", "macrohood", "locality", "localadmin"}
@@ -232,18 +237,24 @@ def nearby(lat: float, lon: float, paths: Paths) -> list[tuple[float, str, str]]
     con = _db(paths, "places")
     if con is None:
         return []
+    cats = _CATS.get(str(maps.db_path(paths, "places")), {})
     dlat = FOOD_M / 111_000
-    dlon = FOOD_M / (111_000 * max(0.01, math.cos(math.radians(lat))))
+    nos = [maps.cell_no(*maps.parse(c)) for c in maps.cells_around(lat, lon)]
     try:
-        rows = con.execute("select p.name, p.category, p.lat, p.lon from place p join place_rt r on p.id = r.id "
-                           "where r.minx >= ? and r.maxx <= ? and r.miny >= ? and r.maxy <= ?",
-                           (lon - dlon, lon + dlon, lat - dlat, lat + dlat)).fetchall()
+        rows = con.execute(f"select name, cat, lat, lon from place where cell in ({','.join('?' * len(nos))}) "
+                           "and lat between ? and ?",
+                           (*nos, round((lat - dlat) * maps.E5), round((lat + dlat) * maps.E5))).fetchall()
     except sqlite3.Error:
         return []
-    hits = sorted((km_between(lat, lon, la, lo) * 1000, name, cat or "") for name, cat, la, lo in rows)
+    hits = []
+    for name, cat, la, lo in rows:
+        d = km_between(lat, lon, la / maps.E5, lo / maps.E5) * 1000
+        if d <= FOOD_M:
+            hits.append((d, name, cats.get(cat, "")))
+    hits.sort(key=lambda h: (round(h[0]), h[1], h[2]))           # places at one spot (a building) in a fixed order
     out = [h for h in hits if h[0] <= NEARBY_M][:NEARBY_MAX]
     if not any(FOOD_RE.search(h[2]) for h in out):
-        food = next((h for h in hits if h[0] <= FOOD_M and FOOD_RE.search(h[2])), None)
+        food = next((h for h in hits if FOOD_RE.search(h[2])), None)
         if food:
             out.append(food)
     return out

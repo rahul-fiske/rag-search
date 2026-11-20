@@ -530,6 +530,9 @@ def run_maps(paths: Paths, task: Task, req: dict[str, Any]) -> dict[str, Any]:
     from . import api, maps, reference
 
     action, name = req.get("action", ""), req.get("dataset", "")
+    converted = maps.migrate(paths, log=task.log)           # a store made with the old 0.5 degree cells, once
+    if action == "convert":
+        return {"converted": converted is not None, **(converted or {})}
     if action == "remove":
         return {"removed": maps.remove(paths, name), "dataset": name}
     if action == "refresh":

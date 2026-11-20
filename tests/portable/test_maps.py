@@ -43,30 +43,36 @@ def fake_reader(calls=None, release_rows=None):
 
 
 class CellTests(TempHome):
-    def test_cells_boxes_and_clusters(self):
-        self.assertEqual(maps.cell_of(19.09, 78.34), "19.0,78.0")
-        self.assertEqual(maps.cell_of(-0.1, -0.1), "-0.5,-0.5")
-        self.assertEqual(maps.cell_box("19.0,78.0"), (78.0, 19.0, 78.5, 19.5))
-        self.assertEqual(maps.cells_in_box(78.0, 19.0, 79.0, 19.5), {"19.0,78.0", "19.0,78.5"})
-        groups = maps.clusters({"19.0,78.0", "19.5,78.5", "41.5,12.0"})
-        self.assertEqual(sorted(len(g) for g in groups), [1, 2])          # corners touch: one fetch
-        self.assertEqual(maps.group_box(["19.0,78.0", "19.5,78.5"]), (78.0, 19.0, 79.0, 20.0))
+    def test_cells_boxes_and_fetch_groups(self):
+        self.assertEqual(maps.cell_of(19.09, 78.34), "19.05,78.30")
+        self.assertEqual(maps.cell_of(19.10, 78.34), "19.10,78.30")                # the corner belongs to the cell north-east of it
+        self.assertEqual(maps.cell_of(-0.01, -0.01), "-0.05,-0.05")
+        self.assertEqual(maps.cell_box("19.05,78.30"), (78.30, 19.05, 78.35, 19.10))
+        self.assertEqual(len(maps.cells_in_box(78.0, 19.0, 78.5, 19.5)), 100)      # a 0.5 degree square: 10 x 10 cells
+        self.assertEqual(maps.cell_no(*maps.parse("19.05,78.30")), (381 + 1800) * 10_000 + (1566 + 3600))
+        # cells of squares that touch are fetched together, others apart; the box is only as big as the cells
+        near = ["19.05,78.30", "19.55,78.80", "19.05,78.55"]                       # three touching 0.5 squares (corner, side)
+        far = ["41.90,12.50"]
+        groups = maps.clusters(near + far)
+        self.assertEqual(sorted(len(g) for g in groups), [1, 3])
+        self.assertEqual(maps.group_box(near), (78.30, 19.05, 78.85, 19.60))
         with self.assertRaises(maps.MapsError):
             maps.cells_in_box(10, 10, 5, 20)
         with self.assertRaises(maps.MapsError):
-            maps.cells_in_box(-180, -90, 180, 90)
+            maps.cells_in_box(68, 6, 97, 36)                                       # India: far too many cells
 
 
 class StoreTests(TempHome):
-    def download(self, cells=("19.0,78.0",), release="2026-11-18.0", **kw):
+    def download(self, cells=("19.05,78.30", "19.10,78.30"), release="2026-11-18.0", **kw):
         return maps.download_overture(self.paths, cells, release=release, reader=kw.pop("reader", fake_reader()), **kw)
 
     def test_download_keeps_only_the_cells_and_describes_a_position(self):
         steps = []
         res = self.download(progress=lambda d, t, what: steps.append((d, t)))
-        self.assertEqual((res["cells"], res["places"], res["areas"]), (1, 3, 3))      # country outline and p4 dropped
+        self.assertEqual((res["cells"], res["places"], res["areas"]), (2, 3, 3))      # country outline and p4 dropped
         self.assertEqual(steps[-1], (2, 2))
-        self.assertEqual(maps.installed_cells(self.paths, "places"), {"19.0,78.0": "2026-11-18.0"})
+        self.assertEqual(maps.installed_cells(self.paths, "places"),
+                         {"19.05,78.30": "2026-11-18.0", "19.10,78.30": "2026-11-18.0"})
         self.assertEqual(maps.ref(self.paths, "places"), "overture-places@2026-11-18.0")
         self.assertEqual(geo.area(19.09, 78.34, self.paths), ["Nirmal Town", "Nirmal", "Telangana", "IN"])
         around = geo.nearby(19.0906, 78.3412, self.paths)
@@ -85,20 +91,22 @@ class StoreTests(TempHome):
         self.download()
         around = geo.nearby(19.0950, 78.3412, self.paths)                 # ~500 m from p1, ~550 m from p3: nothing
         self.assertEqual(around, [])
-        around = geo.nearby(19.0990, 78.3412, self.paths)                 # p3 is 110 m away: further than 100, a dhaba
-        self.assertEqual([n for _m, n, _c in around], ["Far Dhaba"])
+        around = geo.nearby(19.0990, 78.3412, self.paths)                 # p3 is 110 m away (in the next cell north)
+        self.assertEqual([n for _m, n, _c in around], ["Far Dhaba"])      # further than 100 m, but the nearest dhaba
 
     def test_outside_the_downloaded_cells_there_is_no_nearby_line(self):
         self.download()
         lines, _ = geo.describe(25.0, 78.3, self.paths)
         self.assertFalse(any(x.startswith("Nearby") for x in lines))
-        lines, _ = geo.describe(19.4, 78.45, self.paths)                  # inside the cell, nothing around
+        lines, _ = geo.describe(19.1400, 78.3100, self.paths)             # a downloaded cell with nothing around says so
         self.assertIn("Nearby: no places known within 100 m", lines)
+        lines, _ = geo.describe(19.3000, 78.3100, self.paths)             # a cell that was not downloaded says nothing
+        self.assertFalse(any(x.startswith("Nearby") for x in lines))
 
     def test_a_new_release_refetches_every_cell_and_remove_deletes(self):
         calls = []
-        self.download(cells=("19.0,78.0",), reader=fake_reader(calls))
-        self.download(cells=("19.0,78.5",), reader=fake_reader(calls))   # same release: only the new cell
+        self.download(cells=("19.05,78.30",), reader=fake_reader(calls))
+        self.download(cells=("19.05,78.50",), reader=fake_reader(calls))   # same release: only the new cell
         self.assertEqual(len(calls), 4)
         newer = {"2026-12-16.0": {"places": PLACES[:1]}}
         res = self.download(cells=(), release="2026-12-16.0", reader=fake_reader(calls, newer))
@@ -119,7 +127,7 @@ class StoreTests(TempHome):
         self.assertEqual(list(rows), ["geonames", "overture-divisions", "overture-places"])
         self.assertFalse(rows["geonames"]["installed"])
         self.assertTrue(rows["overture-places"]["installed"])
-        self.assertEqual(rows["overture-places"]["cells"], 1)
+        self.assertEqual(rows["overture-places"]["cells"], 2)
         self.assertGreater(rows["overture-places"]["bytes"], 0)
 
     def test_old_geonames_folder_is_renamed(self):
@@ -142,18 +150,35 @@ class PlanTests(TempHome):
 
     def test_plan_counts_positions_and_missing_cells(self):
         self.write_md("photos/a.md", "## Photo details\n\n- Position: 19.09 N (geo:19.09056,78.34111)\n")
-        self.write_md("trips/t.md", "VISIT geo:19.091000,78.341200 then geo:41.9,12.5 and geo:91.0,0.0\n")
+        self.write_md("trips/t.md", "VISIT geo:19.091000,78.341200 then geo:41.93,12.53 and geo:91.0,0.0\n")
         self.write_md("docs/plain.md", "no positions here\n")
         pl = maps.plan(self.paths)
         self.assertEqual((pl["positions"], pl["cells_needed"], pl["cells_missing"]), (2, 2, 2))   # a and t: one place
-        self.assertEqual(pl["missing"], ["19.0,78.0", "41.5,12.5"])
-        self.assertEqual(pl["fetches"], 2)
-        maps.download_overture(self.paths, ["19.0,78.0"], release="r1", reader=fake_reader())
-        self.assertEqual(maps.plan(self.paths)["missing"], ["41.5,12.5"])
+        self.assertEqual(pl["missing"], ["19.05,78.30", "41.90,12.50"])
+        self.assertEqual((pl["fetches"], pl["cell_km"]), (2, 6))
+        maps.download_overture(self.paths, ["19.05,78.30"], release="r1", reader=fake_reader())
+        self.assertEqual(maps.plan(self.paths)["missing"], ["41.90,12.50"])
+
+    def test_a_position_near_an_edge_needs_the_neighbouring_cell_too(self):
+        # 19.0996 is 40 m south of the 19.10 edge: a place 60 m away across the edge belongs to the cell above
+        self.assertEqual(maps.cells_around(19.0996, 78.3412), {"19.05,78.30", "19.10,78.30"})
+        self.assertEqual(maps.cells_around(19.0906, 78.3412), {"19.05,78.30"})
+        self.assertEqual(len(maps.cells_around(19.0999, 78.3499)), 4)                  # a corner
+        self.write_md("photos/e.md", "- Position: (geo:19.099600,78.341200)\n")
+        pl = maps.plan(self.paths)
+        self.assertEqual((pl["cells_needed"], pl["missing"]), (2, ["19.05,78.30", "19.10,78.30"]))
+        across = [{"name": "Across the edge", "category": "restaurant", "confidence": 0.9, "lat": 19.1002, "lon": 78.3412}]
+        only_south = lambda kind, box, release: across if kind == "places" else AREAS    # noqa: E731
+        maps.download_overture(self.paths, ["19.05,78.30"], release="r1", reader=only_south)
+        self.assertFalse(geo.covered(19.0996, 78.3412, self.paths, "places"))            # the neighbour is missing
+        maps.download_overture(self.paths, ["19.10,78.30"], release="r1", reader=only_south)
+        self.assertTrue(geo.covered(19.0996, 78.3412, self.paths, "places"))
+        self.assertEqual([(n, round(m)) for m, n, _c in geo.nearby(19.0996, 78.3412, self.paths)], [("Across the edge", 67)])
+        self.assertEqual(maps.plan(self.paths)["cells_missing"], 0)
 
     def test_refresh_marks_only_documents_whose_cells_changed(self):
         photo = self.write_md("photos/a.md", "## Photo details\n\n- Position: 19.09 N (geo:19.09056,78.34111)\n")
-        trip = self.write_md("trips/t.md", "VISIT geo:41.900000,12.500000\n")
+        trip = self.write_md("trips/t.md", "VISIT geo:41.930000,12.530000\n")
         plain = self.write_md("docs/plain.md", "no positions here\n")
         res = maps.refresh(self.paths)                       # no stamps yet: both are described again, once
         self.assertEqual((res["checked"], res["refreshed"], res["in_place"], res["reconverted"]), (2, 2, 1, 1))
@@ -165,7 +190,7 @@ class PlanTests(TempHome):
         for md in (photo, trip):                                             # the next run stamps them
             maps.write_stamp(self.paths, md, md.read_text(encoding="utf-8"))
         self.assertEqual(maps.refresh(self.paths)["refreshed"], 0)
-        maps.download_overture(self.paths, ["19.0,78.0"], release="r1", reader=fake_reader())
+        maps.download_overture(self.paths, ["19.05,78.30"], release="r1", reader=fake_reader())
         res = maps.refresh(self.paths)                       # only the photo's cell changed
         self.assertEqual((res["refreshed"], res["in_place"], res["current"]), (1, 1, 1))
         reference.download(self.paths, "geonames", fetch=fake_fetch)
@@ -173,12 +198,81 @@ class PlanTests(TempHome):
         self.assertEqual(maps.refresh(self.paths, everything=True)["refreshed"], 2)
 
 
+class MigrationTests(PlanTests):
+    """A store made with 4.0.0.dev3's 0.5 degree cells becomes small cells without a download."""
+
+    def old_store(self):
+        import sqlite3
+        self.old_places = [("Hotel Sai Krishna", "restaurant", 0.9, 19.0906, 78.3412),
+                           ("HP Petrol Pump", "gas_station", 0.8, 19.0910, 78.3416),
+                           ("Far away in the same big cell", "shop", 0.5, 19.4000, 78.1000),
+                           ("Dhaba outside a needed cell", "restaurant", 0.7, 19.2000, 78.4000)]
+        maps.store_dir(self.paths).mkdir(parents=True, exist_ok=True)
+        con = sqlite3.connect(maps.db_path(self.paths, "places"))
+        con.executescript("""create table meta(key text primary key, value text);
+            create table cell(cell text primary key, rows integer, release text, at text);
+            create table place(id integer primary key, oid text, name text, category text, confidence real,
+                               lat real, lon real, cell text);
+            create virtual table place_rt using rtree(id, minx, maxx, miny, maxy);""")
+        for k, (name, cat, conf, la, lo) in enumerate(self.old_places):
+            con.execute("insert into place values (?,?,?,?,?,?,?,?)", (k, f"id{k}", name, cat, conf, la, lo, "19.0,78.0"))
+        con.execute("insert into cell values ('19.0,78.0', 4, 'r0', '2026-11-20 10:00')")
+        con.execute("insert into meta values ('release', 'r0')")
+        con.commit()
+        con.close()
+        con = sqlite3.connect(maps.db_path(self.paths, "divisions"))
+        con.executescript("""create table meta(key text primary key, value text);
+            create table cell(cell text primary key, rows integer, release text, at text);
+            create table area(id integer primary key, oid text unique, name text, subtype text, country text, wkb blob);
+            create virtual table area_rt using rtree(id, minx, maxx, miny, maxy);""")
+        for k, a in enumerate(AREAS[:3]):
+            con.execute("insert into area values (?,?,?,?,?,?)", (k, a["oid"], a["name"], a["subtype"], a["country"], a["wkb"]))
+            x0, y0, x1, y1 = shapely.from_wkb(a["wkb"]).bounds
+            con.execute("insert into area_rt values (?,?,?,?,?)", (k, x0, x1, y0, y1))
+        con.execute("insert into cell values ('19.0,78.0', 0, 'r0', '2026-11-20 10:00')")
+        con.execute("insert into meta values ('release', 'r0')")
+        con.commit()
+        con.close()
+
+    def test_old_store_counts_as_empty_and_is_converted_keeping_only_needed_cells(self):
+        self.write_md("photos/a.md", "- Position: (geo:19.09056,78.34111)\n")        # needs 19.05,78.30
+        self.write_md("trips/t.md", "VISIT geo:19.140000,78.310000\n")                # needs 19.10,78.30 (nothing in it)
+        self.write_md("far/f.md", "VISIT geo:41.930000,12.530000\n")                  # never downloaded
+        self.old_store()
+        self.assertTrue(maps.is_old_grid(self.paths, "places"))
+        self.assertEqual(maps.installed_cells(self.paths, "places"), {})
+        self.assertTrue(maps.status(self.paths)[2]["needs_convert"])
+        res = maps.migrate(self.paths)
+        self.assertEqual((res["cells"], res["places"]), (2, 2))                        # the two hotel/pump rows; the rest dropped
+        self.assertEqual(maps.installed_cells(self.paths, "places"),
+                         {"19.05,78.30": "r0", "19.10,78.30": "r0"})
+        self.assertEqual(maps.installed_cells(self.paths, "divisions"), {"19.05,78.30": "r0", "19.10,78.30": "r0"})
+        self.assertFalse(maps.is_old_grid(self.paths, "places"))
+        self.assertIsNone(maps.migrate(self.paths))                                    # once
+        self.assertEqual(maps.plan(self.paths)["missing"], ["41.90,12.50"])
+        around = geo.nearby(19.0906, 78.3412, self.paths)
+        self.assertEqual([(n, c) for _m, n, c in around], [("Hotel Sai Krishna", "restaurant"), ("HP Petrol Pump", "gas_station")])
+        self.assertEqual(geo.area(19.09, 78.34, self.paths), ["Nirmal Town", "Nirmal", "Telangana", "IN"])
+        self.assertEqual(geo.nearby(19.4000, 78.1000, self.paths), [])                 # its cell was not needed: not kept
+
+    def test_new_store_has_the_compact_columns(self):
+        import sqlite3
+        maps.download_overture(self.paths, ["19.05,78.30"], release="r1", reader=fake_reader())
+        con = sqlite3.connect(maps.db_path(self.paths, "places"))
+        self.assertEqual([r[1] for r in con.execute("pragma table_info(place)")], ["cell", "lat", "lon", "name", "cat", "conf"])
+        self.assertEqual(con.execute("select count(*) from place").fetchone()[0], 2)
+        self.assertEqual(con.execute("select lat, lon, conf from place where name = 'Hotel Sai Krishna'").fetchone(),
+                         (1909060, 7834120, 90))
+        self.assertEqual(sorted(r[0] for r in con.execute("select name from cat")), ["gas_station", "restaurant"])
+        self.assertEqual(dict(con.execute("select key, value from meta"))["grid"], "0.05")
+
+
 class TaskAndRouteTests(TempHome):
     def test_task_downloads_a_box_and_geonames(self):
         with mock.patch.object(maps, "overture_rows", fake_reader()), \
                 mock.patch.object(maps, "latest_release", return_value="2026-11-18.0"):
             rec = model_tasks.run(self.paths, {"op": "maps", "action": "download", "dataset": "overture",
-                                               "bbox": [78.0, 19.0, 78.5, 19.5]})
+                                               "bbox": [78.30, 19.05, 78.35, 19.10]})
         self.assertEqual(rec["status"], "succeeded", rec.get("error"))
         self.assertEqual(rec["result"]["cells"], 1)
         with mock.patch.object(reference, "_fetch", fake_fetch):

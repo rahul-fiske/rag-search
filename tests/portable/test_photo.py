@@ -235,7 +235,7 @@ class PhotoRefreshTests(IndexedPhotoTests):
         md = next(self.paths.markup.rglob("p.md"))
         self.assertTrue(maps.stamp_path(md).exists())
         self.assertNotIn("Nearby:", md.read_text(encoding="utf-8"))
-        maps.download_overture(self.paths, ["19.0,78.0"], release="r1", reader=fake_reader())
+        maps.download_overture(self.paths, ["19.05,78.30"], release="r1", reader=fake_reader())
         self.assertEqual(maps.refresh(self.paths)["in_place"], 1)
         with mock.patch.object(photo, "visible_text", side_effect=AssertionError("the picture must not be read")), \
                 mock.patch("rag_search.core.docling_convert.convert_file", side_effect=AssertionError("nor converted")):
