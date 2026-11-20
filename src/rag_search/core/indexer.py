@@ -48,6 +48,7 @@ from ..paths import (
     allow_cloud_files,
     ensure_dirs,
     env_int,
+    get_paths,
     index_dir_for,
     index_lock,
     markup_path_for,
@@ -57,7 +58,7 @@ from ..paths import (
     sha256_file,
     write_json_atomic,
 )
-from . import chunker, stallwatch
+from . import chunker, photo, stallwatch
 from .bm25 import TOKENIZER_VERSION
 from .conversion import (
     applevision,
@@ -155,7 +156,7 @@ def is_fresh(idx_dir: Path, src_sha: str, chunk_size: int, chunk_overlap: int,
 # ("not tried again"), outside its errors, so that it ends ``succeeded`` when nothing new failed.
 
 OUTCOME_FILE = "outcome.json"
-OUTCOME_VERSION = 1
+OUTCOME_VERSION = 2          # 2: a picture without text but with camera metadata is indexed (photo details)
 # wordings of a "no text" result that say a reader did not get its turn (routed.no_text_message,
 # docling_convert, prepare_document)
 NOT_EVERY_READER = ("did not read any page", "document reader not used", "Apple Vision not used",
@@ -627,43 +628,65 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         info: dict[str, Any] = {}
         route_note = ""
         how = ""
-        if not reused_md and profile is not None and _wants_routing(kind, profile, task.get("ocr")):
-            try:
-                how = convert_source_routed(
-                    src, md_path, profile, src_sha=sha, ocr=task.get("ocr"),
-                    cache_root=Path(task["markup_root"]).parent, info=info, stage_log=slog,
-                    rel_name=rel_name)
-            except (NoTextError, ConversionTimeout):
+        photo_section = photo.block(src, get_paths()) if kind == "image" else ""
+        photograph = False
+        if photo_section and not reused_md:
+            seen = photo.visible_text(src)            # a photograph is not read by the document reader (made for pages)
+            if photo.is_photograph(seen):
+                photograph = True
+                photo_section = photo.block(src, get_paths(), seen or "")
+        try:
+            if photograph:
+                raise NoTextError("a photograph: only its details are indexed")
+            if not reused_md and profile is not None and _wants_routing(kind, profile, task.get("ocr")):
+                try:
+                    how = convert_source_routed(
+                        src, md_path, profile, src_sha=sha, ocr=task.get("ocr"),
+                        cache_root=Path(task["markup_root"]).parent, info=info, stage_log=slog,
+                        rel_name=rel_name)
+                except (NoTextError, ConversionTimeout):
+                    raise
+                except vlm.ReaderError as exc:     # an image file the document reader cannot read: docling does
+                    log.info("document reader not used for %s: %s", src.name, exc)
+                    route_note = f"document reader not used ({str(exc)[:160]}); converted by docling"
+                    info = {}
+                    how = ""
+                except Exception as exc:  # noqa: BLE001 - routing must never fail a document
+                    log.warning("page routing failed for %s (%s); converting the whole document",
+                                src.name, describe_error(exc))
+                    route_note = f"page routing failed ({describe_error(exc)[:160]}); converted as a whole document"
+                    info = {}
+                    how = ""
+            if not how:
+                if not route_note and not reused_md:
+                    route_note = _why_not_routed(kind, profile, task.get("ocr"))
+                    route_note = f"not read page by page: {route_note}" if route_note else ""
+                if not reused_md:
+                    step_event(slog, rel_name, 0, "docling, whole document" if kind != "text" else "copy")
+                try:
+                    how = convert_source(src, md_path, force=task["force_md"], src_sha=sha,
+                                         ocr=task.get("ocr"), info=info)
+                except NoTextError as exc:
+                    how = _rescue_whole(src, md_path, profile, kind, src_sha=sha, ocr=task.get("ocr"),
+                                        info=info, failure=str(exc))
+                    if not how:
+                        why_av = applevision.why_not() if kind in ("pdf", "image") else ""
+                        extra = "; ".join(x for x in (route_note, f"Apple Vision not used ({why_av})" if why_av else
+                                                      "Apple Vision found no text either" if kind in ("pdf", "image") else "") if x)
+                        raise NoTextError(f"{exc} [{extra}]" if extra else str(exc)) from exc
+                    route_note = "; ".join(x for x in (route_note, "docling found no text: pages read by Apple Vision") if x)
+        except NoTextError:                # a picture without text: its camera metadata is what there is to index
+            if not photo_section:
                 raise
-            except vlm.ReaderError as exc:     # an image file the document reader cannot read: docling does
-                log.info("document reader not used for %s: %s", src.name, exc)
-                route_note = f"document reader not used ({str(exc)[:160]}); converted by docling"
-                info = {}
-                how = ""
-            except Exception as exc:  # noqa: BLE001 - routing must never fail a document
-                log.warning("page routing failed for %s (%s); converting the whole document",
-                            src.name, describe_error(exc))
-                route_note = f"page routing failed ({describe_error(exc)[:160]}); converted as a whole document"
-                info = {}
-                how = ""
-        if not how:
-            if not route_note and not reused_md:
-                route_note = _why_not_routed(kind, profile, task.get("ocr"))
-                route_note = f"not read page by page: {route_note}" if route_note else ""
-            if not reused_md:
-                step_event(slog, rel_name, 0, "docling, whole document" if kind != "text" else "copy")
-            try:
-                how = convert_source(src, md_path, force=task["force_md"], src_sha=sha,
-                                     ocr=task.get("ocr"), info=info)
-            except NoTextError as exc:
-                how = _rescue_whole(src, md_path, profile, kind, src_sha=sha, ocr=task.get("ocr"),
-                                    info=info, failure=str(exc))
-                if not how:
-                    why_av = applevision.why_not() if kind in ("pdf", "image") else ""
-                    extra = "; ".join(x for x in (route_note, f"Apple Vision not used ({why_av})" if why_av else
-                                                  "Apple Vision found no text either" if kind in ("pdf", "image") else "") if x)
-                    raise NoTextError(f"{exc} [{extra}]" if extra else str(exc)) from exc
-                route_note = "; ".join(x for x in (route_note, "docling found no text: pages read by Apple Vision") if x)
+            photo.only(md_path, photo_section)
+            md_path.with_name(md_path.name + ".sha256").write_text(
+                f"{sha}\n{convert_profile(task.get('ocr'))}\n", encoding="utf-8")
+            how, info = "photo details", {}
+            route_note = ("a photograph: indexed from its photo details" if photograph else
+                          "no text in the picture: indexed from its photo details")
+        else:
+            if photo_section:
+                photo.attach(md_path, photo_section)
         convert_s = round(time.perf_counter() - t_conv, 2)
         stage_event(slog, rel_name, "convert", "done", seconds=convert_s, how=how,
                     profile_s=prof_s)

@@ -1047,6 +1047,31 @@ def _cmd_paths(a: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_reference(a: argparse.Namespace) -> int:
+    from . import reference
+
+    p = get_paths()
+    if a.action == "download":
+        if not a.name:
+            _err(f"which dataset? choose from {', '.join(reference.DATASETS)}")
+            return EXIT_USAGE
+        spec = reference.DATASETS.get(a.name)
+        if spec is None:
+            _err(f"unknown dataset {a.name!r}; choose from {', '.join(reference.DATASETS)}")
+            return EXIT_USAGE
+        print(f"downloading {spec.title} ({spec.size_hint}; {spec.license}) ...", file=sys.stderr)
+        try:
+            man = reference.download(p, a.name)
+        except reference.ReferenceDataError as exc:
+            _err(str(exc))
+            return EXIT_FAIL
+        _json({"name": a.name, "fetched": man["fetched"], "folder": str(reference.folder(p, a.name)),
+               "note": "photos are described with it from their next indexing (a full rebuild refreshes the ones already indexed)"})
+        return EXIT_OK
+    _json({"folder": str(reference.root(p)), "datasets": reference.status(p)})
+    return EXIT_OK
+
+
 def _cmd_config(a: argparse.Namespace) -> int:
     from .config import ConfigStore, update_config, write_default_config
 
@@ -2854,6 +2879,12 @@ def build_parser() -> argparse.ArgumentParser:
         if t.kind == "int":
             kw["type"] = int
         p.add_argument(t.cli_flag, **kw)
+
+    p = add("reference", "lookup tables used while indexing (place names for photographs)", _cmd_reference,
+            description="Reference datasets are fetched only by `reference download NAME`; indexing never uses the "
+            "network. Without an action: what exists and what is installed.")
+    p.add_argument("action", nargs="?", choices=["list", "download"], default="list")
+    p.add_argument("name", nargs="?", default="")
 
     p = add("paths", "print data and index folder locations", _cmd_paths)
     p.add_argument("name", nargs="?", default="")

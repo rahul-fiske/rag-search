@@ -126,6 +126,7 @@ rag-search index cancel | publish | foreground                 stop / publish no
 rag-search daemon status|start|stop|restart [search|indexer]   state, warm-up time and memory; control
 rag-search service install|uninstall|status                    launchd or systemd: daemons start at login
 rag-search config show|init|path                               settings file (see below)
+rag-search reference [download NAME]                           lookup tables used while indexing (place names for photos)
 rag-search doctor [--roundtrip] | setup | paths [name] | convert FILE
 rag-search location list|add NAME FOLDER|remove NAME [-y]     register the folders documents are read from
 rag-search collection info NAME                                documents, folders, sizes, dates and state of one collection
@@ -747,6 +748,20 @@ with the model that built it, until a re-embedded index is complete.
 `.pdf .docx .docm .rtf .pptx .xlsx .html .htm .csv .adoc .md .txt .json .jsonl .ndjson .png .jpg .jpeg .tif .tiff .bmp .webp .heic .heif`.
 `.json` is read by rag-search itself too: an array becomes one section per item and an object one per top-level key, `.jsonl`/`.ndjson` one section per line, and every value is a `key.path: value` line, so a passage still says what it is (text that is not valid JSON is indexed as plain text). `.rtf` is read by rag-search itself (paragraphs and tables; fonts, colours and pictures are dropped) and `.docm`
 (macro-enabled Word) as a `.docx`; neither needs LibreOffice or any other tool, and macros are never read or run.
+**Photographs.** An image that carries camera metadata (EXIF) gets a short "Photo details" section at the top of its
+Markdown: when it was taken (an ISO date and time with the camera's time zone, so `rag-search grep 2024-03-14` finds a
+day), the GPS position, the camera and the size; with the `places` reference data (below), also the town it was taken
+near (`near Nirmal, Telangana, India (about 4 km NE of it)`). Nothing is guessed from the pixels. A picture with no text
+is indexed from this section alone; one with text (a photographed page) has both. Pictures without metadata (scans,
+screenshots) are read as before. Which photos belong together (a trip) is for the one searching to work out from the
+dates and places, across collections.
+
+**Reference data.** Lookup tables that indexing consults live in `<data folder>/reference/` and are fetched only by
+`rag-search reference download NAME` (indexing never uses the network; a table that is not installed is not used).
+`rag-search reference` lists them. `places` is GeoNames (towns and villages of 1,000 people or more, about 10 MB,
+CC BY 4.0, <https://www.geonames.org>). The section of a photo already indexed is updated the next time the photo is indexed
+(a full rebuild does all of them).
+
 Legacy `.doc`/`.xls`/`.ppt` are not read (docling needs LibreOffice for them); a
 file with any other extension is skipped and shown in the Indexing tab / `index status` as
 `unsupported_extension`, never silently dropped. To index a legacy file, save a modern copy yourself (Word,

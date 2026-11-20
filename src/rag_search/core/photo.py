@@ -1,0 +1,233 @@
+"""What a photograph's file says about itself, as a short section of its Markdown.
+
+Every image gets one when it carries camera metadata (EXIF: when it was taken, where, with what).  The section is
+facts only -- nothing is looked at or guessed from the pixels -- and reads like this::
+
+    ## Photo details
+
+    - Taken: 2024-03-14 13:12:05 +05:30 (Thursday)
+    - Position: 19.09050 N, 78.34120 E, altitude 312 m
+    - Place: near Nirmal, Telangana, India (about 4 km NE of it)
+    - Camera: Apple iPhone 13 Pro
+    - Size: 4032 x 3024 pixels
+    - Reference data: places@2026-11-20
+
+The times are written as an ISO date and time with the offset the camera recorded, so ``rag_grep 2024-03-14`` finds a
+day.  What else is known about a photograph comes from *annotators*: functions that take the metadata and return lines
+(and the reference data they used).  ``places`` is the first; a face or object lookup is added to ``ANNOTATORS`` the
+same way.  The section is kept apart from the text read from the picture, so it can be replaced when the data
+behind it changes, without reading the picture again.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import os
+import re
+from collections.abc import Callable
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from .. import reference
+from ..paths import Paths
+from . import places
+
+HEADING = "## Photo details"
+_BLOCK_RE = re.compile(r"^## Photo details\n\n(?:- .*\n?)+\n?", re.M)
+_PAGE_ONE = "<!-- page 1 -->"
+_SEEN = "Text in the picture:"
+
+# EXIF tags (base IFD, Exif IFD 0x8769, GPS IFD 0x8825)
+_MAKE, _MODEL, _DATETIME, _ORIENT = 0x010F, 0x0110, 0x0132, 0x0112
+_TAKEN, _OFFSET, _LENS = 0x9003, 0x9011, 0xA434
+_EXIF_IFD, _GPS_IFD = 0x8769, 0x8825
+
+
+def _num(v: Any) -> float | None:
+    try:
+        return float(v)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+def _degrees(value: Any, ref: Any) -> float | None:
+    try:
+        d, m, s = (float(x) for x in value)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    deg = d + m / 60 + s / 3600
+    return -deg if str(ref).strip().upper() in ("S", "W") else deg
+
+
+def _clean(v: Any) -> str:
+    return " ".join(str(v).replace("\x00", " ").split()) if v is not None else ""
+
+
+def read_exif(src: Path) -> dict[str, Any]:
+    """The metadata of an image file as a plain dict (empty when there is none or it cannot be read); the file is
+    only read."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return {}
+    with contextlib.suppress(Exception):
+        import pillow_heif
+
+        pillow_heif.register_heif_opener()
+    try:
+        with Image.open(src) as im:
+            size = im.size
+            exif = im.getexif()
+            base = dict(exif)
+            ifd = dict(exif.get_ifd(_EXIF_IFD)) if exif else {}
+            gps = dict(exif.get_ifd(_GPS_IFD)) if exif else {}
+    except Exception:  # noqa: BLE001 - an unreadable image has no metadata; the readers report it
+        return {}
+    meta: dict[str, Any] = {}
+    taken = _clean(ifd.get(_TAKEN) or base.get(_DATETIME))
+    if taken:
+        try:
+            when = datetime.strptime(taken, "%Y:%m:%d %H:%M:%S")
+            if when.year > 1900:                          # 0000:00:00 is how some cameras say "unknown"
+                meta["when"] = when
+                offset = _clean(ifd.get(_OFFSET))
+                if re.fullmatch(r"[+-]\d\d:\d\d", offset):
+                    meta["offset"] = offset
+        except ValueError:
+            pass
+    lat = _degrees(gps.get(2), gps.get(1))
+    lon = _degrees(gps.get(4), gps.get(3))
+    if lat is not None and lon is not None and not (lat == 0 and lon == 0):
+        meta["lat"], meta["lon"] = lat, lon
+        alt = _num(gps.get(6))
+        if alt is not None:
+            meta["altitude"] = -alt if gps.get(5) in (1, b"\x01") else alt
+        heading = _num(gps.get(17))
+        if heading is not None:
+            meta["heading"] = heading
+    make, model = _clean(base.get(_MAKE)), _clean(base.get(_MODEL))
+    if make or model:
+        meta["camera"] = model if make and model.lower().startswith(make.lower()) else f"{make} {model}".strip()
+    lens = _clean(ifd.get(_LENS))
+    if lens:
+        meta["lens"] = lens
+    if meta:                                              # a size alone is not metadata worth a section
+        meta["size"] = size
+    return meta
+
+
+Annotator = Callable[[dict[str, Any], Paths], "tuple[list[str], str]"]
+
+
+def _place(meta: dict[str, Any], paths: Paths) -> tuple[list[str], str]:
+    """The nearest place (``reference`` dataset ``places``); nothing when it is not installed."""
+    if "lat" not in meta:
+        return [], ""
+    found = places.near(meta["lat"], meta["lon"], paths)
+    return ([f"Place: {found.text()}"] if found else []), reference.ref(paths, "places")
+
+
+ANNOTATORS: list[Annotator] = [_place]
+
+
+DOCUMENT_CHARS = 200             # this many letters and digits in the picture: it is a page, not a photograph
+TEXT_LINE_CHARS = 400            # most of the text of a photograph that is kept in its section
+
+
+def visible_text(src: Path) -> str | None:
+    """The text a quick OCR (Apple Vision, else Tesseract) finds in the picture; None when this machine has neither,
+    so the caller cannot tell a photograph from a page."""
+    from .conversion import applevision, tesseract
+
+    try:
+        if applevision.usable():
+            return applevision.read_page(src, 1, is_image=True)
+        if tesseract.usable():
+            return tesseract.read_page(src, 1, is_image=True)
+    except Exception:  # noqa: BLE001 - no answer is not "no text"
+        return None
+    return None
+
+
+def amount(text: str) -> int:
+    return sum(ch.isalnum() for ch in text)
+
+
+def is_photograph(text: str | None) -> bool:
+    """A picture with little text is a photograph: the document reader, made for pages, would only make up text for it."""
+    return text is not None and amount(text) < DOCUMENT_CHARS
+
+
+def lines(meta: dict[str, Any], paths: Paths, text: str = "") -> list[str]:
+    out: list[str] = []
+    if "when" in meta:
+        when = meta["when"]
+        stamp = when.strftime("%Y-%m-%d %H:%M:%S") + (f" {meta['offset']}" if "offset" in meta else
+                                                      " (time zone not recorded)")
+        out.append(f"Taken: {stamp} ({when.strftime('%A')})")
+    if "lat" in meta:
+        pos = (f"{abs(meta['lat']):.5f} {'N' if meta['lat'] >= 0 else 'S'}, "
+               f"{abs(meta['lon']):.5f} {'E' if meta['lon'] >= 0 else 'W'}")
+        if "altitude" in meta:
+            pos += f", altitude {meta['altitude']:.0f} m"
+        out.append(f"Position: {pos}")
+    refs: list[str] = []
+    for annotate in ANNOTATORS:
+        try:
+            more, ref = annotate(meta, paths)
+        except Exception:  # noqa: BLE001 - a lookup that fails must not lose the photo
+            continue
+        out.extend(more)
+        if ref:
+            refs.append(ref)
+    if "camera" in meta:
+        out.append(f"Camera: {meta['camera']}" + (f", {meta['lens']}" if "lens" in meta else ""))
+    if "size" in meta:
+        out.append(f"Size: {meta['size'][0]} x {meta['size'][1]} pixels")
+    text = " ".join(text.split())
+    if text and amount(text):
+        out.append(_SEEN + " " + (text if len(text) <= TEXT_LINE_CHARS else text[:TEXT_LINE_CHARS].rstrip() + " ..."))
+    if refs:
+        out.append(f"Reference data: {', '.join(refs)}")
+    return out
+
+
+def block(src: Path, paths: Paths, text: str = "") -> str:
+    """The "Photo details" section for *src* (with the short *text* found in it, when given), or "" when the file has no
+    camera metadata."""
+    meta = read_exif(src)
+    if not meta:
+        return ""
+    return HEADING + "\n\n" + "\n".join(f"- {x}" for x in lines(meta, paths, text)) + "\n"
+
+
+def attach(md_path: Path, section: str) -> bool:
+    """Put *section* into the Markdown (under page 1), replacing the one that is there.  True when the file changed."""
+    text = md_path.read_text(encoding="utf-8", errors="replace")
+    old = _BLOCK_RE.search(text) if HEADING in text else None
+    if old and _SEEN not in section:                 # the text found in the picture is kept when only the rest is renewed
+        kept = next((ln for ln in old.group(0).splitlines() if ln.startswith(f"- {_SEEN}")), "")
+        if kept:
+            head, _, tail = section.rstrip("\n").rpartition("\n- Reference data")
+            section = (head + "\n" + kept + ("\n- Reference data" + tail if _ else "")) + "\n"
+    new = _BLOCK_RE.sub("", text).lstrip("\n") if old else text
+    if new.startswith(_PAGE_ONE):
+        body = new[len(_PAGE_ONE):].lstrip("\n")
+        new = f"{_PAGE_ONE}\n\n{section}\n{body}" if body else f"{_PAGE_ONE}\n\n{section}"
+    else:
+        new = f"{_PAGE_ONE}\n\n{section}\n{new}" if new.strip() else f"{_PAGE_ONE}\n\n{section}"
+    if new == text:
+        return False
+    tmp = md_path.with_name(md_path.name + ".partial")
+    tmp.write_text(new, encoding="utf-8")
+    os.replace(tmp, md_path)
+    return True
+
+
+def only(md_path: Path, section: str) -> None:
+    """The Markdown of a picture that holds no text: its photo details alone."""
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = md_path.with_name(md_path.name + ".partial")
+    tmp.write_text(f"{_PAGE_ONE}\n\n{section}", encoding="utf-8")
+    os.replace(tmp, md_path)
