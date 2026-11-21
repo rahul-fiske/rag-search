@@ -22,6 +22,7 @@ import os
 import shutil
 import signal
 import subprocess
+import threading
 import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
@@ -488,6 +489,12 @@ def _conv_kw(summary: dict[str, Any] | None) -> dict[str, Any]:
     return {"conversion": summary} if summary else {}
 
 
+def _und_kw(res: dict[str, Any]) -> dict[str, Any]:
+    """The document's kind and grade for its line in the Documents list (the same as the "understood" table's)."""
+    u = res.get("understood")
+    return {"understood": {k: u[k] for k in ("kind", "grade", "missing") if k in u}} if isinstance(u, dict) else {}
+
+
 def _roots(value: Any) -> SourceRoots:
     """A task's source roots (the registered locations, as the plain dict that travels to a worker)."""
     return SourceRoots.of(value)
@@ -530,6 +537,75 @@ def _failed_conversion(kind: str, profile: dict[str, Any] | None, outcome: str, 
                            readers=["docling"])
 
 
+def _sniff(src: Path, kind: str, reused_md: bool, old: dict[str, Any],
+           reuse_trace: bool) -> tuple[str, dict[str, Any], str | None]:
+    """3.0 Sniff: what kind of file is this?  ``(route, exif, text seen)``.  Decided from the file itself, before any page is
+    looked at: a Google Timeline .json -> "timeline"; an image with camera data and little text -> "photograph"; everything
+    else, a photographed page too -> "pages" (3.1-3.5).  A document whose Markdown and trace are current keeps the route its
+    trace records."""
+    meta = photo.read_exif(src) if kind == "image" else {}
+    known = {trace.page_kind(p) for p in old.get("pages", [])} if reuse_trace else set()
+    if known == {"photo"}:
+        return "photograph", meta, None
+    if known == {"timeline"}:
+        return "timeline", meta, None
+    if src.suffix.lower() == ".json" and not reused_md and timeline.recognise(src):
+        return "timeline", meta, None
+    if meta and not reused_md:
+        seen = photo.visible_text(src)                # a quick text check: a photograph, or a photographed page
+        return ("photograph" if photo.is_photograph(seen) else "pages"), meta, seen
+    return "pages", meta, None
+
+
+def _fills_description(task: dict[str, Any], kind: str, md_path: Path, sha: str) -> bool:
+    """An unchanged photograph is converted again when its description is missing and can be made now: "description" is
+    one of its facts like any other, and a later run fills it in (unless the model failed on this photograph before)."""
+    if kind != "image" or not task.get("describe_ready") or task["rebuild"] or task["force_md"]:
+        return False
+    try:
+        text = md_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    if describe.LOOKS in text or not describe.is_photograph(text):
+        return False
+    return sha not in describe.failures(get_paths(), describe.current_id())
+
+
+def sniff_document(task: dict[str, Any]) -> dict[str, Any]:
+    """3.0 Sniff ahead of the conversions (runs in a pool process: Apple Vision's text check must never run in a thread
+    beside the loaded vision model).  ``{"src", "route", "seen", "fill"}``; ``route`` is "" for a file that will not be
+    converted (unchanged, or not tried again), and missing when the file could not be sniffed (the conversion then does it)."""
+    src = Path(task["src"])
+    try:
+        allow_cloud_files()
+        kind = profiler.kind_of(src)
+        roots = _roots(task["roots"])
+        sha = sha256_file(src)
+        idx_dir = index_dir_for(src, roots, Path(task["index_root"]))
+        md_path = markup_path_for(src, roots, Path(task["markup_root"]))
+        again = not task["rebuild"] and not task["force_md"]
+        fill = False
+        if again and is_fresh(idx_dir, sha, task["chunk_size"], task["chunk_overlap"], task["model"]):
+            fill = _fills_description(task, kind, md_path, sha)
+            if not fill:
+                return {"src": str(src), "route": ""}
+        elif again and known_outcome(idx_dir, sha, task.get("ocr")):
+            return {"src": str(src), "route": ""}
+        t_sn = time.perf_counter()
+        reused_md = md_is_current(md_path, sha, force=task["force_md"], ocr=task.get("ocr"))
+        old = trace.read_trace(trace.trace_path_for(md_path)) if reused_md else {}
+        reuse_trace = bool(old and old.get("src_sha256") == sha and old.get("convert") == convert_profile(task.get("ocr")))
+        route, _meta, seen = _sniff(src, kind, reused_md, old, reuse_trace)
+        if fill and route == "photograph":
+            seen = photo.visible_text(src)
+        stage_event(task.get("stage_log"), mirror_rel(src, roots).as_posix(), "sniff", "done",
+                    seconds=round(time.perf_counter() - t_sn, 3), route=route)
+        return {"src": str(src), "route": route, "seen": seen, "fill": fill and route == "photograph"}
+    except Exception as exc:  # noqa: BLE001 - the conversion sniffs it again and reports what goes wrong
+        log.info("sniff of %s failed: %s", src.name, exc)
+        return {"src": str(src)}
+
+
 def prepare_document(task: dict[str, Any]) -> dict[str, Any]:
     """Phase-1 worker (runs in a pool process; takes/returns plain dicts): ``_prepare_document`` framed by
     a ``work`` start / done event, so the dashboard knows which process holds which document whatever the
@@ -539,7 +615,7 @@ def prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         rel = mirror_rel(src, _roots(task["roots"])).as_posix()
     except (ValueError, TypeError, KeyError):
         rel = src.name
-    work_event(slog, rel, "convert", "start")
+    work_event(slog, rel, "convert", "start", **({"route": task["route"]} if task.get("route") else {}))
     outcome, understood, known = "error", None, False
     try:
         res = _prepare_document(task)
@@ -588,13 +664,17 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         idx_dir = index_dir_for(src, roots, index_root)
         rel_name = mirror_rel(src, roots).as_posix()
         slog = task.get("stage_log")
+        md_path = markup_path_for(src, roots, markup_root)
+        fill = False                       # an unchanged photograph whose description can be made now
         if (not task["rebuild"] and not task["force_md"]
                 and is_fresh(idx_dir, sha, cs, co, model)):
-            _repoint(idx_dir, src)
-            stage_event(slog, rel_name, "fingerprint", "done", seconds=round(time.perf_counter() - t_fp, 3),
-                        unchanged=True)
-            return {"status": "skipped", "src": str(src), "idx_dir": str(idx_dir)}
-        known = None if task["rebuild"] or task["force_md"] else known_outcome(idx_dir, sha, task.get("ocr"))
+            fill = bool(task["fill"]) if "fill" in task else _fills_description(task, kind, md_path, sha)
+            if not fill:
+                _repoint(idx_dir, src)
+                stage_event(slog, rel_name, "fingerprint", "done", seconds=round(time.perf_counter() - t_fp, 3),
+                            unchanged=True)
+                return {"status": "skipped", "src": str(src), "idx_dir": str(idx_dir)}
+        known = None if task["rebuild"] or task["force_md"] or fill else known_outcome(idx_dir, sha, task.get("ocr"))
         if known:
             stage_event(slog, rel_name, "fingerprint", "done", seconds=round(time.perf_counter() - t_fp, 3),
                         unchanged=True)
@@ -605,7 +685,6 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         stage_event(slog, rel_name, "fingerprint", "done", seconds=round(time.perf_counter() - t_fp, 3),
                     unchanged=False)
 
-        md_path = markup_path_for(src, roots, markup_root)
         trace_file = trace.trace_path_for(md_path)
         stage_event(slog, rel_name, "convert", "start")
 
@@ -614,26 +693,17 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         reuse_trace = bool(old and old.get("src_sha256") == sha
                            and old.get("convert") == convert_profile(task.get("ocr")))
 
-        # 3.0 Sniff: what kind of file is this?  Decided from the file itself, before any page is looked at:
-        # a Google Timeline .json -> "timeline"; an image with camera data and little text -> "photograph";
-        # everything else, a photographed page too -> "pages" (3.1-3.5).  A document whose Markdown and trace are
-        # current keeps the route its trace records.
-        t_sn = time.perf_counter()
-        route = "pages"
-        meta = photo.read_exif(src) if kind == "image" else {}
-        seen: str | None = None
-        known = {trace.page_kind(p) for p in old.get("pages", [])} if reuse_trace else set()
-        if known == {"photo"}:
-            route = "photograph"
-        elif known == {"timeline"}:
-            route = "timeline"
-        elif src.suffix.lower() == ".json" and not reused_md and timeline.recognise(src):
-            route = "timeline"
-        elif meta and not reused_md:
-            seen = photo.visible_text(src)            # a quick text check: a photograph, or a photographed page
-            if photo.is_photograph(seen):
-                route = "photograph"
-        stage_event(slog, rel_name, "sniff", "done", seconds=round(time.perf_counter() - t_sn, 3), route=route)
+        # 3.0 Sniff (``_sniff``): usually done for every file before the run is scheduled (``sniff_document``, in pool
+        # processes), so a photograph is known to be one before it is queued; otherwise here
+        if task.get("route"):
+            route, seen = str(task["route"]), task.get("seen")
+            meta = photo.read_exif(src) if kind == "image" else {}
+        else:
+            t_sn = time.perf_counter()
+            route, meta, seen = _sniff(src, kind, reused_md, old, reuse_trace)
+            if fill and route == "photograph":
+                seen = photo.visible_text(src)
+            stage_event(slog, rel_name, "sniff", "done", seconds=round(time.perf_counter() - t_sn, 3), route=route)
 
         t_conv = time.perf_counter()
         info: dict[str, Any] = {}
@@ -662,17 +732,16 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
                 planned[branch] = planned.get(branch, 0) + 1
             plan_event(slog, rel_name, planned)
             t_conv = time.perf_counter()
-        elif reuse_trace:                                        # the stored trace says what the pages are
+        elif reuse_trace and route == "pages":                   # the stored trace says what the pages are
             planned = {}
             for rec in old.get("pages", []):
                 planned[trace.page_kind(rec)] = planned.get(trace.page_kind(rec), 0) + 1
             plan_event(slog, rel_name, planned)
-        else:                                                    # a photograph or a Timeline: no page to profile
-            plan_event(slog, rel_name, {"photo" if route == "photograph" else "timeline": 1})
+        # a photograph or a Timeline has no pages: nothing is planned, and it is never counted as a page
 
         # 3.6 Photo details (3.7 Locate is part of it: the map lines): a photograph, and a photographed page after its lanes
         t_ph = time.perf_counter()
-        photograph = route == "photograph" and not reused_md      # made now: only its details are indexed
+        photograph = route == "photograph" and (not reused_md or fill)    # made now: only its details are indexed
         photo_section = ""
         if meta:
             photo_section = photo.block(src, get_paths(), seen or "") if photograph else photo.block(src, get_paths())
@@ -690,11 +759,17 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
             stage_event(slog, rel_name, "describe", "done", seconds=round(time.perf_counter() - t_de, 2),
                         source=dinfo["described"] or "none", why=dinfo["why"], model_s=dinfo["seconds"])
             if not dinfo["described"] and dinfo["why"]:
-                route_note = f"not described now ({dinfo['why'][:120]}); a later pass picks it up"
+                route_note = f"description missing ({dinfo['why'][:120]}): a later run fills it in"
         try:
-            if photograph:
-                raise NoTextError("a photograph: only its details are indexed")
-            if not reused_md and profile is not None and _wants_routing(kind, profile, task.get("ocr")):
+            if photograph:                 # the photograph's own way: its details are what is indexed, not a failure
+                if not photo_section.strip():
+                    raise NoTextError("a photograph with no details to index (no time, position or description)")
+                photo.only(md_path, photo_section)
+                md_path.with_name(md_path.name + ".sha256").write_text(
+                    f"{sha}\n{convert_profile(task.get('ocr'))}\n", encoding="utf-8")
+                how, info = "photo details", {}
+                route_note = route_note or "a photograph: indexed from its photo details"
+            elif not reused_md and profile is not None and _wants_routing(kind, profile, task.get("ocr")):
                 try:
                     how = convert_source_routed(
                         src, md_path, profile, src_sha=sha, ocr=task.get("ocr"),
@@ -731,17 +806,16 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
                                                       "Apple Vision found no text either" if kind in ("pdf", "image") else "") if x)
                         raise NoTextError(f"{exc} [{extra}]" if extra else str(exc)) from exc
                     route_note = "; ".join(x for x in (route_note, "docling found no text: pages read by Apple Vision") if x)
-        except NoTextError:                # a picture without text: its camera metadata is what there is to index
-            if not photo_section:
+        except NoTextError:                # a photographed page without text: its camera metadata is what there is to index
+            if not photo_section or photograph:
                 raise
             photo.only(md_path, photo_section)
             md_path.with_name(md_path.name + ".sha256").write_text(
                 f"{sha}\n{convert_profile(task.get('ocr'))}\n", encoding="utf-8")
             how, info = "photo details", {}
-            route_note = ("a photograph: indexed from its photo details" if photograph else
-                          "no text in the picture: indexed from its photo details")
+            route_note = "no text in the picture: indexed from its photo details"
         else:
-            if photo_section:
+            if photo_section and not photograph:
                 photo.attach(md_path, photo_section)
         convert_s = round(time.perf_counter() - t_conv, 2)
         stage_event(slog, rel_name, "convert", "done", seconds=convert_s, how=how,
@@ -1288,6 +1362,61 @@ def _shutdown_pool(pool: cf.ProcessPoolExecutor, grace: float = POOL_EXIT_GRACE_
 
 MAX_POOL_RESTARTS = 8                # a pool whose processes keep ending abruptly is given up after this many new pools
 STRIKES = 2                          # a document that was open during this many abrupt ends is not tried again in the run
+SNIFF_WORKERS = 4                    # processes for 3.0 Sniff ahead of the run (Apple Vision's text check, ~0.8 s a photograph)
+
+
+def kinds_together() -> bool:
+    """RAG_SEARCH_KINDS_TOGETHER=1: the pool converts the documents of pages while this process describes the photographs
+    (they then run side by side).  Off by default: on a machine whose memory is already tight, the pool's conversions next to
+    the loaded vision model pushed it into swap, so the photographs follow the documents."""
+    return os.environ.get("RAG_SEARCH_KINDS_TOGETHER", "").strip().lower() in ("1", "on", "true", "yes")
+
+
+def _sniff_all(tasks: list[dict[str, Any]], workers: int, progress: Callable[[int, int], None]) -> None:
+    """3.0 Sniff for every file before the conversions are scheduled, in pool processes (never in threads: Apple Vision beside
+    the loaded vision model hung a run).  Each task gets ``route`` ("photograph" | "timeline" | "pages", "" when it will not be
+    converted), and ``seen`` / ``fill`` for a photograph; a file that could not be sniffed is sniffed by its conversion."""
+    if not tasks:
+        return
+    by_src = {t["src"]: t for t in tasks}
+    done = 0
+
+    def take(res: dict[str, Any]) -> None:
+        nonlocal done
+        done += 1
+        t = by_src.get(res.get("src", ""))
+        if t is not None and "route" in res:
+            t["route"] = res["route"]
+            if res["route"]:
+                t["seen"], t["fill"] = res.get("seen"), bool(res.get("fill"))
+        if done % 25 == 0 or done == len(tasks):
+            progress(done, len(tasks))
+    try:
+        pool = cf.ProcessPoolExecutor(max_workers=max(1, min(workers, len(tasks))), mp_context=mp.get_context("spawn"))
+    except Exception as exc:  # noqa: BLE001 - no pool: each conversion sniffs its own file
+        log.warning("no process pool for 3.0 Sniff (%s): each file is sniffed when it is converted", exc)
+        return
+    try:
+        futs = [pool.submit(sniff_document, t) for t in tasks]
+        for fut in cf.as_completed(futs):
+            try:
+                take(fut.result())
+            except Exception:  # noqa: BLE001 - a lost answer: the conversion sniffs that file itself
+                take({})
+    finally:
+        _shutdown_pool(pool)
+
+
+def by_kind(tasks: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """``(pool, main)``: the files for the conversion pool, and those for this process, which holds the vision models --
+    photographs (3.9 Describe) and pictures of pages (bound to the same GPU).  Decided by the kind 3.0 Sniff found, not by
+    the extension; a file that was not sniffed (or will not be converted) goes by its format."""
+    main, pool = [], []
+    for t in tasks:
+        route = t.get("route")
+        image = Path(t["src"]).suffix.lower() in IMAGE_EXTENSIONS
+        (main if route == "photograph" or (image and route != "") else pool).append(t)
+    return pool, main
 
 
 def _convert_in_pool(tasks: list[dict[str, Any]], workers: int, collect: Callable[[dict[str, Any]], None], *,
@@ -1486,6 +1615,10 @@ def run_index(
         for s_ in todo:
             ext = s_.suffix.lower().lstrip(".") or "(none)"
             conv.files[ext] = conv.files.get(ext, 0) + 1
+        try:                               # can a photograph be described in this run (an undescribed one is then redone)?
+            describe_ready = not describe.inline_ready()
+        except Exception:  # noqa: BLE001 - not knowing is "no"
+            describe_ready = False
         tasks = [{
             "src": str(s),
             "roots": roots.to_dict(),
@@ -1494,6 +1627,7 @@ def run_index(
             "chunk_overlap": chunk_overlap, "rebuild": rebuild, "force_md": force_md,
             "model": model, "ocr": ocr,
             "stage_log": str(stage_log) if stage_log else None,
+            "describe_ready": describe_ready,
         } for s in todo]
 
         # Phase 1 — convert + chunk (parallel, no model)
@@ -1501,7 +1635,13 @@ def run_index(
         total = len(tasks)
         done = 0
 
+        collect_lock = threading.Lock()    # the pool's results and this process's may arrive side by side (kinds_together)
+
         def _collect(res: dict[str, Any]) -> None:
+            with collect_lock:
+                _collect_one(res)
+
+        def _collect_one(res: dict[str, Any]) -> None:
             nonlocal done, skipped
             done += 1
             name = Path(res["src"]).name
@@ -1521,18 +1661,18 @@ def run_index(
                 doc_event(Path(res["src"]), "converted", chunks=res.get("nodes"),
                           convert_s=res.get("convert_s"), chunk_s=res.get("chunk_s"),
                           total_s=res.get("elapsed_s"), markdown=res.get("markdown", ""),
-                          profile_s=res.get("profile_s"), **_conv_kw(res.get("conversion")))
+                          profile_s=res.get("profile_s"), **_conv_kw(res.get("conversion")), **_und_kw(res))
             elif res["status"] == "skipped":
                 skipped += 1
                 doc_event(Path(res["src"]), "skipped")
             elif res["status"] == "no_text":
                 no_text.append({"src": res["src"], "message": res.get("message", "no text")})
                 doc_event(Path(res["src"]), "no_text", message=res.get("message", "no text"),
-                          total_s=res.get("elapsed_s"), **_conv_kw(res.get("conversion")))
+                          total_s=res.get("elapsed_s"), **_conv_kw(res.get("conversion")), **_und_kw(res))
             else:
                 errors.append({"src": res["src"], "message": res.get("message", "error")})
                 doc_event(Path(res["src"]), "error", message=res.get("message", "error"),
-                          total_s=res.get("elapsed_s"), **_conv_kw(res.get("conversion")))
+                          total_s=res.get("elapsed_s"), **_conv_kw(res.get("conversion")), **_und_kw(res))
             note = res["status"]
             if note == "no_text":
                 note = "skipped: no text"
@@ -1577,19 +1717,38 @@ def run_index(
         if stage_log:                                 # with a limit of 0 it stops nothing, and still knows what is open
             watch = stallwatch.StallWatch(Path(str(stage_log)), limit).start(_on_stall)
         try:
-            # Image files are converted one after another in this process, after the pool has done the documents: a
-            # photograph is described by a vision model of several GB (3.9), which one process must hold, and the images
-            # that go to the document reader are bound to the same GPU anyway.
-            images = [t for t in tasks if Path(t["src"]).suffix.lower() in IMAGE_EXTENSIONS]
-            others = [t for t in tasks if t not in images]
-            if jobs > 1 and len(others) > 1:
-                _convert_in_pool(others, min(jobs, len(others)), _collect, watch=watch, stalled=stalled, rel_src=rel_src,
-                                 stage_log=stage_log)
+            # 3.0 Sniff first, for every file, in pool processes: what each file is decides where it goes.  Photographs
+            # (and pictures of pages) are converted one after another in this process: a photograph is described by a
+            # vision model of several GB (3.9), which one process must hold, and the document reader is bound to the same
+            # GPU.  The documents of pages go to the pool -- before the photographs, or beside them (kinds_together).
+            if jobs > 1:                   # one job: each conversion sniffs its own file, in this process
+                _sniff_all(tasks, max(1, min(SNIFF_WORKERS, machine.physical_cores() // 2)),
+                           lambda n, of: emit({"phase": "convert", "done": 0, "total": total,
+                                               "message": f"3.0 Sniff: {n} of {of} files sorted by kind"}))
+            planned: dict[str, int] = {}   # files per kind (the Indexing tab's "left" per kind); "" = will not be converted
+            for t in tasks:
+                key = {"": "unchanged", None: "unsorted"}.get(t.get("route"), str(t.get("route")))
+                planned[key] = planned.get(key, 0) + 1
+            _sink({"phase_event": {"phase": "convert", "status": "kinds", "kinds": planned}})
+            others, images = by_kind(tasks)
+
+            def _pool_part() -> None:
+                if jobs > 1 and len(others) > 1:
+                    _convert_in_pool(others, min(jobs, len(others)), _collect, watch=watch, stalled=stalled,
+                                     rel_src=rel_src, stage_log=stage_log)
+                else:
+                    for t in others:
+                        _collect(prepare_document(t))
+            beside = threading.Thread(target=_pool_part, name="rag-pool", daemon=True) \
+                if kinds_together() and images and others else None
+            if beside is not None:
+                beside.start()
             else:
-                for t in others:
-                    _collect(prepare_document(t))
+                _pool_part()
             for t in images:
                 _collect(prepare_document(t))
+            if beside is not None:
+                beside.join()
         finally:
             if watch is not None:
                 watch.stop()

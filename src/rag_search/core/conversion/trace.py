@@ -29,6 +29,7 @@ BRANCHES = ("copy", "office", "digital", "raster", "image", "embedded", "fallbac
 BRANCH_LETTER = {"copy": "c", "office": "o", "digital": "d", "raster": "r", "image": "i",
                  "embedded": "e", "fallback": "f", "cached": "k", "photo": "p", "timeline": "t", "unknown": "?"}
 LETTER_BRANCH = {v: k for k, v in BRANCH_LETTER.items()}
+WHOLE_FILES = frozenset(("photo", "timeline"))     # the "branch" of a file that has no pages: counted as a document
 BRANCH_TITLE = {
     "copy": "Markdown / text, used as is",
     "office": "Office / HTML file (docling reads the structure)",
@@ -254,12 +255,23 @@ class RunTotals:
         self.repair_tried = 0
         self.repaired_cells = 0
         self.merged_tables = 0
+        self.whole: dict[str, int] = {}       # documents that are not pages: photographs ("photo") and Timelines
 
     def add(self, summary: dict[str, Any] | None, ok: bool = True) -> None:
         """*ok*: the document converted successfully (a failed or empty one still counts in the totals, but
         not in ``ok_*``, the figures of the successfully converted files)."""
         if not summary:
             self.no_record += 1
+            return
+        whole = set(summary.get("branches") or {})
+        if whole and whole <= WHOLE_FILES:            # a photograph or a Timeline is a document, never a page
+            for k in whole:
+                self.whole[k] = self.whole.get(k, 0) + 1
+            for k, v in (summary.get("time_s") or {}).items():
+                self.time_s[k] = self.time_s.get(k, 0.0) + float(v)
+            cost = summary.get("cost") or {}
+            self.cpu_s += float(cost.get("cpu_s", 0))
+            self.peak_mb = max(self.peak_mb, float(cost.get("peak_mb", 0)))
             return
         self.docs += 1
         self.pages += int(summary.get("pages", 0))
@@ -308,7 +320,7 @@ class RunTotals:
             "gate_failed": self.gate_failed, "cached_pages": self.cached_pages,
             "tokens": self.tokens, "gpu_s": round(self.gpu_s, 1),
             "repair_tried": self.repair_tried, "repaired_cells": self.repaired_cells,
-            "merged_tables": self.merged_tables,
+            "merged_tables": self.merged_tables, "whole": dict(self.whole),
             "cost": {"cpu_s": round(self.cpu_s, 1), "peak_mb": round(self.peak_mb)},
             # pages actually read: a page served from the page cache takes no time and is not a rate
             "pages_per_min": round(60.0 * (self.pages - self.cached_pages) / elapsed, 1)

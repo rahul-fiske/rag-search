@@ -19,7 +19,7 @@
   // again (it could not be indexed before and has not changed), or a format that is not indexed.
   const SKIPPED_HELP = 'Everything this run did not convert: files unchanged since the last run, files that could not be indexed before and have not changed (not tried again), and files in a format that is not indexed. Each row says which.';
   // Filter/UI state persists across re-renders (the view object itself is a singleton).
-  let docFilter = { status: '', collection: '', q: '', branch: '', outcome: '' };
+  let docFilter = { status: '', collection: '', q: '', kind: '', grade: '' };
   let estimate = { busy: false, data: null, error: '' };
   let docFetch = { sig: '', data: null, at: 0, loading: false };
   let collapsedGroups = new Set();
@@ -172,7 +172,7 @@
   // place (never rebuilt inside a patch()'d subtree) -- rebuilding an <input> every tick would
   // reparent it through a detached scratch node and silently drop focus while someone is typing.
 
-  function filterActive() { return !!(docFilter.status || docFilter.collection || docFilter.q || docFilter.branch || docFilter.outcome); }
+  function filterActive() { return !!(docFilter.status || docFilter.collection || docFilter.q || docFilter.kind || docFilter.grade); }
 
   function docsSource(idx) {
     if (filterActive()) return (docFetch.data && docFetch.data.documents) || EMPTY_DOCS;
@@ -186,9 +186,9 @@
   }
 
   function clearFilters() {
-    docFilter = { status: '', collection: '', q: '', branch: '', outcome: '' };
+    docFilter = { status: '', collection: '', q: '', kind: '', grade: '' };
     docFetch = { sig: '', data: null, at: 0, loading: false };
-    refs.docQ.value = ''; refs.docColl.value = ''; refs.docBranch.value = ''; refs.docOutcome.value = '';
+    refs.docQ.value = ''; refs.docColl.value = ''; refs.docKind.value = ''; refs.docGrade.value = '';
     RS.views.indexing.update();
   }
 
@@ -202,7 +202,7 @@
   async function maybeFetchDocs(job) {
     if (!filterActive() || !job) { docFetch.sig = ''; return; }
     const running = job.status === 'running' || job.status === 'queued';
-    const sig = [job.id, docFilter.status, docFilter.collection, docFilter.q, docFilter.branch, docFilter.outcome].join('|');
+    const sig = [job.id, docFilter.status, docFilter.collection, docFilter.q, docFilter.kind, docFilter.grade].join('|');
     const now = Date.now();
     if (docFetch.loading || (sig === docFetch.sig && !(running && now - docFetch.at > 3000))) return;
     docFetch.sig = sig; docFetch.at = now; docFetch.loading = true;
@@ -210,11 +210,22 @@
     if (docFilter.status) qs.set('status', docFilter.status);
     if (docFilter.collection) qs.set('collection', docFilter.collection);
     if (docFilter.q) qs.set('q', docFilter.q);
-    if (docFilter.branch) qs.set('branch', docFilter.branch);
-    if (docFilter.outcome) qs.set('outcome', docFilter.outcome);
+    if (docFilter.kind) qs.set('kind', docFilter.kind);
+    if (docFilter.grade) qs.set('grade', docFilter.grade);
     let r;
     try { r = await api('conversion/documents?' + qs.toString()); } finally { docFetch.loading = false; }
     if (r && r.ok !== false) { docFetch.data = r; updateDocsCard(); }
+  }
+
+  // the document's kind and grade: the same words and colours as the table "What this run understood"
+  function und(d) {
+    const u = d.understood;
+    if (!u || !u.kind) return null;
+    const g = d.status === 'error' ? 'error' : (u.grade || 'complete');
+    return h('div', { class: 'cv-legend', style: { marginTop: '2px' } },
+      h('span', { class: 'cv-key' }, h('i', { class: 'cv-sw kd-' + CV.trackOf(u.kind), 'aria-hidden': 'true' }), u.kind),
+      h('span', { class: 'cv-key', title: (u.missing || []).length ? 'missing: ' + u.missing.join(', ') : '' }, h('i', { class: 'cv-sw ' + CV.gradeCls(g), 'aria-hidden': 'true' }),
+        CV.gradeName(g) + ((u.missing || []).length && g === 'partial' ? ` (no ${u.missing.join(', no ')})` : '')));
   }
 
   function docRow(d, maxT) {
@@ -224,8 +235,8 @@
     const conv = d.conversion;
     return h('tr', { class: conv && conv.trace ? 'clickable' : '', title: conv && conv.trace ? 'Click for the page-by-page record' : '', on: conv && conv.trace ? { click: () => CV.openSummary(conv) } : {} },
       h('td', null, d.status === 'indexed' ? chip('indexed', 'ok') : d.status === 'converted' ? chip('converted', 'accent') : d.status === 'skipped' ? chip('skipped · unchanged') : d.status === 'no_text' ? chip('skipped · no text', 'warn') : d.status === 'unsupported' ? chip('skipped · unsupported format', 'warn') : d.status === 'known' ? h('span', { class: 'chip', title: 'It could not be indexed in an earlier run and neither the file nor the conversion settings have changed. A complete run (rebuild) tries it again.' }, 'skipped · not tried again') : chip('failed', 'bad')),
-      h('td', null, h('span', { class: 'muted' }, d.collection + '/'), d.path || d.source, d.status === 'error' && d.message ? h('div', { class: 'small', style: { color: 'var(--bad)' } }, d.message) : d.status === 'no_text' ? h('div', { class: 'small muted' }, d.message || 'no text to index') : d.status === 'unsupported' ? h('div', { class: 'small muted' }, 'extension: ' + (d.extension || '(none)')) : d.status === 'known' ? h('div', { class: 'small muted' }, d.message || '') : null),
-      h('td', { style: { minWidth: '120px' } }, conv && conv.pages ? h('div', null, CV.strip(conv), h('div', { class: 'small muted' }, `${num(conv.pages)} p.` + (conv.outcomes && (conv.outcomes.low || conv.outcomes.error) ? ' · ' + [conv.outcomes.low ? conv.outcomes.low + ' low' : '', conv.outcomes.error ? conv.outcomes.error + ' error' : ''].filter(Boolean).join(', ') : ''))) : ''),
+      h('td', null, h('span', { class: 'muted' }, d.collection + '/'), d.path || d.source, und(d), d.status === 'error' && d.message ? h('div', { class: 'small', style: { color: 'var(--bad)' } }, d.message) : d.status === 'no_text' ? h('div', { class: 'small muted' }, d.message || 'no text to index') : d.status === 'unsupported' ? h('div', { class: 'small muted' }, 'extension: ' + (d.extension || '(none)')) : d.status === 'known' ? h('div', { class: 'small muted' }, d.message || '') : null),
+      h('td', { style: { minWidth: '120px' } }, conv && conv.pages && CV.trackOf((d.understood || {}).kind) === 'pages' ? h('div', null, CV.strip(conv), h('div', { class: 'small muted' }, `${num(conv.pages)} p.` + (conv.outcomes && (conv.outcomes.low || conv.outcomes.error) ? ' · ' + [conv.outcomes.low ? conv.outcomes.low + ' low' : '', conv.outcomes.error ? conv.outcomes.error + ' error' : ''].filter(Boolean).join(', ') : ''))) : ''),
       h('td', { class: 'num' }, d.chunks !== undefined ? num(d.chunks) : ''),
       h('td', { style: { minWidth: '160px' } }, seg, d.status === 'indexed' ? h('div', { class: 'small muted' }, `${PL.label('convert')} ${dur(d.convert_s)} · ${PL.label('chunk')} ${dur(d.chunk_s)} · ${PL.label('embed')} ${dur(d.embed_s)}`, conv && CV.costText(conv.cost) ? ' · ' + CV.costText(conv.cost) : '') : d.status === 'converted' ? h('div', { class: 'small muted' }, `${PL.label('convert')} ${dur(d.convert_s)} · ${PL.label('chunk')} ${dur(d.chunk_s)} · waiting for ${PL.label('embed')}`) : null),
       h('td', { class: 'num nowrap' }, t ? dur(t) : ''), h('td', { class: 'nowrap muted' }, clock(d.finished_at)));
@@ -234,7 +245,7 @@
   function docsTable(items) {
     const maxT = Math.max(1, ...items.map(d => d.total_s || 0));
     return h('div', { class: 'table-wrap' }, h('table', null,
-      h('thead', null, h('tr', null, ['Result', 'Document', 'Pages · branch', 'Chunks', 'Time split · cost', 'Total', 'Finished'].map((t, i) => h('th', { class: i === 3 || i === 5 ? 'num' : '' }, t)))),
+      h('thead', null, h('tr', null, ['Result', 'Document · kind · grade', 'Pages · branch', 'Chunks', 'Time split · cost', 'Total', 'Finished'].map((t, i) => h('th', { class: i === 3 || i === 5 ? 'num' : '' }, t)))),
       h('tbody', null, items.map(d => docRow(d, maxT)))));
   }
 
@@ -309,8 +320,8 @@
         names.map(c => h('option', { value: c }, `${c} (${num(Object.values(docs.by_collection[c]).reduce((a, b) => a + b, 0))})`)));
       if (names.includes(cur)) refs.docColl.value = cur;
     }
-    syncSelect(refs.docBranch, 'All branches', docs.by_branch, CV.label, docFilter.branch);
-    syncSelect(refs.docOutcome, 'All outcomes', docs.by_outcome, k => k.replace('_', ' '), docFilter.outcome);
+    syncSelect(refs.docKind, 'All kinds', docs.by_kind, k => k, docFilter.kind);
+    syncSelect(refs.docGrade, 'All grades', docs.by_grade, CV.gradeName, docFilter.grade);
     refs.docClear.classList.toggle('hidden', !active);
 
     patch(refs.docsBody, docsBody(docs));
@@ -336,17 +347,22 @@
       ph.total != null ? h('p', { class: 'small muted', style: { margin: '0 0 8px' } },
         `${num(ph.done || 0)} of ${num(ph.total)} document(s) through discover → chunk` + (ph.workers ? ` on ${ph.workers} worker process(es)` : '')
         + Object.entries(ph.outcomes || {}).map(([k, n]) => ` · ${k} ${num(n)}`).join('')) : null,
-      CV.flow(totals, live.live, live.steps, live.kinds),
-      CV.live(live.live) ? h('div', { style: { marginTop: '14px' } }, h('h4', null, 'Pages in active files'), CV.live(live.live)) : null,
-      totals.pages ? h('div', { style: { marginTop: '14px' } },
-        h('h4', null, 'Pages in successfully converted files'), CV.bands(totals.ok_branches || totals.branches),
-        totals.ok_runways && Object.keys(totals.ok_runways).length ? h('div', { style: { marginTop: '8px' } }, h('div', { class: 'small muted', style: { marginBottom: '4px' } }, 'by the lane whose reader finished the page'), CV.runwayBar(totals.ok_runways, totals.moves)) : null,
-        h('p', { class: 'small muted', style: { margin: '6px 0 0' } },
-          (totals.ok_docs !== undefined ? `${num(totals.ok_docs)} file${totals.ok_docs === 1 ? '' : 's'}, ${num(totals.ok_pages)} pages` : 'The files converted so far')
-          + (totals.cached_pages ? `; ${num(totals.cached_pages)} pages reused from the page cache` : '')
-          + '. Pages are counted by what they are, however this run got them: a reused page keeps its kind. Files that failed or held no text are not in this bar. Every page then passes the quality gate.')) : null,
-      totals.pages ? h('div', { class: 'grid g4', style: { marginTop: '14px' } }, CV.tiles(totals)) : (running && p.phase === 'convert' ? h('p', { class: 'small muted', style: { marginTop: '12px' } }, 'Page figures appear as the first documents finish.') : null),
-      totals.outcomes && Object.keys(totals.outcomes).length ? h('div', { style: { marginTop: '8px' } }, CV.outcomeChips(totals.outcomes)) : null];
+      // the top level counts documents by kind (done, being converted, left, time to go); pages only inside the pages section
+      CV.kindsSummary(live.tracks),
+      CV.overview(totals, live.live, live.steps, live.kinds),
+      h('div', { class: 'cv-pages' },
+        h('h3', null, h('i', { class: 'cv-sw kd-pages', 'aria-hidden': 'true' }), 'Documents of pages: their pages'),
+        CV.live(live.live) ? h('div', { style: { marginTop: '10px' } }, h('h4', null, 'Pages in the files being converted now'), CV.live(live.live)) : null,
+        totals.pages ? h('div', { style: { marginTop: '14px' } },
+          h('h4', null, 'Pages in successfully converted files'), CV.bands(totals.ok_branches || totals.branches),
+          totals.ok_runways && Object.keys(totals.ok_runways).length ? h('div', { style: { marginTop: '10px' } }, CV.runwayBar(totals.ok_runways, totals.moves)) : null,
+          h('p', { class: 'small muted', style: { margin: '6px 0 0' } },
+            (totals.ok_docs !== undefined ? `${num(totals.ok_docs)} file${totals.ok_docs === 1 ? '' : 's'}, ${num(totals.ok_pages)} pages` : 'The files converted so far')
+            + (totals.cached_pages ? `; ${num(totals.cached_pages)} pages reused from the page cache` : '')
+            + '. Pages are counted by what they are, however this run got them: a reused page keeps its kind. Files that failed or held no text are not in these bars; photographs and Timelines have no pages and are counted above, as documents.')) : null,
+        totals.outcomes && Object.keys(totals.outcomes).length ? h('div', { style: { marginTop: '10px' } }, CV.outcomeChips(totals.outcomes)) : null,
+        totals.pages ? h('div', { class: 'grid g4', style: { marginTop: '14px' } }, CV.tiles(totals)) : (running && p.phase === 'convert' ? h('p', { class: 'small muted', style: { marginTop: '12px' } }, 'Page figures appear as the first documents of pages finish.') : null),
+        CV.pipe(totals, live.live))];
   }
 
   function embedPanel(live, running) {
@@ -503,8 +519,8 @@
         on: { input: e => { const v = e.target.value; clearTimeout(searchTimer); searchTimer = setTimeout(() => setFilter({ q: v.trim() }), 300); } },
       });
       refs.docColl = h('select', { on: { change: e => setFilter({ collection: e.target.value }) } }, h('option', { value: '' }, 'All collections'));
-      refs.docBranch = h('select', { title: 'documents with at least one page read by this branch', on: { change: e => setFilter({ branch: e.target.value }) } }, h('option', { value: '' }, 'All branches'));
-      refs.docOutcome = h('select', { title: 'documents with at least one page with this outcome', on: { change: e => setFilter({ outcome: e.target.value }) } }, h('option', { value: '' }, 'All outcomes'));
+      refs.docKind = h('select', { title: 'what the document turned out to be (as in the table "What this run understood")', on: { change: e => setFilter({ kind: e.target.value }) } }, h('option', { value: '' }, 'All kinds'));
+      refs.docGrade = h('select', { title: 'how completely it was understood (as in the table "What this run understood")', on: { change: e => setFilter({ grade: e.target.value }) } }, h('option', { value: '' }, 'All grades'));
       refs.docClear = h('button', { class: 'btn small hidden', on: { click: clearFilters } }, 'Clear filters');
       refs.docStatusRow = h('div', { class: 'subnav', style: { marginTop: '10px', marginBottom: 0 } });
       refs.docsBody = h('div', { style: { marginTop: '12px' } });
@@ -512,7 +528,7 @@
         h('div', { class: 'card' },
           h('div', { class: 'card-head' }, h('h2', null, 'Documents'), refs.docHeadline,
             h('div', { class: 'spacer' }, h('span', { class: 'lg convert' }, PL.label('convert')), h('span', { class: 'lg chunk' }, PL.label('chunk')), h('span', { class: 'lg embed' }, PL.label('embed')))),
-          h('div', { class: 'row', style: { marginTop: '10px' } }, refs.docQ, refs.docColl, refs.docBranch, refs.docOutcome, refs.docClear),
+          h('div', { class: 'row', style: { marginTop: '10px' } }, refs.docQ, refs.docColl, refs.docKind, refs.docGrade, refs.docClear),
           refs.docStatusRow, refs.docsBody));
 
       root.append(h('h2', null, 'Indexing'),

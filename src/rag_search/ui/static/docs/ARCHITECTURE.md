@@ -144,7 +144,7 @@ Everything on the Architecture tab comes from `ui/info.py`, which reads the cons
 the engine itself imports (RRF k, BM25 k1/b, pool sizes, limits) plus the effective chunking and model
 runtime settings, so the diagrams cannot drift. The Indexing tab's *Conversion* card, branch strips,
 document drawer (page grid, page detail, source-page image) and the Collections tab's *Conversion*
-section come from `ui/static/conversion.js` (colour = branch, GPU/CPU chips = where it runs). The system, indexing, conversion and search pictures are hand-drawn SVG
+section come from `ui/static/conversion.js` (one colour per kind, grade, branch and lane, each bar with its key beside it; GPU/CPU chips = where it runs). The system, indexing, conversion and search pictures are hand-drawn SVG
 built with the DOM in `architecture.js` (no library, nothing external, colours from the theme variables);
 the daemon boxes carry live status dots; the
 field lists of `nodes.json` / `index.meta.json` / `catalog.json` there are checked against real files by
@@ -309,7 +309,7 @@ the document reader for every other scan and image; a page a cheaper lane doubts
 | 1 | Discover | CPU | run | list the files of every collection (registered folders, imports); formats the pipeline cannot read are skipped and counted | – |
 | 2 | Fingerprint | CPU | document | SHA-256 of the file plus the chunk, model and conversion settings; unchanged documents are skipped in seconds | – |
 | 3 | Convert | CPU+GPU | document | turn the file into page-marked Markdown, page by page, through the steps below; several documents are converted side by side when the machine has the memory for it; a conversion process that goes silent is stopped and its document reported, so one stuck document never holds the run | `indexer.jobs`, `indexer.stall_timeout` |
-| 3.0 | Sniff | CPU | document | what kind of file is this? decided from the file itself, before any page is looked at: a Google Maps Timeline `.json` (recognised by its content) goes to 3.8; an image with camera data gets a quick text check and, with little text, is a photograph and goes to 3.6; everything else, a photographed page too, is a document of pages and goes to 3.1 | – |
+| 3.0 | Sniff | CPU | document | what kind of file is this? decided from the file itself, before any page is looked at and before the file is scheduled (`indexer.sniff_document`, for every file, in pool processes ahead of the conversions): a Google Maps Timeline `.json` (recognised by its content) goes to 3.8; an image with camera data gets a quick text check and, with little text, is a photograph and goes to 3.6; everything else, a photographed page too, is a document of pages and goes to 3.1. The kind decides where the file is converted (`indexer.by_kind`): photographs and pictures of pages in the process that holds the vision models, every other document in the pool | – |
 | 3.1 | Profile | CPU | document | look at every page once: text layer, scan or photo, pictures, ink, resolution, script (pages only; a photograph or a Timeline file is not profiled) | – |
 | 3.2 | Read | CPU+GPU | document | each page goes down the lane it needs: 3.2a docling on the text layer (and Office files), 3.2b OCR for a clean scan (docling's OCR, or Tesseract for a skewed page and image files), 3.2c docling on the text layer plus the document reader on its pictures and regions, 3.2d the document reader (a vision model) for every other scan, photo and image; a page a cheaper lane doubts goes on to 3.2d | `indexer.routing`, `indexer.ocr`, `indexer.ocr_engine`, `indexer.ocr_lang`, `indexer.table_mode`, `indexer.pdf_backend`, `indexer.pipeline`, `indexer.vlm`, `indexer.ocr_first`, `indexer.residue`, `indexer.escalate_digital`, `indexer.layer_fill`, `models.reader`, `models.memory_limit_gb`, `indexer.docling_batch`, `indexer.doc_timeout`; env `RAG_SEARCH_THREADS`, env `RAG_SEARCH_VLM_PAGE_TIMEOUT`, env `RAG_SEARCH_VLM_FREE_GB`, env `RAG_SEARCH_VLM_BACKEND`, env `RAG_SEARCH_TESSERACT`, env `RAG_SEARCH_TESSERACT_LANG` |
 | 3.3 | Gate | CPU | document | deterministic checks on every page: coverage, script, tables, resolution, running balances and totals, runaway output | – |
@@ -318,7 +318,7 @@ the document reader for every other scan and image; a page a cheaper lane doubts
 | 3.6 | Photo details (optional) | CPU | document | a photograph (3.0 decided) is indexed from a section of facts, never read by the document reader: time and zone, GPS, camera, faces Apple Vision counts, text found in the picture, a cached description; a photographed page goes down the lanes and gets the same section at the end | – |
 | 3.7 | Locate (optional) | CPU | document | for every position: the Overture area, the GeoNames town and the Overture places within 100 m, from the map data that is installed (nothing is downloaded here) | – |
 | 3.8 | Timeline (optional) | CPU | document | a Google Maps Timeline `.json` (recognised by its content) becomes a day-by-day log of visits and journeys with `geo:` positions and Google place IDs as they are | – |
-| 3.9 | Describe (optional) | GPU | document | a photograph (3.0 decided) is described by a vision model after 3.7 and before 4 Chunk: a short description written into its record, marked as machine-written, so it is chunked and embedded once, complete. One process holds the model (image files are converted one after another in the run's own process, after the documents); cached by photograph, model and prompt. Left undescribed for now when memory is short or the model is missing: a pass after the run catches up | `models.describe`, `models.describe_auto` |
+| 3.9 | Describe (optional) | GPU | document | a photograph (3.0 decided) is described by a vision model after 3.7 and before 4 Chunk: a short description written into its record, marked as machine-written, so it is chunked and embedded once, complete. One process holds the model (photographs are converted one after another in the run's own process, after the documents of pages); cached by photograph, model and prompt. When memory is short or the model is missing the description is a missing fact, like a missing position: the photograph is indexed with what it has, and a later run that can describe it converts it again | `models.describe`, `models.describe_auto` |
 | 4 | Chunk | CPU | document | split the Markdown into passages that never cross a page; tables and code stay whole where they fit | `indexer.chunk_size`, `indexer.chunk_overlap` |
 | 5 | Embed | GPU | run | turn every new passage into a vector; the model is loaded once per run, after all documents are converted | `models.embedding`, `models.embed_batch`, `models.max_seq`, `models.dtype`, `models.device` |
 | 6 | Write | CPU | document | nodes.json and embeddings.npy, then index.meta.json last, so a half-written document is never taken for a finished one | – |
@@ -609,9 +609,16 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   aggregates the events incrementally into `live`: pages finished by kind and outcome, how many were read now
   (`read`) and how many reused (`cached`), pages read per minute (reused pages are not a rate), the documents
   being read with `done`/`of`, and `active`, the pages of the files being converted right now by kind (from their
-  `plan` events; a file not profiled yet is counted in `unprofiled`) -- and into per-lane page progress. The
-  Indexing tab's Convert panel shows two bars: *Pages in active files* (`live.active`) and *Pages in
-  successfully converted files* (`totals.ok_branches`: files that converted, not failed or empty ones).
+  `plan` events; a file not profiled yet is counted in `unprofiled`) -- and into per-lane page progress. A photograph
+  or a Timeline has no pages: it writes no `plan` event, is not in `active`, and the run totals count it in `whole`
+  (`{"photo": n, "timeline": n}`), never in `pages`, `branches` or `outcomes`. The Indexing tab shows the page bars
+  (*Pages in the files being converted now*, `live.active`; *Pages in successfully converted files*,
+  `totals.ok_branches`, and by lane, `totals.ok_runways`) only inside its section for the documents of pages.
+* **Documents by kind, the run's top-level figures** (`runview.tracks_view`, `tracks` in the run view): after 3.0 Sniff
+  the run writes one `phase` event with `status: "kinds"` and the files per kind (`pages`, `photograph`, `timeline`,
+  `unchanged`); the `work` event that starts a document carries its `route`. Per track the view gives `planned`, `done`,
+  `running`, `left`, `per_min` (documents converted per minute since the track's first began) and `eta_s`, with the
+  grades of the documents done. Unchanged files are counted apart.
 * **What was understood, per document** (`core/understanding.py`): the `work` event that closes a document's conversion
   carries `understood` = its *kind* (what it turned out to be: photograph, photographed page, Google Maps Timeline, PDF
   with a text layer, PDF scanned or partly scanned, Office or HTML document, text file, JSON data, image read as a
@@ -623,7 +630,14 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   chose, how each photograph got its description). The Indexing tab's Convert panel draws one track per kind of file
   3.0 tells apart (documents of pages, photographs, Timelines), each step with the one figure that says how it went
   (a GPS position in N of M photographs, a place for N of M positions, described N of M), the table *What this run
-  understood, by kind of document*, and the four lanes of 3.2 in detail on request.
+  understood, by kind of document*, and, in the pages section, the four lanes of 3.2 in detail on request. The `doc`
+  events carry the same `understood` (kind, grade, missing), so the Documents list filters by kind and grade
+  (`jobs.documents(kind=, grade=)`, `by_kind` / `by_grade`) in the words of that table: one vocabulary for the run.
+* **Colours** (`style.css`, `CV.legend`): every bar has a key beside it, a labelled swatch per colour. Four families never
+  share a colour, in the light and the dark theme: the kind of document (`--kd-*`: pages, photograph, Timeline), how well
+  it went (`--q-*`, one scale for a document's grade and a page's outcome: complete / passed, repaired, partly understood /
+  low confidence, no text, failed), what a page is (`--cv-*`, its branch) and the lane of 3.2 (`--rw-*`, one blue-violet
+  scale from a to d).
 * `docling_convert.py` returns `page_stats` per page (characters, script, tables, big pictures and
   docling's own confidence scores and grade, read defensively with `getattr`); `records.build_pages`
   merges them with the profile.
@@ -1040,20 +1054,36 @@ processes, runs without downloading models.
 * **Google Timeline** (`core/timeline.py`, before conversion in `_prepare_document`): a `.json` whose first 256 KB look
   like one of the three export shapes is written as a day-by-day log (visits and journeys with times, `geo:`
   positions, the Google place ID as it is, the `geo.py` lines); any other `.json` goes to the generic JSON converter.
+* **Scheduling by kind** (`run_index`): with more than one job, 3.0 Sniff runs first for every file that may be converted
+  (`indexer._sniff_all`, up to `SNIFF_WORKERS` = 4 pool processes; an unchanged file is recognised by its fingerprint and
+  not sniffed). Each file then goes where its kind is converted (`indexer.by_kind`): photographs and pictures of pages to the
+  run's own process, which holds the vision models; documents of pages, Timelines and unchanged files to the conversion pool.
+  The conversion of a sniffed file uses the route and the text check already made (`task["route"]`, `task["seen"]`) and
+  does not look again; a file that could not be sniffed, and every file of a one-job run, is sniffed by its conversion.
+  The pool runs before the photographs; `RAG_SEARCH_KINDS_TOGETHER=1` runs it beside them in a thread of the run's process
+  (the results are collected under a lock).
 
 ### 5.3b Photo descriptions (`core/describe.py`, step 3.9)
 
 * **Step 3.9 of the photograph's own way through a run**, between 3.7 Locate and 4 Chunk (`describe.for_indexing`, called from
   `_prepare_document` for a photograph that is converted now): the photograph is described, then chunked and embedded once, complete,
-  and published with everything else; the run takes as long as it takes. The model of several GB is held by **one** process: image
-  files are converted one after another in the run's own process, after the parallel pool has done the documents, and the model is
-  released (`describe.close_shared`) before the embedder loads. The quick text check (3.0) and the face count stay in that process, one image after the
-  other: done in background threads while the model was loaded (Apple Vision beside MLX) they hung a run, and a second model
-  process would add a copy of several GB to a machine that is already in swap. `models.describe` chooses the 8B (default) or the 4B
+  and published with everything else; the run takes as long as it takes. The model of several GB is held by **one** process: 3.0
+  Sniff has sorted every file by kind before anything is converted, and the photographs (with the pictures of pages, bound to the
+  same GPU) are converted one after another in the run's own process, after the parallel pool has done the documents of pages
+  (`RAG_SEARCH_KINDS_TOGETHER=1` runs the two side by side; off by default, see *Scheduling by kind* in 5.3); the model is
+  released (`describe.close_shared`) before the embedder loads. The quick text check of 3.0 runs in the pool processes of the
+  sniff, never in threads: done in background threads while the model was loaded (Apple Vision beside MLX) it hung a run. The face
+  count stays in the model's process, and a second model process would add a copy of several GB to a machine that is already in swap.
+* **A photograph's result, like every document's**: `_prepare_document` writes its Markdown from its details (`photo.only`) on its
+  own way, never through the no-text path; a photograph with no details at all (no time, no position, no description) is a
+  genuine `no_text`. Its `understood` record (kind photograph, grade, facts found and missing) is the same record every kind ends
+  with, and `description` is one of the facts: missing when it could not be made, filled in by a later run
+  (`indexer._fills_description`: an unchanged photograph whose Markdown has no description is converted again when the model can
+  run now, unless the model failed on it before). `models.describe` chooses the 8B (default) or the 4B
   (`rag-search photos model NAME`); the switch `models.describe_auto` (default on; `RAG_SEARCH_DESCRIBE_AUTO`,
   `rag-search photos auto on|off`) turns it off.
-* **A catch-up pass** for photographs indexed without a description (memory was short, the model was not downloaded) or with another
-  model or prompt (`IndexerDaemon._auto_describe`, after a run has published; the Models tab's *Photo descriptions* card and
+* **A describe pass outside the runs**, mainly for photographs described by another model or prompt, and for any that are still
+  missing a description (`IndexerDaemon._auto_describe`, after a run has published; the Models tab's *Photo descriptions* card and
   `rag-search photos describe [--collection C] [--limit N] [--redo]`; a `model_tasks` task with `op: "describe"`): one process, in the
   background, then a short run embeds the new lines. `describe.wanted_automatically` says when it starts: the switch is on, this is an
   Apple Silicon Mac, the model is downloaded and some photograph is pending.

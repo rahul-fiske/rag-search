@@ -40,7 +40,7 @@ def _fresh() -> dict[str, Any]:
                      "runway_outcomes": {}, "engines": {},
                      "first": 0.0, "last": 0.0, "tokens": 0, "gpu_s": 0.0,
                      "first_read": 0.0, "last_read": 0.0},
-            "steps": {}, "kinds": {}}
+            "steps": {}, "kinds": {}, "tracks": {}}
 
 
 def _lane(st: dict[str, Any], pid: int, role: str, ts: float) -> dict[str, Any]:
@@ -69,6 +69,9 @@ def _phase(st: dict[str, Any], name: str) -> dict[str, Any]:
 def _feed_phase(st: dict[str, Any], ev: dict[str, Any]) -> None:
     ts = float(ev.get("ts") or 0)
     ph = _phase(st, str(ev.get("phase") or ""))
+    if ev.get("status") == "kinds":              # what 3.0 Sniff found ahead of the run: files per kind
+        ph["kinds"] = {str(k): int(v) for k, v in (ev.get("kinds") or {}).items()}
+        return
     if ev.get("status") == "start":
         ph.update(status="running", started=ts, finished=None, done=0, outcomes={})
         st["main_pid"] = int(ev.get("pid") or 0) or st["main_pid"]
@@ -85,11 +88,12 @@ def _feed_work(st: dict[str, Any], ev: dict[str, Any]) -> None:
     proc["last"] = ts
     if ev.get("status") == "start":
         proc["open"] = {"phase": phase, "file": str(ev.get("file", "")), "since": ts, "stage": "", "stage_id": "",
-                        "progress": None, "chunks": ev.get("chunks")}
+                        "progress": None, "chunks": ev.get("chunks"), "route": str(ev.get("route") or "")}
         proc["phase"] = phase
         if ph["status"] == "":
             ph.update(status="running", started=ts)
         return
+    opened = proc["open"] or {}
     if proc["open"]:
         proc["busy_s"] += max(0.0, ts - proc["open"]["since"])
         if phase == "embed" and ev.get("outcome") == "indexed":
@@ -102,6 +106,8 @@ def _feed_work(st: dict[str, Any], ev: dict[str, Any]) -> None:
         proc["gone"] = True
     if phase == "convert" and ev.get("outcome") != "skipped" and not ev.get("known"):
         _feed_understood(st, ev)
+    if phase == "convert":
+        _feed_track(st, ev, opened, ts)
     proc["docs"][phase] = proc["docs"].get(phase, 0) + 1
     ph["done"] += 1
     out = str(ev.get("outcome") or "done")
@@ -211,6 +217,53 @@ def _feed_understood(st: dict[str, Any], ev: dict[str, Any]) -> None:
         k[n] += int(u.get(n) or 0)
 
 
+TRACK_NAMES = {"pages": "pages", "photograph": "photograph", "timeline": "timeline"}
+
+
+def _feed_track(st: dict[str, Any], ev: dict[str, Any], opened: dict[str, Any], ts: float) -> None:
+    """One finished document into the totals of its track (documents of pages, photographs, Timelines): converted,
+    unchanged, failed, and when the track's work began and last moved (its rate and time left)."""
+    out = str(ev.get("outcome") or "")
+    if out == "skipped" or ev.get("known"):      # not converted: counted apart, whatever its kind
+        st["unchanged_done"] = st.get("unchanged_done", 0) + 1
+        return
+    u = ev.get("understood") if isinstance(ev.get("understood"), dict) else {}
+    track = opened.get("route") or u.get("track") or ""
+    if track not in TRACK_NAMES:
+        track = "photograph" if u.get("kind") == "photograph" else "pages"
+    t = st["tracks"].setdefault(track, {"done": 0, "converted": 0, "grades": {}, "first": 0.0, "last": 0.0})
+    t["done"] += 1
+    t["converted"] += 1
+    g = str(u.get("grade") or ("no_text" if out == "no_text" else "error" if out in ("error", "stalled") else "complete"))
+    t["grades"][g] = t["grades"].get(g, 0) + 1
+    t["first"] = t["first"] or float(opened.get("since") or ts)
+    t["last"] = max(t["last"], ts)
+
+
+def tracks_view(st: dict[str, Any], running: bool, now: float | None = None) -> dict[str, Any]:
+    """Documents by kind, the run's top-level figures: ``{track: {"planned", "done", "converted", "unchanged", "running",
+    "left", "per_min", "eta_s", "grades"}}``.  ``planned`` is what 3.0 Sniff found ahead of the run (files that will not be
+    converted are counted apart); ``left`` and ``eta_s`` follow from it and from the rate of documents converted so far."""
+    now = now or time.time()
+    plan = (st["phases"].get("convert") or {}).get("kinds") or {}
+    out: dict[str, Any] = {}
+    for track in TRACK_NAMES:
+        t = st["tracks"].get(track) or {"done": 0, "converted": 0, "grades": {}, "first": 0.0, "last": 0.0}
+        busy = sum(1 for p in st["procs"].values() if running and p.get("open") and p["open"].get("phase") == "convert"
+                   and p["open"].get("route") == track)
+        planned = int(plan.get(track) or 0)
+        left = max(0, planned - t["converted"] - busy) if planned else 0
+        span = (now if running else t["last"]) - t["first"] if t["first"] else 0.0
+        rate = 60.0 * t["converted"] / span if span >= 5 and t["converted"] else 0.0
+        if not (planned or t["done"] or busy):
+            continue
+        out[track] = {"planned": planned, "done": t["converted"], "running": busy, "left": left, "per_min": round(rate, 1),
+                      "eta_s": round(60.0 * left / rate) if rate and left and running else None, "grades": dict(t["grades"])}
+    if plan.get("unchanged") or st.get("unchanged_done"):
+        out["unchanged"] = {"planned": int(plan.get("unchanged") or 0), "done": int(st.get("unchanged_done") or 0)}
+    return out
+
+
 def _format_of(file: str) -> str:
     from ...paths import IMAGE_EXTENSIONS
 
@@ -314,8 +367,8 @@ def _active(st: dict[str, Any]) -> dict[str, Any]:
     files = done = pages = unprofiled = 0
     for proc in st["procs"].values():
         op = proc.get("open")
-        if not op or op.get("phase") != "convert":
-            continue
+        if not op or op.get("phase") != "convert" or op.get("route") in ("photograph", "timeline"):
+            continue                             # a photograph or a Timeline has no pages: it is not a file of pages
         files += 1
         plan = op.get("plan")
         if not plan:
@@ -513,7 +566,7 @@ def run_view(paths: Paths, job_id: str = "") -> dict[str, Any]:
             "now": now_view(st, lanes, rec, running), "phases": phases_view(st, rec, running),
             "phase": prog.get("phase", ""), "done": prog.get("done"), "total": prog.get("total"),
             "totals": totals, "lanes": lanes,
-            "live": live_view(st, running), "steps": _steps_view(st),
+            "live": live_view(st, running), "steps": _steps_view(st), "tracks": tracks_view(st, running),
             "kinds": {k: {**v, "examples": {f: list(x) for f, x in v["examples"].items()}} for k, v in st["kinds"].items()},
             "stall_limit_s": _stall_limit(),
             "started_at": rec.get("started_at"), "finished_at": rec.get("finished_at")}

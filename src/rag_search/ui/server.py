@@ -365,7 +365,7 @@ class Handler(BaseHTTPRequestHandler):
                 return (q.get(key) or [""])[0]
             r = api.conversion_documents(
                 sp, job_id=one("job_id"), status=one("status"), collection=one("collection"),
-                q=one("q"), branch=one("branch"), outcome=one("outcome"),
+                q=one("q"), branch=one("branch"), outcome=one("outcome"), kind=one("kind"), grade=one("grade"),
                 limit=int(one("limit") or 200), client="cli")
             return self._json(r) if r.get("ok") else self._error(400, r.get("error", "failed"))
         if name == "conversion/trace":

@@ -39,10 +39,13 @@ class ExtraIndexerTests(TempHome):
                 seq = [(e["stage"], e["status"]) for e in sorted(
                     (e for e in events if e["file"] == name), key=lambda e: e["ts"] if "ts" in e else 1e18)]
                 # stages 2 Fingerprint, 3 Convert (3.0 Sniff first, then 3.1 Profile for a document of pages), 4 Chunk,
-                # 6 Write (nodes.json), 5 Embed, 6 Write (vectors)
-                self.assertEqual(seq, [("fingerprint", "done"), ("convert", "start"), ("sniff", "done"), ("profile", "done"),
-                                       ("convert", "done"), ("chunk", "done"), ("write", "done"),
-                                       ("embed", "start"), ("embed", "done"), ("write", "done")], (jobs, name, seq))
+                # 6 Write (nodes.json), 5 Embed, 6 Write (vectors).  With a pool, 3.0 Sniff runs for every file before
+                # the run is scheduled, so it comes before the fingerprint of the conversion
+                head = ([("fingerprint", "done"), ("convert", "start"), ("sniff", "done")] if jobs == 1 else
+                        [("sniff", "done"), ("fingerprint", "done"), ("convert", "start")])
+                self.assertEqual(seq, head + [("profile", "done"),
+                                              ("convert", "done"), ("chunk", "done"), ("write", "done"),
+                                              ("embed", "start"), ("embed", "done"), ("write", "done")], (jobs, name, seq))
 
     def test_stage_events_are_written_by_prepare_document_without_a_log(self):
         indexer.stage_event(None, "c/a.md", "convert", "start")             # no file: silently nothing

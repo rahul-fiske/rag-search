@@ -16,11 +16,12 @@ the lines say so.
 
 Describing is a step of the photograph's own way through a run, after 3.7 Locate and before 4 Chunk (step 3.9): the
 photograph is described, then chunked and embedded once, complete, and published with everything else.  The model of several
-GB is held by one process, the run's own: image files are converted one after another there (``indexer``), after the
-parallel pool has done the documents, and the model is released before the embedder loads.  A machine short of memory, or
-without the model, simply leaves the photograph undescribed for now; ``rag-search photos describe`` and the pass that follows
-a run (``IndexerDaemon._auto_describe``) catch up photographs that were indexed without a description, or with another model
-or prompt.  Each result is also kept in ``<workspace>/describe_cache.sqlite`` under the photograph's checksum, the model and
+GB is held by one process, the run's own: 3.0 Sniff has sorted the files by kind before the run, and the photographs are
+converted one after another there (``indexer.by_kind``), and the model is released before the embedder loads.  A machine
+short of memory, or without the model, leaves the description missing, a fact like any other: the photograph is indexed with
+what it has, and a later run that can describe it converts it again (``indexer._fills_description``).
+``rag-search photos describe`` and the pass that follows a run (``IndexerDaemon._auto_describe``) also describe photographs
+described by another model or prompt.  Each result is also kept in ``<workspace>/describe_cache.sqlite`` under the photograph's checksum, the model and
 the prompt version, so converting the photograph again (a full rebuild) puts the description back without running the model,
 and a map refresh carries it over.  A photograph counts as one when its Markdown holds little text beyond the details
 section (a photographed page is read, not described).

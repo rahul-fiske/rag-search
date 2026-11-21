@@ -38,6 +38,23 @@ const CV = (function () {
 
   const hw = kind => h('span', { class: 'hw ' + kind, title: kind === 'gpu' ? 'runs on the GPU' : 'runs on the CPU' }, kind.toUpperCase());
 
+  /* The colour key: one labelled swatch per colour, placed next to the bar it explains.  *items* = [[class, label, count?,
+     title?]]; a count is shown in bold after the label.  The colours are fixed for the whole page (style.css: kinds --kd-*,
+     grades and outcomes --q-*, what a page is --cv-*, lanes --rw-*), so a colour never means two things. */
+  function legend(items, note) {
+    return h('div', { class: 'cv-legend' }, note ? h('span', { class: 'cv-legend-note' }, note) : null,
+      items.filter(Boolean).map(([cls, text, n, tip]) => h('span', { class: 'cv-key', title: tip || '' },
+        h('i', { class: 'cv-sw ' + cls, 'aria-hidden': 'true' }), text, n != null ? h('b', null, num(n)) : null)));
+  }
+  /* the three kinds of file 3.0 Sniff tells apart, and the grade every document ends with (core/understanding.py) */
+  const KINDS = { pages: ['Documents of pages', 'PDF, Office, text and pictures of pages'], photograph: ['Photographs', 'images with camera data and little text'], timeline: ['Google Maps Timelines', '.json exports, recognised by their content'] };
+  const KIND_ORDER = ['pages', 'photograph', 'timeline'];
+  const trackOf = kind => kind === 'photograph' ? 'photograph' : kind === 'Google Maps Timeline' ? 'timeline' : 'pages';
+  const GRADES = [['complete', 'q-good', 'complete'], ['partial', 'q-part', 'partly understood'], ['no_text', 'q-none', 'no text'], ['error', 'q-bad', 'failed']];
+  const gradeCls = g => (GRADES.find(x => x[0] === g) || [g, 'q-good'])[1];
+  const gradeName = g => (GRADES.find(x => x[0] === g) || [g, '', g])[2];
+  const OUTCOME_KEY = [['pass', 'o-ok', 'passed'], ['repaired', 'o-fix', 'passed after repair'], ['low', 'o-part', 'low confidence (kept, flagged)'], ['no_text', 'o-warn', 'no text on the page'], ['error', 'o-bad', 'could not be read']];
+
   /* A document's pages as a run-length strip, one colour per branch. */
   function strip(conv) {
     if (!conv || !conv.strip) return h('span', { class: 'muted small' }, '–');
@@ -50,19 +67,22 @@ const CV = (function () {
     return sortedBranches(branches).map(b => h('span', { class: 'chip cv-chip', title: branchTitle(b) },
       h('i', { class: 'cv-dot cvb-' + b }), `${label(b)} ${num(branches[b])}`));
   }
+  /* Pages by outcome as a bar with its key (the --q-* scale, the same as the documents' grades). */
   function outcomeChips(outcomes) {
-    const cls = { pass: 'ok', repaired: 'ok', low: 'bad', no_text: 'warn', error: 'bad' };
-    return Object.keys(outcomes || {}).filter(k => outcomes[k]).map(k =>
-      chip(`${k.replace('_', ' ')} ${num(outcomes[k])}`, cls[k] || ''));
+    const keys = OUTCOME_KEY.filter(([k]) => (outcomes || {})[k]);
+    if (!keys.length) return null;
+    return h('div', null,
+      h('div', { class: 'cv-bands' }, keys.map(([k, c, name]) => h('i', { class: c, title: `${name}: ${num(outcomes[k])} pages`, style: { flexGrow: String(outcomes[k]) } }))),
+      legend(keys.map(([k, c, name]) => [c, name, outcomes[k], OUTCOMES[k]]), 'How the pages fared:'));
   }
 
-  /* Pages per branch as one proportional bar, with the figures beside it. */
+  /* Pages per branch (what each page is) as one proportional bar, with its key. */
   function bands(branches) {
-    const keys = sortedBranches(branches); const total = keys.reduce((a, k) => a + branches[k], 0);
+    const keys = sortedBranches(branches).filter(k => k !== 'photo' && k !== 'timeline'); const total = keys.reduce((a, k) => a + branches[k], 0);
     if (!total) return null;
     return h('div', null,
       h('div', { class: 'cv-bands' }, keys.map(k => h('i', { class: 'cvb-' + k, title: `${label(k)}: ${num(branches[k])} pages (${Math.round(100 * branches[k] / total)}%)`, style: { flexGrow: String(branches[k]) } }))),
-      h('div', { style: { marginTop: '6px' } }, branchChips(branches)));
+      legend(keys.map(k => ['cvb-' + k, label(k), branches[k], branchTitle(k)]), 'What the pages are:'));
   }
 
   function costText(cost) {
@@ -84,7 +104,7 @@ const CV = (function () {
       tip: 'Lane 3.2d: a vision-language model reads the whole page image. Suspect table cells are re-read by the repair model; Tesseract is the last resort when a reader runs away.' },
   };
   const RW_ORDER = ['a', 'b', 'c', 'd'];
-  const OUTCOME_CLS = { pass: 'ok', repaired: 'fix', low: 'bad', no_text: 'warn', error: 'bad' };
+  const OUTCOME_CLS = { pass: 'ok', repaired: 'fix', low: 'part', no_text: 'warn', error: 'bad' };
 
   /* the value a lane switch has in the daemon's environment (from the numbered pipeline), or '' when it is not known */
   function switchValue(setting) {
@@ -134,11 +154,38 @@ const CV = (function () {
       share != null ? h('span', { class: 'cv-tn-bar', title: share + '%' }, h('i', { style: { width: share + '%' } })) : null,
       note ? h('div', { class: 'cv-tn-note' }, note) : null);
   }
-  function track(label, count, sub, nodes) {
+  function track(key, count, nodes) {
     return h('div', { class: 'cv-track' },
-      h('div', { class: 'cv-track-l' }, h('b', null, label), h('div', { class: 'cv-track-n' }, count), sub ? h('small', null, sub) : null),
+      h('div', { class: 'cv-track-l' }, h('span', { class: 'cv-key' }, h('i', { class: 'cv-sw kd-' + key, 'aria-hidden': 'true' }), h('b', null, KINDS[key][0])),
+        h('div', { class: 'cv-track-n' }, count), h('small', null, KINDS[key][1])),
       h('div', { class: 'cv-track-steps' }, nodes.flatMap((n, i) => i ? [h('span', { class: 'cv-arrow', 'aria-hidden': 'true' }, '→'), n] : [n])));
   }
+  /* The run's top-level figures: documents by kind -- done, being converted, left, the rate and the time left -- from
+     runview.tracks_view.  Pages appear only in the pages section further down. */
+  function kindsSummary(tr) {
+    tr = tr || {};
+    const keys = KIND_ORDER.filter(k => tr[k]);
+    if (!keys.length) return null;
+    const card = k => {
+      const v = tr[k], all = Math.max(v.planned || 0, v.done + v.running + v.left), gr = v.grades || {};
+      return h('div', { class: 'cv-kind k-' + k, title: KINDS[k][1] },
+        h('div', { class: 'cv-key' }, h('i', { class: 'cv-sw kd-' + k, 'aria-hidden': 'true' }), h('b', null, KINDS[k][0])),
+        h('div', { class: 'cv-kind-n' }, `${num(v.done)}` + (all ? ` of ${num(all)}` : '')),
+        h('span', { class: 'cv-kind-bar', title: 'converted, by grade · being converted · left' },
+          GRADES.filter(([g]) => gr[g]).map(([g, c, name]) => h('i', { class: c, title: `${name} ${num(gr[g])}`, style: { flexGrow: String(gr[g]) } })),
+          v.running ? h('i', { class: 'run', title: `being converted ${num(v.running)}`, style: { flexGrow: String(v.running) } }) : null,
+          v.left ? h('i', { style: { flexGrow: String(v.left) }, title: `left ${num(v.left)}` }) : null),
+        h('div', { class: 'small muted' }, [`${num(v.done)} done`, v.running ? `${num(v.running)} being converted` : '', v.left ? `${num(v.left)} left` : '',
+          v.per_min ? `${num(v.per_min)} a minute` : '', v.eta_s ? `about ${dur(v.eta_s)} to go` : ''].filter(Boolean).join(' · ')));
+    };
+    const un = tr.unchanged;
+    return h('div', null,
+      h('div', { class: 'cv-kinds' }, keys.map(card),
+        un ? h('div', { class: 'cv-kind k-unchanged', title: 'files whose index is current (or that failed before and have not changed): not converted again' },
+          h('b', null, 'Unchanged'), h('div', { class: 'cv-kind-n' }, num(un.planned || un.done || 0)), h('div', { class: 'small muted' }, 'not converted again')) : null),
+      legend(GRADES.map(([g, c, name]) => [c, name]).concat([['run', 'being converted']]), 'Bars: documents converted, by how completely each was understood;'));
+  }
+
   function tracks(t, steps, kinds) {
     const S = k => steps[k] || {}, ro = S('sniff').routes || {}, sniffed = S('sniff').n || 0;
     const P = kinds[PHOTO] || { n: 0, found: {} }, pf = P.found || {}, nP = P.n, pos = pf.position || 0;
@@ -152,14 +199,15 @@ const CV = (function () {
         'Decides from the file itself, before any page is looked at: a Google Maps Timeline .json by its content; an image with camera data gets a quick text check (Apple Vision): fewer than 200 letters and digits = a photograph, more = a photographed page. Everything else is a document of pages.',
         sniffed ? `pages ${num(ro.pages || 0)} · photographs ${num(ro.photograph || 0)} · Timeline ${num(ro.timeline || 0)}` : 'what kind of file is it?')),
       h('div', { class: 'cv-tracks' },
-        track('Documents of pages', num(nPageDocs || ro.pages || 0), 'PDF, Office, text, images of pages' + (pp ? ` (${num(pp)} photographed pages also get photo details)` : ''), [
+        track('pages', num(nPageDocs || ro.pages || 0), [
           tnode('3.1', 'Profile', 'cpu', t.pages ? `${num(t.pages)} pages looked at` : '', null, 'What is on each page: a text layer, a scan, pictures, resolution, script'),
           tnode('3.2', 'Read', null, total ? `${num(total)} pages: ` + RW_ORDER.filter(k => rw[k]).map(k => `${k} ${num(rw[k])}`).join(' · ') : '', null,
             'Each page goes down one lane: a text layer, b OCR, c text layer + pictures, d document reader (the lanes in detail are below)'),
           tnode('3.3–3.5', 'Gate · Repair · Reconcile', null, read ? `${num(okPages)} of ${num(read)} pages passed` : '', read ? pctOf(okPages, read) : null,
             'Is the text trustworthy? Suspect table cells are re-read, tables are joined across pages. The bar: pages that passed (after repair too).',
-            read && (out.low || out.no_text) ? `${num(out.low || 0)} low confidence · ${num(out.no_text || 0)} without text` : null)]),
-        track('Photographs', num(nP || ro.photograph || 0), 'images with camera data and little text', [
+            [read && (out.low || out.no_text) ? `${num(out.low || 0)} low confidence · ${num(out.no_text || 0)} without text` : '',
+              pp ? `${num(pp)} photographed pages also got photo details` : ''].filter(Boolean).join(' · ') || null)]),
+        track('photograph', num(nP || ro.photograph || 0), [
           tnode('3.6', 'Photo details', 'cpu', nP ? `GPS position in ${num(pos)} of ${num(nP)}` : '', nP ? pctOf(pos, nP) : null,
             'Time, GPS position, camera, faces counted. The bar: the share with a GPS position (without one a photograph cannot be placed).',
             nP ? `time in ${num(pf.time || 0)} · faces seen in ${num(pf.faces || 0)}` : null),
@@ -167,15 +215,15 @@ const CV = (function () {
             'Area and town from the installed map data (GeoNames, Overture) and Overture places within 100 m. A position outside the downloaded map cells gets no place: download its cells on the Models tab, then refresh.',
             pos ? `places nearby for ${num(pf.nearby || 0)}` : null),
           tnode('3.9', 'Describe', 'gpu', nP ? `described ${num(pf.description || 0)} of ${num(nP)}` : '', nP ? pctOf(pf.description || 0, nP) : null,
-            'A vision model writes a short description before the photograph is chunked; cached by photograph, model and prompt, so a map refresh or a rebuild never repeats it. What is left is described by the catch-up pass after the run.',
-            sumOf(dsrc) ? `by the model ${num(dsrc.model || 0)} · from the cache ${num(dsrc.cache || 0)}` + (dsrc.none ? ` · left for the catch-up pass ${num(dsrc.none)}` : '') : null)]),
-        track('Google Maps Timeline', num(TL.n || ro.timeline || 0), '.json exports, recognised by their content', [
+            'A vision model writes a short description before the photograph is chunked; cached by photograph, model and prompt, so a map refresh or a rebuild never repeats it. A description is a fact like the others: one that could not be made now is missing, and a later run fills it in.',
+            sumOf(dsrc) ? `by the model ${num(dsrc.model || 0)} · from the cache ${num(dsrc.cache || 0)}` + (dsrc.none ? ` · missing ${num(dsrc.none)} (a later run fills them in)` : '') : null)]),
+        track('timeline', num(TL.n || ro.timeline || 0), [
           tnode('3.8', 'Timeline', 'cpu', TL.n ? `${num(TL.visits || 0)} visits in ${num(TL.n)} file${TL.n === 1 ? '' : 's'}` : '', null, 'One line per visit and journey, with times and geo: positions'),
           tnode('3.7', 'Locate', 'cpu', TL.n ? `places in ${num((TL.found || {}).place || 0)} of ${num(TL.n)} files` : '', TL.n ? pctOf((TL.found || {}).place || 0, TL.n) : null,
-            'Area, town and places nearby for each visit, from the installed map data')])));
+            'Area, town and places nearby for each visit, from the installed map data')]),
+        legend([['q-good', 'the share of the documents on the track that have it']], 'Bar under a step:')));
   }
 
-  const GRADES = [['complete', 'ok', 'complete'], ['partial', 'fix', 'partly understood'], ['no_text', 'warn', 'no text'], ['error', 'bad', 'failed']];
   const FACT_NAMES = { time: 'time taken', position: 'GPS position', place: 'place (area, town)', nearby: 'places nearby', faces: 'faces (one or more)', description: 'description', visits: 'visits', journeys: 'journeys' };
   const gapName = f => FACT_NAMES[f] ? 'no ' + FACT_NAMES[f] : 'with ' + f;
   function understood(kinds) {
@@ -186,15 +234,16 @@ const CV = (function () {
     const eg = (v, k) => ({ title: 'For example: ' + (((v.examples || {})[k]) || []).join(' · ') });
     return h('div', { class: 'cv-und' },
       h('h4', null, 'What this run understood, by kind of document'),
-      h('p', { class: 'small muted' }, `${num(all)} documents converted in this run: ${num(g('complete'))} complete · ${num(g('partial'))} partly understood · ${num(g('no_text'))} without text · ${num(g('error'))} failed. Unchanged files and unsupported formats are not counted here. Point at a gap for example files.`),
+      h('p', { class: 'small muted' }, `${num(all)} documents converted in this run. Unchanged files and unsupported formats are not counted here. Point at a gap for example files. The same kinds and grades filter the Documents list below.`),
+      legend(GRADES.map(([k, c, name]) => [c, name, g(k)]), 'How completely:'),
       h('div', { class: 'cv-und-wrap' }, h('table', { class: 'cv-und-t' },
         h('thead', null, h('tr', null, h('th', null, 'Kind'), h('th', { class: 'num' }, 'Documents'), h('th', null, 'How completely'), h('th', null, 'Facts found'), h('th', null, 'Gaps'))),
         h('tbody', null, rows.map(([kind, v]) => {
           const gr = v.grades || {}, facts = Object.entries(v.found || {}).filter(([f]) => f !== 'text');
           return h('tr', null,
-            h('td', null, h('b', null, kind)),
+            h('td', null, h('span', { class: 'cv-key', title: KINDS[trackOf(kind)][0] }, h('i', { class: 'cv-sw kd-' + trackOf(kind), 'aria-hidden': 'true' }), h('b', null, kind))),
             h('td', { class: 'num' }, num(v.n)),
-            h('td', null, h('span', { class: 'cv-rw-out cv-und-bar' }, GRADES.filter(([k]) => gr[k]).map(([k, c, name]) => h('i', { class: 'o-' + c, title: `${name} ${num(gr[k])}`, style: { flexGrow: String(gr[k]) } }))),
+            h('td', null, h('span', { class: 'cv-rw-out cv-und-bar' }, GRADES.filter(([k]) => gr[k]).map(([k, c, name]) => h('i', { class: c, title: `${name} ${num(gr[k])}`, style: { flexGrow: String(gr[k]) } }))),
               h('div', { class: 'small muted' }, GRADES.filter(([k]) => gr[k]).map(([k, , name]) => `${name} ${num(gr[k])}`).join(' · '))),
             h('td', null, facts.length ? facts.map(([f, n]) => h('div', { class: 'cv-fact' }, h('span', null, FACT_NAMES[f] || f),
                 h('span', { class: 'cv-tn-bar' }, h('i', { style: { width: pctOf(n, v.n) + '%' } })), h('span', { class: 'small muted' }, `${num(n)} · ${pctOf(n, v.n)}%`)))
@@ -231,11 +280,9 @@ const CV = (function () {
           'The router picks the cheapest lane that is sure enough: a text layer goes to a (or c when it has large pictures); a clean scan to b when OCR first is on; everything else to d. A page the gate doubts after a cheap lane is handed on to d.')),
       h('span', { class: 'cv-arrow', 'aria-hidden': 'true' }, '→'),
       h('div', { class: 'cv-rws' }, RW_ORDER.map(k => laneCard(k, rw, total, mv, lo)),
-        h('div', { class: 'small muted cv-rw-legend' },
-          h('span', null, h('b', null, 'Upper bar'), ': the share of all pages converted so far that ended in this lane (in the lane\'s colour).'),
-          h('span', null, h('b', null, 'Lower bar'), ': how the pages this lane finished in this run fared: ',
-            h('i', { class: 'cv-dot o-ok' }), ' passed ', h('i', { class: 'cv-dot o-fix' }), ' passed after repair ',
-            h('i', { class: 'cv-dot o-bad' }), ' low confidence (kept, flagged) ', h('i', { class: 'cv-dot o-warn' }), ' no text on the page')),
+        h('div', { class: 'cv-rw-legend' },
+          legend(RW_ORDER.map(k => ['rwb-' + k, `${k} · ${RUNWAYS[k].name}`, null, RUNWAYS[k].tip]), 'Upper bar, the share of the pages that ended in the lane:'),
+          legend(OUTCOME_KEY.slice(0, 4).map(([, c, name]) => [c, name]), 'Lower bar, how the lane\'s pages fared:')),
         eng ? h('div', { class: 'small muted cv-rw-eng' }, `Lane b engines this run: ${eng}`) : null,
         approx ? h('div', { class: 'small muted cv-rw-eng' }, 'This run did not record lanes; the counts are worked out from how the pages were read (cached pages count by what they were).') : null),
       h('span', { class: 'cv-arrow', 'aria-hidden': 'true' }, '→'),
@@ -250,6 +297,15 @@ const CV = (function () {
     return h('div', null, tracks(t, steps, kinds), understood(kinds),
       h('details', { class: 'cv-more' }, h('summary', null, 'Documents of pages in detail: the four lanes of 3.2, gate, repair and reconcile'), main));
   }
+  /* *flow* without the lanes (they belong to the pages section: see pipe) */
+  function overview(t, l, steps, kinds) {
+    return h('div', null, tracks(t || {}, steps || {}, kinds || {}), understood(kinds || {}));
+  }
+  /* the four lanes of 3.2 with Profile, Router, Gate, Repair and Reconcile: the pages section's detail */
+  function pipe(t, l) {
+    const f = flow(t, l, {}, {});
+    return f.lastChild;
+  }
 
   /* Pages per lane as one proportional bar with the figures beside it (what each lane's reader finished). */
   function runwayBar(rw, mv) {
@@ -258,9 +314,8 @@ const CV = (function () {
     const moved = Object.entries(mv || {}).map(([k, v]) => `${k.replace('>', ' → ')} ${num(v)}`).join(' · ');
     return h('div', null,
       h('div', { class: 'cv-bands' }, RW_ORDER.filter(k => rw[k]).map(k => h('i', { class: 'rwb-' + k, title: `lane ${k} (${RUNWAYS[k].name}): ${num(rw[k])} pages (${Math.round(100 * rw[k] / total)}%)`, style: { flexGrow: String(rw[k]) } }))),
-      h('div', { style: { marginTop: '6px' } }, RW_ORDER.filter(k => rw[k]).map(k => h('span', { class: 'chip cv-chip', title: RUNWAYS[k].tip },
-        h('i', { class: 'cv-dot rwb-' + k }), `${k} · ${RUNWAYS[k].name} ${num(rw[k])}`)),
-      moved ? h('span', { class: 'small muted', style: { marginLeft: '8px' } }, `handed on to the document reader: ${moved}`) : null));
+      legend(RW_ORDER.filter(k => rw[k]).map(k => ['rwb-' + k, `${k} · ${RUNWAYS[k].name}`, rw[k], RUNWAYS[k].tip]), 'Lane of 3.2:'),
+      moved ? h('div', { class: 'small muted', style: { marginTop: '4px' } }, `handed on to the document reader: ${moved}`) : null);
   }
 
   /* What the run is doing right now, from the page events: pages read per branch, per open document. */
@@ -487,5 +542,5 @@ const CV = (function () {
       e.error_count ? h('div', { class: 'small', style: { color: 'var(--bad)' } }, `${e.error_count} file(s) could not be profiled: ` + (e.errors || []).slice(0, 3).map(x => x.src).join(', ')) : null);
   }
 
-  return { label, branchTitle, strip, branchChips, outcomeChips, bands, runwayBar, RUNWAYS, flow, lanes, tiles, costText, hw, open, openSummary, estimateView, sortedBranches, live, understood, BRANCHES, OUTCOMES };
+  return { label, branchTitle, strip, branchChips, outcomeChips, bands, runwayBar, RUNWAYS, flow, overview, pipe, kindsSummary, legend, lanes, tiles, costText, hw, open, openSummary, estimateView, sortedBranches, live, understood, BRANCHES, OUTCOMES, KINDS, GRADES, trackOf, gradeCls, gradeName };
 })();

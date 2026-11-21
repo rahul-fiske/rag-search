@@ -274,7 +274,7 @@ class PhotoPipelineRecordTests(IndexedPhotoTests):
         self.assertEqual(stages[("sniff", "3.0")]["route"], "photograph")      # decided first, from the file itself ...
         self.assertNotIn(("profile", "3.1"), stages)                          # ... so no page is profiled
         plans = [e for e in self.events(log) if e.get("event") == "plan"]
-        self.assertEqual([p["branches"] for p in plans], [{"photo": 1}])      # and the plan says photo, not lane d
+        self.assertEqual(plans, [])                                           # no pages are planned: it is not a page
         trace_file = next(self.paths.markup.rglob("p.trace.json"))
         summary = json.loads(trace_file.read_text(encoding="utf-8"))["summary"]
         self.assertEqual(summary["branches"], {"photo": 1})

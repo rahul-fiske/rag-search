@@ -51,10 +51,26 @@ def all_records(paths: Paths) -> list[dict[str, Any]]:
 SKIPPED = ("skipped", "known", "unsupported")      # what a run did not convert: unchanged, not tried again, unsupported
 
 
+def _kind_grade(item: dict[str, Any]) -> tuple[str, str]:
+    """A listed document's kind and grade (from its "understood" record), ``("", "")`` when the run did not convert it.
+    A failure without a record still has a grade: it failed."""
+    u = item.get("understood") if isinstance(item.get("understood"), dict) else {}
+    st = str(item.get("status", ""))
+    if u.get("kind"):
+        return str(u["kind"]), "error" if st == "error" else str(u.get("grade") or "complete")
+    if st in ("error", "no_text"):
+        return "other document", st
+    return "", ""
+
+
 def documents(paths: Paths, job_id: str, limit: int = 50, *, status: str = "",
              collection: str = "", q: str = "", hidden: "set[str] | None" = None,
-             branch: str = "", outcome: str = "") -> dict[str, Any]:
+             branch: str = "", outcome: str = "", kind: str = "", grade: str = "") -> dict[str, Any]:
     """Per-document results of a run, read from its event log (works while it is running).
+
+    ``kind`` / ``grade`` keep the documents of that kind and grade -- the vocabulary of the "understood" table
+    (``core/understanding.py``: a converted document's kind, and complete | partial | no_text | error); ``by_kind`` /
+    ``by_grade`` count them.  A document the run did not convert (unchanged, not tried again) has neither.
 
     -> {"total": n, "by_status": {...}, "by_collection": {coll: {status: n, ...}, ...},
         "matched": n, "items": [the last *limit* MATCHING documents, oldest first]}.
@@ -79,7 +95,8 @@ def documents(paths: Paths, job_id: str, limit: int = 50, *, status: str = "",
     before anything else, so a client that cannot see a collection never sees it in a total either.
     """
     out: dict[str, Any] = {"total": 0, "by_status": {}, "by_collection": {}, "by_branch": {},
-                           "by_outcome": {}, "by_status_filtered": {}, "matched": 0, "items": []}
+                           "by_outcome": {}, "by_kind": {}, "by_grade": {}, "by_status_filtered": {}, "matched": 0,
+                           "items": []}
     if not JOB_ID_RE.fullmatch(job_id or ""):
         return out
     try:
@@ -120,10 +137,18 @@ def documents(paths: Paths, job_id: str, limit: int = 50, *, status: str = "",
         for o, n in (conv.get("outcomes") or {}).items():
             if n:
                 out["by_outcome"][o] = out["by_outcome"].get(o, 0) + 1
+        k, g = _kind_grade(item)
+        if k:
+            out["by_kind"][k] = out["by_kind"].get(k, 0) + 1
+            out["by_grade"][g] = out["by_grade"].get(g, 0) + 1
     out["total"] = len(items)
     filtered = items
     if collection:
         filtered = [i for i in filtered if str(i.get("collection", "")) == collection]
+    if kind:
+        filtered = [i for i in filtered if _kind_grade(i)[0] == kind]
+    if grade:
+        filtered = [i for i in filtered if _kind_grade(i)[1] == grade]
     if branch:
         filtered = [i for i in filtered if ((i.get("conversion") or {}).get("branches") or {}).get(branch)]
     if outcome:

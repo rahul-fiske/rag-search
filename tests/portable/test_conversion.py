@@ -393,7 +393,7 @@ class RunViewTests(TempHome):
         w.close()
         evs = [json.loads(x) for x in f.read_text().splitlines()]
         phases = [(e["phase"], e["status"]) for e in evs if e["event"] == "phase"]
-        self.assertEqual(phases, [("convert", "start"), ("convert", "done"), ("embed", "start"), ("embed", "done"),
+        self.assertEqual(phases, [("convert", "start"), ("convert", "kinds"), ("convert", "done"), ("embed", "start"), ("embed", "done"),
                                   ("merge", "start"), ("merge", "done")])
         work = [(e["phase"], e["status"], e["file"]) for e in evs if e["event"] == "work"]
         files = {x[2] for x in work if x[0] in ("convert", "embed")}

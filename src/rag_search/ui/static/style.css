@@ -274,10 +274,44 @@ svg.dg { display: block; width: 100%; height: auto; min-width: 820px; font-famil
 .dg .dot.ok { fill: var(--ok); } .dg .dot.warn { fill: var(--warn); } .dg .dot.bad { fill: var(--bad); }
 .dg-fig figcaption { margin-top: 10px; font-size: 12.5px; color: var(--muted); max-width: 900px; }
 
-/* conversion: colour = what happened to the page, chips = where it runs */
-:root { --cv-copy: #8a96a5; --cv-office: #7a6fd0; --cv-digital: #2a78d6; --cv-raster: #eb6834; --cv-image: #d9531e; --cv-embedded: #f4a885; --cv-photo: #1f9d8f; --cv-timeline: #8e5bd1; --cv-fallback: #d99b3a; --cv-cached: #aab3bf; --cv-unknown: #c9cfd6; --cv-repaired: #1baf7a; --cv-low: #c62828; }
-:root[data-theme="dark"] { --cv-copy: #73808f; --cv-office: #9a90f0; --cv-digital: #4b95ec; --cv-raster: #f58353; --cv-image: #f0663a; --cv-embedded: #f7b898; --cv-photo: #3cc2b3; --cv-timeline: #b693f0; --cv-fallback: #e6ad55; --cv-cached: #6c7785; --cv-unknown: #4a5563; --cv-repaired: #3cc99a; --cv-low: #ff7b7b; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --cv-copy: #73808f; --cv-office: #9a90f0; --cv-digital: #4b95ec; --cv-raster: #f58353; --cv-image: #f0663a; --cv-embedded: #f7b898; --cv-photo: #3cc2b3; --cv-timeline: #b693f0; --cv-fallback: #e6ad55; --cv-cached: #6c7785; --cv-unknown: #4a5563; --cv-repaired: #3cc99a; --cv-low: #ff7b7b; } }
+/* conversion colours: each colour means one thing on the whole page, and every bar has a labelled key beside it (CV.legend).
+   Four families that never share a colour:
+   - kind of document (--kd-*): documents of pages, photographs, Google Maps Timelines;
+   - how well it went (--q-*), the same scale for a document's grade and a page's outcome: good (complete / passed),
+     repaired, partly (partly understood / low confidence), no text, failed;
+   - what a page is (--cv-*: its branch): text layer, scan, picture file, ...;
+   - the lane of 3.2 that read a page (--rw-*): one blue-violet scale from a (cheapest) to d (the document reader). */
+:root { --cv-copy: #8a96a5; --cv-office: #c2558f; --cv-digital: #2a78d6; --cv-raster: #eb6834; --cv-image: #a0522d; --cv-embedded: #f4b183; --cv-fallback: #7f8f2a; --cv-cached: #c5ccd4; --cv-unknown: #e3e7eb;
+  --kd-pages: #4f6d8f; --kd-photograph: #1f9d8f; --kd-timeline: #9b59d0;
+  --q-good: #2e9d4f; --q-fixed: #7cc9a0; --q-part: #e0a020; --q-none: #b9a27a; --q-bad: #d23c3c;
+  --rw-a: #c3c9f5; --rw-b: #9aa3ee; --rw-c: #6f78de; --rw-d: #3f46b8;
+  --cv-photo: var(--kd-photograph); --cv-timeline: var(--kd-timeline); --cv-repaired: var(--q-fixed); --cv-low: var(--q-bad); }
+:root[data-theme="dark"] { --cv-copy: #8995a4; --cv-office: #e07aae; --cv-digital: #4b95ec; --cv-raster: #f58353; --cv-image: #c8774c; --cv-embedded: #f7c09c; --cv-fallback: #a5b84a; --cv-cached: #6c7785; --cv-unknown: #4a5563;
+  --kd-pages: #7d9cc0; --kd-photograph: #3cc2b3; --kd-timeline: #b98ae6;
+  --q-good: #45c06a; --q-fixed: #9adbb8; --q-part: #f0b93a; --q-none: #a8946e; --q-bad: #ff6b6b;
+  --rw-a: #4a5196; --rw-b: #6870cc; --rw-c: #8f97ee; --rw-d: #c3c8ff; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --cv-copy: #8995a4; --cv-office: #e07aae; --cv-digital: #4b95ec; --cv-raster: #f58353; --cv-image: #c8774c; --cv-embedded: #f7c09c; --cv-fallback: #a5b84a; --cv-cached: #6c7785; --cv-unknown: #4a5563;
+  --kd-pages: #7d9cc0; --kd-photograph: #3cc2b3; --kd-timeline: #b98ae6;
+  --q-good: #45c06a; --q-fixed: #9adbb8; --q-part: #f0b93a; --q-none: #a8946e; --q-bad: #ff6b6b;
+  --rw-a: #4a5196; --rw-b: #6870cc; --rw-c: #8f97ee; --rw-d: #c3c8ff; } }
+.kd-pages { background: var(--kd-pages); } .kd-photograph { background: var(--kd-photograph); } .kd-timeline { background: var(--kd-timeline); }
+.q-good, .o-ok { background: var(--q-good); } .q-fixed, .o-fix { background: var(--q-fixed); } .q-part, .o-part { background: var(--q-part); }
+.q-none, .o-warn { background: var(--q-none); } .q-bad, .o-bad { background: var(--q-bad); }
+/* the key: a labelled swatch per colour, next to the bar it explains */
+.cv-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 12px; color: var(--text); align-items: center; }
+.cv-legend-note { color: var(--muted); }
+.cv-key { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.cv-key b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.cv-sw { display: inline-block; width: 14px; height: 14px; border-radius: 4px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .18); flex: none; }
+.cv-kinds { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 4px 0 12px; }
+.cv-kind { border: 1px solid var(--line-2); border-left: 6px solid var(--kd-pages); border-radius: 8px; padding: 8px 12px; background: var(--panel-2); font-size: 12px; display: grid; gap: 4px; }
+.cv-kind.k-photograph { border-left-color: var(--kd-photograph); } .cv-kind.k-timeline { border-left-color: var(--kd-timeline); } .cv-kind.k-unchanged { border-left-color: var(--line-2); }
+.cv-kind-n { font-size: 20px; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.cv-kind-bar { display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: var(--idle-soft); gap: 1px; }
+.cv-kind-bar i { display: block; height: 100%; min-width: 2px; }
+.cv-kind-bar .run, .cv-sw.run { background:repeating-linear-gradient(45deg, var(--accent) 0 3px, transparent 3px 6px); }
+.cv-pages { margin-top: 18px; padding-top: 12px; border-top: 2px solid var(--kd-pages); }
+.cv-pages > h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
 .cvb-copy { background: var(--cv-copy); } .cvb-office { background: var(--cv-office); } .cvb-digital { background: var(--cv-digital); }
 .cvb-raster { background: var(--cv-raster); } .cvb-image { background: var(--cv-image); } .cvb-embedded { background: var(--cv-embedded); }
 .cvb-fallback { background: var(--cv-fallback); } .cvb-cached { background: var(--cv-cached); } .cvb-unknown { background: var(--cv-unknown); }
@@ -288,8 +322,7 @@ svg.dg { display: block; width: 100%; height: auto; min-width: 820px; font-famil
 .cv-chip { gap: 6px; }
 .hw { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .04em; padding: 0 6px; border-radius: 5px; margin: 0 6px; line-height: 16px; }
 .hw.gpu { background: var(--text); color: var(--panel); } .hw.cpu { border: 1px solid var(--faint); color: var(--muted); }
-/* the four lanes of step 3.2: a = text layer, b = OCR, c = text layer + pictures, d = document reader (they keep the colours of the branches they replace) */
-:root { --rw-a: var(--cv-digital); --rw-b: var(--cv-fallback); --rw-c: var(--cv-embedded); --rw-d: var(--cv-raster); }
+/* the four lanes of step 3.2: a = text layer, b = OCR, c = text layer + pictures, d = document reader (their own scale, --rw-*, above) */
 .rwb-a { background: var(--rw-a); } .rwb-b { background: var(--rw-b); } .rwb-c { background: var(--rw-c); } .rwb-d { background: var(--rw-d); }
 .cv-pipe { display: grid; grid-template-columns: minmax(150px, 1fr) auto minmax(320px, 2.6fr) auto minmax(170px, 1fr); gap: 8px; align-items: stretch; margin-top: 12px; }
 .cv-col { display: flex; flex-direction: column; gap: 4px; justify-content: center; }
@@ -323,7 +356,7 @@ svg.dg { display: block; width: 100%; height: auto; min-width: 820px; font-famil
 .cv-tn-fig { font-weight: 600; } .cv-tn:not(.on) .cv-tn-fig { color: var(--faint); font-weight: 400; }
 .cv-tn-note { color: var(--muted); font-size: 11px; }
 .cv-tn-bar { display: block; height: 6px; border-radius: 999px; background: var(--idle-soft); overflow: hidden; min-width: 50px; }
-.cv-tn-bar i { display: block; height: 100%; background: var(--ok); }
+.cv-tn-bar i { display: block; height: 100%; background: var(--q-good); }
 .cv-und { margin-top: 18px; } .cv-und-wrap { overflow-x: auto; }
 .cv-und-t { width: 100%; border-collapse: collapse; font-size: 12px; }
 .cv-und-t th, .cv-und-t td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line-2); vertical-align: top; }
@@ -333,12 +366,10 @@ svg.dg { display: block; width: 100%; height: auto; min-width: 820px; font-famil
 .cv-more { margin-top: 14px; } .cv-more > summary { cursor: pointer; font-weight: 600; font-size: 13px; }
 @media (max-width: 900px) { .cv-flow { grid-template-columns: 1fr; } .cv-tracks { border-left: 0; padding-left: 0; } .cv-track { grid-template-columns: 1fr; } .cv-track-steps { flex-wrap: wrap; } .cv-tn { flex-basis: 140px; } }
 .cv-rw-out { height: 6px; } .cv-rw-out i { display: block; height: 100%; min-width: 2px; }
-.cv-rw-out .o-ok { background: var(--ok); } .cv-rw-out .o-fix { background: var(--cv-repaired); } .cv-rw-out .o-bad { background: var(--bad); } .cv-rw-out .o-warn { background: var(--warn); }
 .cv-rw-n { white-space: nowrap; min-width: 110px; text-align: right; }
 .cv-rw-hand { color: var(--warn); font-size: 11.5px; }
 .cv-rw-eng { padding-left: 4px; }
 .cv-rw-legend { display: grid; gap: 2px; padding: 2px 4px; }
-.cv-dot.o-ok { background: var(--ok); } .cv-dot.o-fix { background: var(--cv-repaired); } .cv-dot.o-bad { background: var(--bad); } .cv-dot.o-warn { background: var(--warn); }
 @media (max-width: 960px) { .cv-pipe { grid-template-columns: 1fr; } .cv-pipe > .cv-arrow { transform: rotate(90deg); } }
 .cv-flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; margin-top: 12px; }
 .cv-arrow { align-self: center; color: var(--faint); }

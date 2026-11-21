@@ -332,10 +332,11 @@ def conversion_run(paths: Paths, job_id: str = "", *, client: str | None = None)
 
 
 def conversion_documents(paths: Paths, *, job_id: str = "", status: str = "", collection: str = "",
-                         q: str = "", branch: str = "", outcome: str = "", limit: int = 200,
-                         client: str | None = None) -> dict[str, Any]:
-    """The documents of a run with their conversion summaries, filterable by branch (documents
-    with at least one page of it) and outcome; ``by_branch`` / ``by_outcome`` count documents."""
+                         q: str = "", branch: str = "", outcome: str = "", kind: str = "", grade: str = "",
+                         limit: int = 200, client: str | None = None) -> dict[str, Any]:
+    """The documents of a run with their conversion summaries, filterable by kind and grade (as in the "understood"
+    table), branch (documents with at least one page of it) and outcome; ``by_kind`` / ``by_grade`` / ``by_branch`` /
+    ``by_outcome`` count documents."""
     c = _client(client)
     rec = jobs.read_record(paths, job_id) if job_id else next(iter(jobs.all_records(paths)), None)
     if rec is None:
@@ -344,7 +345,7 @@ def conversion_documents(paths: Paths, *, job_id: str = "", status: str = "", co
         return {"ok": True, "job": None, "documents": jobs.documents(paths, "")}
     hidden = policy.current_rules(paths).hidden_from(c)
     docs = jobs.documents(paths, rec["id"], limit, status=status, collection=collection, q=q,
-                          hidden=hidden, branch=branch, outcome=outcome)
+                          hidden=hidden, branch=branch, outcome=outcome, kind=kind, grade=grade)
     return {"ok": True, "job": rec["id"], "documents": docs}
 
 

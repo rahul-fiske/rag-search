@@ -71,11 +71,27 @@ def _page_kind(fmt: str, suffix: str, branches: dict[str, int]) -> str:
     return "PDF, scanned" if scanned else "PDF with a text layer"
 
 
-def of_document(*, fmt: str, suffix: str, status: str, text: str = "", route: str = "",
-                branches: dict[str, int] | None = None, outcomes: dict[str, int] | None = None) -> dict[str, Any]:
-    """``{"kind", "grade", "found", "missing", ...}`` for one document.  *fmt* is the profiler's kind of file (pdf |
+TRACKS = ("pages", "photograph", "timeline")       # the three ways through a run, one per kind of file 3.0 Sniff tells apart
+GRADES = ("complete", "partial", "no_text", "error")
+
+
+def track_of(kind: str) -> str:
+    """The track a kind of document travels: ``photograph``, ``timeline`` or ``pages`` (every document of pages)."""
+    return "photograph" if kind == PHOTOGRAPH else "timeline" if kind == TIMELINE else "pages"
+
+
+def of_document(**kw: Any) -> dict[str, Any]:
+    """``{"kind", "track", "grade", "found", "missing", ...}`` for one document.  *fmt* is the profiler's kind of file (pdf |
     image | office | text), *status* the conversion's (prepared | no_text | error | stalled), *text* the Markdown,
-    *route* what 3.0 Sniff decided, *branches* / *outcomes* the page counts of its conversion summary."""
+    *route* what 3.0 Sniff decided, *branches* / *outcomes* the page counts of its conversion summary.  The same record
+    for every kind: the steps differ, the result does not."""
+    out = _of_document(**kw)
+    out["track"] = track_of(out["kind"])
+    return out
+
+
+def _of_document(*, fmt: str, suffix: str, status: str, text: str = "", route: str = "",
+                 branches: dict[str, int] | None = None, outcomes: dict[str, int] | None = None) -> dict[str, Any]:
     branches, outcomes = branches or {}, outcomes or {}
     if status not in ("prepared",):
         kind = (PHOTOGRAPH if route == "photograph" else TIMELINE if route == "timeline"
