@@ -223,7 +223,8 @@ const CV = (function () {
         track('timeline', num(TL.n || ro.timeline || 0), [
           tnode('3.8', 'Timeline', 'cpu', TL.n ? `${num(TL.visits || 0)} visits in ${num(TL.n)} file${TL.n === 1 ? '' : 's'}` : '', null, 'One line per visit and journey, with times and geo: positions'),
           tnode('3.7', 'Locate', 'cpu', TL.n ? `places in ${num((TL.found || {}).place || 0)} of ${num(TL.n)} files` : '', TL.n ? pctOf((TL.found || {}).place || 0, TL.n) : null,
-            'Area, town and places nearby for each visit, from the installed map data')]),
+            'The same Locate step as for photographs (3.7), run on the visits of a Timeline after 3.8 has read them: area, town and places nearby for each visit, from the installed map data',
+            TL.n ? 'shared with the photograph track; the bar: the share of Timeline files with a place' : null)]),
         legend([['q-good', 'the share of the documents on the track that have it']], 'Bar under a step:')));
   }
 
