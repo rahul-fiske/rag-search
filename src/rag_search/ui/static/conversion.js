@@ -162,7 +162,7 @@ const CV = (function () {
         track('Photographs', num(nP || ro.photograph || 0), 'images with camera data and little text', [
           tnode('3.6', 'Photo details', 'cpu', nP ? `GPS position in ${num(pos)} of ${num(nP)}` : '', nP ? pctOf(pos, nP) : null,
             'Time, GPS position, camera, faces counted. The bar: the share with a GPS position (without one a photograph cannot be placed).',
-            nP ? `time in ${num(pf.time || 0)} · faces counted in ${num(pf.faces || 0)}` : null),
+            nP ? `time in ${num(pf.time || 0)} · faces seen in ${num(pf.faces || 0)}` : null),
           tnode('3.7', 'Locate', 'cpu', pos ? `a place for ${num(pf.place || 0)} of ${num(pos)} positions` : '', pos ? pctOf(pf.place || 0, pos) : null,
             'Area and town from the installed map data (GeoNames, Overture) and Overture places within 100 m. A position outside the downloaded map cells gets no place: download its cells on the Models tab, then refresh.',
             pos ? `places nearby for ${num(pf.nearby || 0)}` : null),
@@ -176,7 +176,7 @@ const CV = (function () {
   }
 
   const GRADES = [['complete', 'ok', 'complete'], ['partial', 'fix', 'partly understood'], ['no_text', 'warn', 'no text'], ['error', 'bad', 'failed']];
-  const FACT_NAMES = { time: 'time taken', position: 'GPS position', place: 'place (area, town)', nearby: 'places nearby', faces: 'faces counted', description: 'description', visits: 'visits', journeys: 'journeys' };
+  const FACT_NAMES = { time: 'time taken', position: 'GPS position', place: 'place (area, town)', nearby: 'places nearby', faces: 'faces (one or more)', description: 'description', visits: 'visits', journeys: 'journeys' };
   const gapName = f => FACT_NAMES[f] ? 'no ' + FACT_NAMES[f] : 'with ' + f;
   function understood(kinds) {
     const rows = Object.entries(kinds || {}).sort((a, b) => b[1].n - a[1].n);

@@ -26,6 +26,10 @@ class OfDocumentTests(unittest.TestCase):
                                       route="photograph")
         self.assertEqual((u["grade"], u["missing"]), ("partial", ["position", "description"]))
 
+    def test_a_face_count_of_nought_is_not_a_face_found(self):
+        self.assertNotIn("faces", understanding.photo_facts("- Faces detected: 0\n"))
+        self.assertIn("faces", understanding.photo_facts("- Faces detected: 12\n"))
+
     def test_a_position_without_map_data_misses_the_place(self):
         u = understanding.of_document(fmt="image", suffix=".jpg", status="prepared", route="photograph",
                                       text="- Taken: x\n- Position: geo:1,2\n- Looks like (model-written): a road\n")

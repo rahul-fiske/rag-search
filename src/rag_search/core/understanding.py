@@ -36,10 +36,16 @@ _TIMELINE_HEAD = re.compile(r"(\d+) visits and (\d+) journeys")
 FORMAT_NAMES = {"pdf": "PDF", "image": "image", "office": "Office or HTML document", "text": "text or Markdown file"}
 
 
+_FACES = re.compile(rf"^- {re.escape(describe.FACES)} ([1-9]\d*)", re.M)
+
+
 def photo_facts(text: str) -> list[str]:
+    """The facts of a photograph found in its Photo details ("faces" only when at least one face was counted)."""
     out = []
     for name, label in _PHOTO_FACTS:
         labels = label if isinstance(label, tuple) else (label,)
+        if name == "faces" and not _FACES.search(text):
+            continue
         if any(lab in text for lab in labels):
             out.append(name)
     return out
