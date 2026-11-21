@@ -1,7 +1,7 @@
 'use strict';
 /* Models: which embedding model and reranker are in use, what else is available, download and switch; map data. */
 (function () {
-  let refs = {}, data = null, mapData = null, photoData = null, loading = false, lastLoad = 0, error = '';
+  let refs = {}, data = null, mapData = null, photoData = null, faceData = null, loading = false, lastLoad = 0, error = '';
   const FIT = { ok: null, tight: ['tight on memory', 'warn'], too_large: ['too large for the memory budget', 'bad'] };
 
   const taskActive = () => !!(data && data.task && (data.task.status === 'running' || data.task.status === 'queued'));
@@ -9,8 +9,9 @@
   async function load(force) {
     if (loading || (!force && Date.now() - lastLoad < 900)) return;
     loading = true;
-    const [r, m, ph] = await Promise.all([api('models'), api('maps'), api('photos')]);
+    const [r, m, ph, fc] = await Promise.all([api('models'), api('maps'), api('photos'), api('people')]);
     if (m.ok !== false) mapData = m;
+    if (fc.ok !== false) faceData = fc;
     if (ph.ok !== false) photoData = ph;
     loading = false; lastLoad = Date.now();
     if (r.ok === false) { error = r.error || 'cannot read the model state'; } else { error = ''; data = r; }
@@ -376,6 +377,24 @@
       h('p', { class: 'small muted', style: { margin: '8px 0 0' } }, 'About 2.5 seconds a photograph with the 8B model and 1.5 with the 4B. Each description is cached by the photograph, the model and the prompt, so downloading map data or refreshing places never describes a photograph again. Only photographs are described; a photographed page is read as text. With about 8 GB of memory short, the photograph is indexed without a description and caught up later.'));
   }
 
+  async function downloadFaces() {
+    const r = await api('people/setup', {});
+    if (r.ok === false) { toast(r.error || 'failed', 'bad'); return; }
+    toast('Downloading the face models.', 'ok'); load(true);
+  }
+  function faceCard() {
+    const d = faceData;
+    if (!d) return null;
+    const missing = (d.missing_models || []).length > 0, busy = readOnly() || taskActive();
+    return h('div', { class: 'card', style: { marginTop: '16px' } },
+      h('div', { class: 'card-head' }, h('h2', null, 'Face models'),
+        h('span', { class: 'muted small' }, 'find and fingerprint the faces in photographs while they are indexed (step 3.9) · downloaded only when you ask here · CPU only')),
+      d.available && !missing ? h('div', { class: 'notice warn' }, d.available) : null,
+      h('p', { style: { margin: '0 0 8px' } }, missing
+        ? h('span', null, h('b', null, 'Not downloaded'), ': YuNet (finds faces, 0.2 MB) and SFace (fingerprints them, 37 MB), from the OpenCV model zoo, checked against their checksums.')
+        : h('span', null, h('b', null, 'Downloaded'), ': YuNet (finds faces) and SFace (fingerprints them). The next indexing run finds the faces; name them on the ', h('a', { href: '#/people' }, 'People'), ' tab.')),
+      missing ? h('div', { class: 'row' }, h('button', { class: 'btn small primary', disabled: busy, on: { click: downloadFaces } }, 'Download (38 MB)')) : null);
+  }
   function taskCard() {
     const t = data.task;
     if (!t) return null;
@@ -407,14 +426,14 @@
     patch(refs.body,
       error ? h('div', { class: 'notice bad', style: { marginBottom: '12px' } }, error) : null,
       taskCard(),
-      embeddingCard(), rerankerCard(), readerCard(), photoCard(), mapsCard(),
+      embeddingCard(), rerankerCard(), readerCard(), photoCard(), faceCard(), mapsCard(),
       h('div', { class: 'grid g2', style: { marginTop: '16px' } }, presetsCard(), machineCard()));
     refs.customBtn.disabled = readOnly() || taskActive();
   }
 
   RS.views.models = {
     init(root) {
-      refs.body = h('div');
+      refs.body = h('div', null, empty('loading…'));
       refs.customKind = h('select', null, h('option', { value: 'embedding' }, 'embedding model'), h('option', { value: 'reranker' }, 'reranker'));
       refs.customId = h('input', { type: 'text', placeholder: 'ORG/NAME, for example BAAI/bge-reranker-base', style: { minWidth: '320px' } });
       refs.customBtn = h('button', { class: 'btn primary', on: { click: () => switchTo(refs.customKind.value, refs.customId.value) } }, 'Check and switch…');
