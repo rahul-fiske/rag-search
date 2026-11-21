@@ -309,7 +309,7 @@ the document reader for every other scan and image; a page a cheaper lane doubts
 | 1 | Discover | CPU | run | list the files of every collection (registered folders, imports); formats the pipeline cannot read are skipped and counted | – |
 | 2 | Fingerprint | CPU | document | SHA-256 of the file plus the chunk, model and conversion settings; unchanged documents are skipped in seconds | – |
 | 3 | Convert | CPU+GPU | document | turn the file into page-marked Markdown, page by page, through the steps below; several documents are converted side by side when the machine has the memory for it; a conversion process that goes silent is stopped and its document reported, so one stuck document never holds the run | `indexer.jobs`, `indexer.stall_timeout` |
-| 3.0 | Sniff | CPU | document | what kind of file is this? decided from the file itself, before any page is looked at and before the file is scheduled (`indexer.sniff_document`, for every file, in pool processes ahead of the conversions): a Google Maps Timeline `.json` (recognised by its content) goes to 3.8; an image with camera data gets a quick text check and, with little text, is a photograph and goes to 3.6; everything else, a photographed page too, is a document of pages and goes to 3.1. The kind decides where the file is converted (`indexer.by_kind`): photographs and pictures of pages in the process that holds the vision models, every other document in the pool | – |
+| 3.0 | Sniff | CPU | document | what kind of file is this? decided from the file itself, before any page is looked at and before the file is converted (`indexer.sniff_document`, for every image and `.json`, in pool processes beside the conversions; the text check is remembered by checksum): a Google Maps Timeline `.json` (recognised by its content) goes to 3.8; an image with camera data gets a quick text check and, with little text, is a photograph and goes to 3.6; everything else, a photographed page too, is a document of pages and goes to 3.1. The kind decides where the file is converted (`indexer.by_kind`): photographs and pictures of pages in the process that holds the vision models, every other document in the pool | – |
 | 3.1 | Profile | CPU | document | look at every page once: text layer, scan or photo, pictures, ink, resolution, script (pages only; a photograph or a Timeline file is not profiled) | – |
 | 3.2 | Read | CPU+GPU | document | each page goes down the lane it needs: 3.2a docling on the text layer (and Office files), 3.2b OCR for a clean scan (docling's OCR, or Tesseract for a skewed page and image files), 3.2c docling on the text layer plus the document reader on its pictures and regions, 3.2d the document reader (a vision model) for every other scan, photo and image; a page a cheaper lane doubts goes on to 3.2d | `indexer.routing`, `indexer.ocr`, `indexer.ocr_engine`, `indexer.ocr_lang`, `indexer.table_mode`, `indexer.pdf_backend`, `indexer.pipeline`, `indexer.vlm`, `indexer.ocr_first`, `indexer.residue`, `indexer.escalate_digital`, `indexer.layer_fill`, `models.reader`, `models.memory_limit_gb`, `indexer.docling_batch`, `indexer.doc_timeout`; env `RAG_SEARCH_THREADS`, env `RAG_SEARCH_VLM_PAGE_TIMEOUT`, env `RAG_SEARCH_VLM_FREE_GB`, env `RAG_SEARCH_VLM_BACKEND`, env `RAG_SEARCH_TESSERACT`, env `RAG_SEARCH_TESSERACT_LANG` |
 | 3.3 | Gate | CPU | document | deterministic checks on every page: coverage, script, tables, resolution, running balances and totals, runaway output | – |
@@ -1057,10 +1057,13 @@ processes, runs without downloading models.
   positions, the Google place ID as it is, the `geo.py` lines); any other `.json` goes to the generic JSON converter.
 * **Scheduling by kind** (`run_index`): with more than one job, only an image or a `.json` has anything to sniff; every other
   file is a document of pages and goes to the conversion pool at once, so documents convert while the images are being sorted
-  (the text check is ~0.8 s a photograph, and thousands of them must not hold the run back). 3.0 Sniff then runs for the
-  images and `.json` files (`indexer._sniff_all`, up to `SNIFF_WORKERS` = 4 pool processes; an unchanged file is recognised by
-  its fingerprint and not sniffed), and each goes where its kind is converted (`indexer.by_kind`): photographs and pictures of
-  pages to the run's own process, which holds the vision models; Timelines and unchanged files to the pool.
+  (the text check is ~1 s a photograph, and thousands of them must not hold the run back). 3.0 Sniff runs at the same time for
+  the images and `.json` files (`indexer._sniff_all` in its own thread, up to `SNIFF_WORKERS` = 4 pool processes; an unchanged
+  file is recognised by its fingerprint and not sniffed), and each goes where its kind is converted (`indexer.by_kind`):
+  photographs and pictures of pages are handed to the run's own process, which holds the vision models, **the moment each is
+  sorted** (a queue), so they convert while the rest are still being sorted; Timelines and unchanged files wait until every
+  file is sorted, then go to the pool. The text check is kept by the file's checksum (`core/sniffcache.py`,
+  `<workspace>/sniff.sqlite`), so a restart or a later run does not look at a picture again.
   The conversion of a sniffed file uses the route and the text check already made (`task["route"]`, `task["seen"]`) and
   does not look again; a file that could not be sniffed, and every file of a one-job run, is sniffed by its conversion.
   The photographs follow the documents of pages; `RAG_SEARCH_KINDS_TOGETHER=1` runs the pool beside them in a thread of the
@@ -1071,7 +1074,7 @@ processes, runs without downloading models.
 * **Step 3.10 of the photograph's own way through a run**, between 3.9 Faces and 4 Chunk (`describe.for_indexing`, called from
   `_prepare_document` for a photograph that is converted now): the photograph is described, then chunked and embedded once, complete,
   and published with everything else; the run takes as long as it takes. The model of several GB is held by **one** process: 3.0
-  Sniff has sorted every file by kind before anything is converted, and the photographs (with the pictures of pages, bound to the
+  Sniff hands each photograph over as soon as it is sorted, and the photographs (with the pictures of pages, bound to the
   same GPU) are converted one after another in the run's own process, after the parallel pool has done the documents of pages
   (`RAG_SEARCH_KINDS_TOGETHER=1` runs the two side by side; off by default, see *Scheduling by kind* in 5.3); the model is
   released (`describe.close_shared`) before the embedder loads. The quick text check of 3.0 runs in the pool processes of the

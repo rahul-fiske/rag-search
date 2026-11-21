@@ -19,6 +19,7 @@ import json
 import logging
 import multiprocessing as mp
 import os
+import queue
 import shutil
 import signal
 import subprocess
@@ -60,7 +61,7 @@ from ..paths import (
     sha256_file,
     write_json_atomic,
 )
-from . import chunker, describe, faces, photo, stallwatch, timeline, understanding
+from . import chunker, describe, faces, photo, sniffcache, stallwatch, timeline, understanding
 from .bm25 import TOKENIZER_VERSION
 from .conversion import (
     applevision,
@@ -537,8 +538,20 @@ def _failed_conversion(kind: str, profile: dict[str, Any] | None, outcome: str, 
                            readers=["docling"])
 
 
+def _text_seen(src: Path, sha: str, cache: Path | None) -> str | None:
+    """The quick text check of a picture (``photo.visible_text``), kept by the file's checksum (``sniffcache``)."""
+    if cache is not None and sha:
+        seen = sniffcache.get(cache, sha)
+        if seen is not None:
+            return seen
+    seen = photo.visible_text(src)
+    if seen is not None and cache is not None and sha:
+        sniffcache.put(cache, sha, seen)
+    return seen
+
+
 def _sniff(src: Path, kind: str, reused_md: bool, old: dict[str, Any],
-           reuse_trace: bool) -> tuple[str, dict[str, Any], str | None]:
+           reuse_trace: bool, sha: str = "", cache: Path | None = None) -> tuple[str, dict[str, Any], str | None]:
     """3.0 Sniff: what kind of file is this?  ``(route, exif, text seen)``.  Decided from the file itself, before any page is
     looked at: a Google Timeline .json -> "timeline"; an image with camera data and little text -> "photograph"; everything
     else, a photographed page too -> "pages" (3.1-3.5).  A document whose Markdown and trace are current keeps the route its
@@ -552,7 +565,7 @@ def _sniff(src: Path, kind: str, reused_md: bool, old: dict[str, Any],
     if src.suffix.lower() == ".json" and not reused_md and timeline.recognise(src):
         return "timeline", meta, None
     if meta and not reused_md:
-        seen = photo.visible_text(src)                # a quick text check: a photograph, or a photographed page
+        seen = _text_seen(src, sha, cache)            # a quick text check: a photograph, or a photographed page
         return ("photograph" if photo.is_photograph(seen) else "pages"), meta, seen
     return "pages", meta, None
 
@@ -619,9 +632,10 @@ def sniff_document(task: dict[str, Any]) -> dict[str, Any]:
         reused_md = md_is_current(md_path, sha, force=task["force_md"], ocr=task.get("ocr"))
         old = trace.read_trace(trace.trace_path_for(md_path)) if reused_md else {}
         reuse_trace = bool(old and old.get("src_sha256") == sha and old.get("convert") == convert_profile(task.get("ocr")))
-        route, _meta, seen = _sniff(src, kind, reused_md, old, reuse_trace)
+        cache = Path(task["index_root"]).parent / sniffcache.FILE
+        route, _meta, seen = _sniff(src, kind, reused_md, old, reuse_trace, sha, cache)
         if fill and route == "photograph":
-            seen = photo.visible_text(src)
+            seen = _text_seen(src, sha, cache)
         stage_event(task.get("stage_log"), mirror_rel(src, roots).as_posix(), "sniff", "done",
                     seconds=round(time.perf_counter() - t_sn, 3), route=route)
         return {"src": str(src), "route": route, "seen": seen, "fill": fill and route == "photograph"}
@@ -728,9 +742,10 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
                 stage_event(slog, rel_name, "sniff", "done", seconds=0.0, route=route)
         else:
             t_sn = time.perf_counter()
-            route, meta, seen = _sniff(src, kind, reused_md, old, reuse_trace)
+            cache = Path(task["index_root"]).parent / sniffcache.FILE
+            route, meta, seen = _sniff(src, kind, reused_md, old, reuse_trace, sha, cache)
             if fill and route == "photograph":
-                seen = photo.visible_text(src)
+                seen = _text_seen(src, sha, cache)
             stage_event(slog, rel_name, "sniff", "done", seconds=round(time.perf_counter() - t_sn, 3), route=route)
 
         t_conv = time.perf_counter()
@@ -1404,10 +1419,12 @@ def kinds_together() -> bool:
     return os.environ.get("RAG_SEARCH_KINDS_TOGETHER", "").strip().lower() in ("1", "on", "true", "yes")
 
 
-def _sniff_all(tasks: list[dict[str, Any]], workers: int, progress: Callable[[int, int], None]) -> None:
+def _sniff_all(tasks: list[dict[str, Any]], workers: int, progress: Callable[[int, int], None],
+               on_sorted: Callable[[dict[str, Any]], None] | None = None) -> None:
     """3.0 Sniff for every file before the conversions are scheduled, in pool processes (never in threads: Apple Vision beside
     the loaded vision model hung a run).  Each task gets ``route`` ("photograph" | "timeline" | "pages", "" when it will not be
-    converted), and ``seen`` / ``fill`` for a photograph; a file that could not be sniffed is sniffed by its conversion."""
+    converted), and ``seen`` / ``fill`` for a photograph; a file that could not be sniffed is sniffed by its conversion.
+    *on_sorted* is called with each task as soon as its file is sorted, so the run can start on it before the rest are."""
     if not tasks:
         return
     by_src = {t["src"]: t for t in tasks}
@@ -1421,6 +1438,8 @@ def _sniff_all(tasks: list[dict[str, Any]], workers: int, progress: Callable[[in
             t["route"], t["sniffed"] = res["route"], True
             if res["route"]:
                 t["seen"], t["fill"] = res.get("seen"), bool(res.get("fill"))
+            if on_sorted is not None:
+                on_sorted(t)
         if done % 25 == 0 or done == len(tasks):
             progress(done, len(tasks))
     try:
@@ -1776,36 +1795,56 @@ def run_index(
                 if sniffable and first else None
             if early is not None:
                 early.start()
-            if sniffable:
-                _sniff_all(sniffable, max(1, min(SNIFF_WORKERS, machine.physical_cores() // 2)),
-                           lambda n, of: emit({"phase": "convert", "done": done, "total": total,
-                                               "message": f"3.0 Sniff: {n} of {of} images sorted by kind"}))
-            planned: dict[str, int] = {}   # files per kind (the Indexing tab's "left" per kind); "" = will not be converted
-            for t in tasks:
-                key = {"": "unchanged", None: "unsorted"}.get(t.get("route"), str(t.get("route")))
-                planned[key] = planned.get(key, 0) + 1
-            _sink({"phase_event": {"phase": "convert", "status": "kinds", "kinds": planned}})
+            def _announce_kinds() -> None:
+                planned: dict[str, int] = {}           # files per kind (the Indexing tab's "left" per kind); "" = will not be converted
+                for t in tasks:
+                    key = {"": "unchanged", None: "unsorted"}.get(t.get("route"), str(t.get("route")))
+                    planned[key] = planned.get(key, 0) + 1
+                _sink({"phase_event": {"phase": "convert", "status": "kinds", "kinds": planned}})
+
             if not sniffable:
+                _announce_kinds()
                 _pool_part(first)
-                images = []
             else:
-                more, images = by_kind(sniffable)       # Timelines and unchanged images to the pool, photographs here
+                # 3.0 Sniff runs in its own thread (its work is in pool processes) and hands every photograph to this process
+                # the moment it is sorted, so photographs are converted while the rest are still being sorted.  The others
+                # (Timelines, unchanged images) wait until every file is sorted and then go to the pool.
+                ready: queue.Queue[dict[str, Any] | None] = queue.Queue()
+                routed: set[str] = set()
+                more: list[dict[str, Any]] = []
+
+                def _route(t: dict[str, Any]) -> None:
+                    if t["src"] in routed:
+                        return
+                    routed.add(t["src"])
+                    (ready.put if by_kind([t])[1] else more.append)(t)
+
+                def _sort_all() -> None:
+                    try:
+                        _sniff_all(sniffable, max(1, min(SNIFF_WORKERS, machine.physical_cores() // 2)),
+                                   lambda n, of: emit({"phase": "convert", "done": done, "total": total,
+                                                       "message": f"3.0 Sniff: {n} of {of} images sorted by kind"}),
+                                   _route)
+                    except Exception as exc:  # noqa: BLE001 - the files not sorted are sniffed by their conversion
+                        log.warning("3.0 Sniff ended early (%s): the files not sorted are sniffed when converted", exc)
+                    for t in sniffable:                # a file whose sniff failed (or was not reported) goes by its format
+                        _route(t)
+                    _announce_kinds()
+                    ready.put(None)
+                    if kinds_together():               # the pool converts the rest beside the photographs
+                        _pool_part(more)
+
+                sorter = threading.Thread(target=_sort_all, name="rag-sniff", daemon=True)
+                sorter.start()
                 if early is not None and not kinds_together():
-                    early.join()
-                elif early is None:
-                    _pool_part(first)
-                if kinds_together() and images:         # beside the photographs
-                    rest = threading.Thread(target=_pool_part, args=(more,), name="rag-pool-2", daemon=True)
-                    rest.start()
-                else:
-                    rest = None
+                    early.join()                       # the pool's conversions and the vision model never share the memory
+                while (t := ready.get()) is not None:
+                    _collect(prepare_document(t))
+                sorter.join()
+                if not kinds_together():
                     _pool_part(more)
-            for t in images:
-                _collect(prepare_document(t))
-            if sniffable:
-                for th in (early, rest if images else None):
-                    if th is not None:
-                        th.join()
+                if early is not None:
+                    early.join()
         finally:
             if watch is not None:
                 watch.stop()

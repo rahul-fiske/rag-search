@@ -4,6 +4,7 @@ to a result (never the failure path), and the run counts documents by kind -- ph
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from unittest import mock
 
@@ -37,15 +38,58 @@ class ByKindTests(IndexedPhotoTests):
         order = []
         real_prepare, real_sniff = indexer.prepare_document, indexer._sniff_all
 
-        def sniff(tasks, workers, progress):
+        def sniff(tasks, workers, progress, on_sorted=None):
             order.append(("sniff", sorted(Path(t["src"]).suffix for t in tasks)))
             for t in tasks:                                   # (no real pool in the test)
                 t.update(route="photograph", sniffed=True, seen="", fill=False)
+                if on_sorted:
+                    on_sorted(t)
         with mock.patch.object(indexer, "_sniff_all", sniff), mock.patch.object(photo, "visible_text", return_value=""):
             srcs = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
             s = indexer.run_index(self.paths, srcs, self.roots(), jobs=2, embedder=FakeEmbedder(), progress=lambda e: None)
         self.assertEqual(order, [("sniff", [".jpg"])])         # only the image is sniffed
         self.assertEqual((s["indexed"], s["errors"]), (3, []))
+
+    def test_a_photograph_is_converted_as_soon_as_it_is_sorted_not_when_every_file_is(self):
+        (self.sdir / "c").mkdir()
+        jpeg(self.sdir / "c" / "a.jpg")
+        jpeg(self.sdir / "c" / "b.jpg", when="2024:03:15 09:00:00")
+        (self.sdir / "c" / "d.md").write_text("# T\n\n<!-- page 1 -->\n\nsome text\n", encoding="utf-8")
+        first_done = threading.Event()
+        real_prepare = indexer.prepare_document
+        seen_order = []
+
+        def prepare(task):
+            res = real_prepare(task)
+            if Path(task["src"]).suffix == ".jpg":
+                seen_order.append(Path(task["src"]).name)
+                first_done.set()
+            return res
+
+        def sniff(tasks, workers, progress, on_sorted=None):
+            ts = sorted(tasks, key=lambda t: t["src"])
+            for k, t in enumerate(ts):
+                t.update(route="photograph", sniffed=True, seen="", fill=False)
+                on_sorted(t)
+                if k == 0:                                   # the second file is not sorted until the first is converted
+                    self.assertTrue(first_done.wait(30), "the first photograph was not converted while sniffing went on")
+        with mock.patch.object(indexer, "_sniff_all", sniff), mock.patch.object(indexer, "prepare_document", prepare), \
+                mock.patch.object(photo, "visible_text", return_value=""):
+            srcs = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
+            s = indexer.run_index(self.paths, srcs, self.roots(), jobs=2, embedder=FakeEmbedder(), progress=lambda e: None)
+        self.assertEqual((s["indexed"], s["errors"]), (3, []))
+        self.assertEqual(seen_order, ["a.jpg", "b.jpg"])
+
+    def test_the_text_check_of_a_picture_is_remembered_by_its_checksum(self):
+        (self.sdir / "c").mkdir()
+        src = jpeg(self.sdir / "c" / "p.jpg")
+        with mock.patch.object(photo, "visible_text", return_value="EXIT 4") as once:
+            first = indexer.sniff_document(self.task(src))
+        self.assertEqual((first["route"], once.call_count), ("photograph", 1))
+        with mock.patch.object(photo, "visible_text", side_effect=AssertionError("looked again")):
+            again = indexer.sniff_document(self.task(src))
+        self.assertEqual((again["route"], again["seen"]), ("photograph", "EXIT 4"))
+        self.assertTrue((self.paths.workspace / "sniff.sqlite").exists())
 
     def test_the_sniff_ahead_of_the_run_finds_a_photograph_and_its_conversion_does_not_look_again(self):
         (self.sdir / "c").mkdir()
