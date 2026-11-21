@@ -4,6 +4,7 @@ to a result (never the failure path), and the run counts documents by kind -- ph
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest import mock
 
 from tests.helpers import FakeEmbedder
@@ -27,6 +28,24 @@ class ByKindTests(IndexedPhotoTests):
         pool, main = indexer.by_kind(tasks)
         self.assertEqual([t["src"] for t in main], ["/x/a.jpg", "/x/b.jpg", "/x/f.jpg"])     # unsniffed: by its format
         self.assertEqual([t["src"] for t in pool], ["/x/c.pdf", "/x/d.json", "/x/e.jpg"])    # unchanged: a quick skip
+
+    def test_documents_convert_while_the_images_are_being_sniffed(self):
+        (self.sdir / "c").mkdir()
+        jpeg(self.sdir / "c" / "p.jpg")
+        (self.sdir / "c" / "a.md").write_text("# T\n\n<!-- page 1 -->\n\nsome text\n", encoding="utf-8")
+        (self.sdir / "c" / "b.md").write_text("# T\n\n<!-- page 1 -->\n\nmore text\n", encoding="utf-8")
+        order = []
+        real_prepare, real_sniff = indexer.prepare_document, indexer._sniff_all
+
+        def sniff(tasks, workers, progress):
+            order.append(("sniff", sorted(Path(t["src"]).suffix for t in tasks)))
+            for t in tasks:                                   # (no real pool in the test)
+                t.update(route="photograph", sniffed=True, seen="", fill=False)
+        with mock.patch.object(indexer, "_sniff_all", sniff), mock.patch.object(photo, "visible_text", return_value=""):
+            srcs = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
+            s = indexer.run_index(self.paths, srcs, self.roots(), jobs=2, embedder=FakeEmbedder(), progress=lambda e: None)
+        self.assertEqual(order, [("sniff", [".jpg"])])         # only the image is sniffed
+        self.assertEqual((s["indexed"], s["errors"]), (3, []))
 
     def test_the_sniff_ahead_of_the_run_finds_a_photograph_and_its_conversion_does_not_look_again(self):
         (self.sdir / "c").mkdir()

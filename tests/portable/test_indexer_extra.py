@@ -39,10 +39,9 @@ class ExtraIndexerTests(TempHome):
                 seq = [(e["stage"], e["status"]) for e in sorted(
                     (e for e in events if e["file"] == name), key=lambda e: e["ts"] if "ts" in e else 1e18)]
                 # stages 2 Fingerprint, 3 Convert (3.0 Sniff first, then 3.1 Profile for a document of pages), 4 Chunk,
-                # 6 Write (nodes.json), 5 Embed, 6 Write (vectors).  With a pool, 3.0 Sniff runs for every file before
-                # the run is scheduled, so it comes before the fingerprint of the conversion
-                head = ([("fingerprint", "done"), ("convert", "start"), ("sniff", "done")] if jobs == 1 else
-                        [("sniff", "done"), ("fingerprint", "done"), ("convert", "start")])
+                # 6 Write (nodes.json), 5 Embed, 6 Write (vectors).  Only an image or a .json is sniffed ahead of the
+                # conversions; a document of pages has nothing to sniff and is known to be one
+                head = [("fingerprint", "done"), ("convert", "start"), ("sniff", "done")]
                 self.assertEqual(seq, head + [("profile", "done"),
                                               ("convert", "done"), ("chunk", "done"), ("write", "done"),
                                               ("embed", "start"), ("embed", "done"), ("write", "done")], (jobs, name, seq))

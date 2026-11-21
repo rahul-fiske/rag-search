@@ -698,6 +698,8 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         if task.get("route"):
             route, seen = str(task["route"]), task.get("seen")
             meta = photo.read_exif(src) if kind == "image" else {}
+            if not task.get("sniffed"):            # a file with nothing to sniff (not an image, not a .json): a document of pages
+                stage_event(slog, rel_name, "sniff", "done", seconds=0.0, route=route)
         else:
             t_sn = time.perf_counter()
             route, meta, seen = _sniff(src, kind, reused_md, old, reuse_trace)
@@ -1386,7 +1388,7 @@ def _sniff_all(tasks: list[dict[str, Any]], workers: int, progress: Callable[[in
         done += 1
         t = by_src.get(res.get("src", ""))
         if t is not None and "route" in res:
-            t["route"] = res["route"]
+            t["route"], t["sniffed"] = res["route"], True
             if res["route"]:
                 t["seen"], t["fill"] = res.get("seen"), bool(res.get("fill"))
         if done % 25 == 0 or done == len(tasks):
@@ -1721,34 +1723,57 @@ def run_index(
             # (and pictures of pages) are converted one after another in this process: a photograph is described by a
             # vision model of several GB (3.9), which one process must hold, and the document reader is bound to the same
             # GPU.  The documents of pages go to the pool -- before the photographs, or beside them (kinds_together).
-            if jobs > 1:                   # one job: each conversion sniffs its own file, in this process
-                _sniff_all(tasks, max(1, min(SNIFF_WORKERS, machine.physical_cores() // 2)),
-                           lambda n, of: emit({"phase": "convert", "done": 0, "total": total,
-                                               "message": f"3.0 Sniff: {n} of {of} files sorted by kind"}))
+            def _pool_part(part: list[dict[str, Any]]) -> None:
+                if jobs > 1 and len(part) > 1:
+                    _convert_in_pool(part, min(jobs, len(part)), _collect, watch=watch, stalled=stalled,
+                                     rel_src=rel_src, stage_log=stage_log)
+                else:
+                    for t in part:
+                        _collect(prepare_document(t))
+
+            # Only an image or a .json has anything to sniff (a PDF, an Office file or a text file is a document of pages):
+            # those go to the pool at once and convert while the images are being sorted, so the run never waits for the
+            # slow text check of thousands of photographs (Apple Vision, ~0.8 s each) before it converts anything.
+            sniffable = [t for t in tasks if jobs > 1 and (Path(t["src"]).suffix.lower() in IMAGE_EXTENSIONS
+                                                           or Path(t["src"]).suffix.lower() == ".json")]
+            first = [t for t in tasks if t not in sniffable]
+            for t in first:
+                if jobs > 1:
+                    t["route"] = "pages"
+            early = threading.Thread(target=_pool_part, args=(first,), name="rag-pool", daemon=True) \
+                if sniffable and first else None
+            if early is not None:
+                early.start()
+            if sniffable:
+                _sniff_all(sniffable, max(1, min(SNIFF_WORKERS, machine.physical_cores() // 2)),
+                           lambda n, of: emit({"phase": "convert", "done": done, "total": total,
+                                               "message": f"3.0 Sniff: {n} of {of} images sorted by kind"}))
             planned: dict[str, int] = {}   # files per kind (the Indexing tab's "left" per kind); "" = will not be converted
             for t in tasks:
                 key = {"": "unchanged", None: "unsorted"}.get(t.get("route"), str(t.get("route")))
                 planned[key] = planned.get(key, 0) + 1
             _sink({"phase_event": {"phase": "convert", "status": "kinds", "kinds": planned}})
-            others, images = by_kind(tasks)
-
-            def _pool_part() -> None:
-                if jobs > 1 and len(others) > 1:
-                    _convert_in_pool(others, min(jobs, len(others)), _collect, watch=watch, stalled=stalled,
-                                     rel_src=rel_src, stage_log=stage_log)
-                else:
-                    for t in others:
-                        _collect(prepare_document(t))
-            beside = threading.Thread(target=_pool_part, name="rag-pool", daemon=True) \
-                if kinds_together() and images and others else None
-            if beside is not None:
-                beside.start()
+            if not sniffable:
+                _pool_part(first)
+                images = []
             else:
-                _pool_part()
+                more, images = by_kind(sniffable)       # Timelines and unchanged images to the pool, photographs here
+                if early is not None and not kinds_together():
+                    early.join()
+                elif early is None:
+                    _pool_part(first)
+                if kinds_together() and images:         # beside the photographs
+                    rest = threading.Thread(target=_pool_part, args=(more,), name="rag-pool-2", daemon=True)
+                    rest.start()
+                else:
+                    rest = None
+                    _pool_part(more)
             for t in images:
                 _collect(prepare_document(t))
-            if beside is not None:
-                beside.join()
+            if sniffable:
+                for th in (early, rest if images else None):
+                    if th is not None:
+                        th.join()
         finally:
             if watch is not None:
                 watch.stop()

@@ -1054,14 +1054,16 @@ processes, runs without downloading models.
 * **Google Timeline** (`core/timeline.py`, before conversion in `_prepare_document`): a `.json` whose first 256 KB look
   like one of the three export shapes is written as a day-by-day log (visits and journeys with times, `geo:`
   positions, the Google place ID as it is, the `geo.py` lines); any other `.json` goes to the generic JSON converter.
-* **Scheduling by kind** (`run_index`): with more than one job, 3.0 Sniff runs first for every file that may be converted
-  (`indexer._sniff_all`, up to `SNIFF_WORKERS` = 4 pool processes; an unchanged file is recognised by its fingerprint and
-  not sniffed). Each file then goes where its kind is converted (`indexer.by_kind`): photographs and pictures of pages to the
-  run's own process, which holds the vision models; documents of pages, Timelines and unchanged files to the conversion pool.
+* **Scheduling by kind** (`run_index`): with more than one job, only an image or a `.json` has anything to sniff; every other
+  file is a document of pages and goes to the conversion pool at once, so documents convert while the images are being sorted
+  (the text check is ~0.8 s a photograph, and thousands of them must not hold the run back). 3.0 Sniff then runs for the
+  images and `.json` files (`indexer._sniff_all`, up to `SNIFF_WORKERS` = 4 pool processes; an unchanged file is recognised by
+  its fingerprint and not sniffed), and each goes where its kind is converted (`indexer.by_kind`): photographs and pictures of
+  pages to the run's own process, which holds the vision models; Timelines and unchanged files to the pool.
   The conversion of a sniffed file uses the route and the text check already made (`task["route"]`, `task["seen"]`) and
   does not look again; a file that could not be sniffed, and every file of a one-job run, is sniffed by its conversion.
-  The pool runs before the photographs; `RAG_SEARCH_KINDS_TOGETHER=1` runs it beside them in a thread of the run's process
-  (the results are collected under a lock).
+  The photographs follow the documents of pages; `RAG_SEARCH_KINDS_TOGETHER=1` runs the pool beside them in a thread of the
+  run's process (the results are collected under a lock).
 
 ### 5.3b Photo descriptions (`core/describe.py`, step 3.9)
 
