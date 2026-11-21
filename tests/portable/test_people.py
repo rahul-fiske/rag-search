@@ -85,6 +85,18 @@ class WhoTests(PeopleCase):
         groups = sorted(w.clusters(), key=lambda g: g[0])
         self.assertEqual(groups, [[ids[0], ids[2]], [ids[1], ids[3]], [ids[4]]])
 
+    def test_a_chain_of_look_alikes_is_split_into_groups_of_a_size_that_can_be_looked_at(self):
+        ids = []
+        for k in range(18):                                    # each face 20 degrees from the next: one chain at 0.45
+            v = np.zeros(128, dtype=np.float32)
+            v[0], v[1] = np.cos(np.radians(20 * k)), np.sin(np.radians(20 * k))
+            ids += self.photo(f"c{k}", v)
+        with mock.patch.object(people, "MAX_GROUP", 5):
+            groups = people.work_out(self.st).clusters()
+        self.assertEqual(sorted(f for g in groups for f in g), sorted(ids))
+        self.assertTrue(all(len(g) <= 5 for g in groups), [len(g) for g in groups])
+        self.assertGreater(len(groups), 1)
+
     def test_who_is_worked_out_again_only_when_the_store_changes(self):
         (a1,) = self.photo("s1", like(A))
         first = people.who(self.paths)

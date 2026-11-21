@@ -33,6 +33,7 @@ from . import faces
 MATCH = 0.40                # cosine: a face is this person (OpenCV puts SFace's line for "same person" at 0.363)
 MARGIN = 0.06               # ... and this much closer to them than to anyone else (relatives look alike)
 SUGGEST = 0.30              # a weaker match is only a suggestion
+MAX_GROUP = 150             # a group of look-alikes the People tab shows is never larger than this
 CLUSTER = 0.45              # two unnamed faces this close are grouped together
 MIN_PX = 40                 # smaller faces are never named automatically
 MIN_SCORE = 0.85            # nor ones the face finder is unsure of (it scores clear faces 0.85 to 0.95)
@@ -123,13 +124,9 @@ def work_out(store: faces.Store) -> Who:
     return who
 
 
-def _cluster(who: Who) -> list[list[int]]:
-    if not who.unknown:
-        return []
-    row = {int(f): i for i, f in enumerate(who.ids)}
-    sub = np.array([row[f] for f in who.unknown])
-    v = who.vecs[sub]
-    parent = list(range(len(sub)))
+def _groups(v: np.ndarray, idx: list[int], threshold: float) -> list[list[int]]:
+    """*idx* (rows of *v*) joined into groups: two faces closer than *threshold* are in one group, directly or through others."""
+    parent = {i: i for i in idx}
 
     def root(a: int) -> int:
         while parent[a] != a:
@@ -137,18 +134,38 @@ def _cluster(who: Who) -> list[list[int]]:
             a = parent[a]
         return a
 
-    for start in range(0, len(sub), 2048):
-        sims = v[start:start + 2048] @ v.T
-        ii, jj = np.nonzero(sims >= CLUSTER)
+    sub = v[idx]
+    for start in range(0, len(idx), 2048):
+        sims = sub[start:start + 2048] @ sub.T
+        ii, jj = np.nonzero(sims >= threshold)
         for a, b in zip(ii + start, jj):
             if a < b:
-                ra, rb = root(int(a)), root(int(b))
+                ra, rb = root(idx[int(a)]), root(idx[int(b)])
                 if ra != rb:
                     parent[rb] = ra
-    groups: dict[int, list[int]] = defaultdict(list)
-    for k, f in enumerate(who.unknown):
-        groups[root(k)].append(f)
-    return sorted(groups.values(), key=lambda g: (-len(g), g[0]))
+    out: dict[int, list[int]] = defaultdict(list)
+    for i in idx:
+        out[root(i)].append(i)
+    return list(out.values())
+
+
+def _cluster(who: Who) -> list[list[int]]:
+    if not who.unknown:
+        return []
+    row = {int(f): i for i, f in enumerate(who.ids)}
+    rows = [row[f] for f in who.unknown]
+    face_of = {r: f for r, f in zip(rows, who.unknown)}
+    done: list[list[int]] = []
+    todo = [(rows, CLUSTER)]
+    while todo:
+        members, threshold = todo.pop()
+        for g in _groups(who.vecs, members, threshold):
+            # chains of look-alikes join different people into one huge group: split it at a stricter closeness
+            if len(g) > MAX_GROUP and threshold < 0.95:
+                todo.append((g, threshold + 0.05))
+            else:
+                done.append([face_of[r] for r in g])
+    return sorted(done, key=lambda g: (-len(g), g[0]))
 
 
 # ── cached per process: the search daemon and the dashboard ask often ─────────
@@ -287,7 +304,7 @@ def overview(paths: Paths) -> dict[str, Any]:
     return {**out, "counts": counts, "people": people, "groups": groups}
 
 
-def cluster_view(paths: Paths, limit: int = 20, per: int = 12, skip: int = 0) -> dict[str, Any]:
+def cluster_view(paths: Paths, limit: int = 20, per: int = 24, skip: int = 0) -> dict[str, Any]:
     w = who(paths)
     if w is None:
         return {"clusters": [], "total": 0}

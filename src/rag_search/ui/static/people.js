@@ -66,6 +66,9 @@
   }
 
   /* ---- who is this: faces nobody is matched to, in groups of look-alikes ---- */
+  // a group shows its first faces; "Show more" adds the rest, and Name applies only to the faces on show
+  const expanded = new Set();
+  const shownFaces = c => expanded.has(c.faces[0]) ? c.faces.concat(c.more || []) : c.faces;
   function renderClusters() {
     const ro = readOnly();
     if (!clusters) { fill(refs.clusters, h('p', { class: 'muted' }, 'loading…')); return; }
@@ -75,15 +78,17 @@
       const input = h('input', { type: 'text', list: 'people-names', placeholder: 'Name (new or existing)', disabled: ro, style: { width: '220px' } });
       const name = async () => {
         const n = input.value.trim(); if (!n) { input.focus(); return; }
-        const ids = c.faces.concat(c.more || []).filter(f => !off.has(f));
+        const ids = shownFaces(c).filter(f => !off.has(f));
         if (!ids.length) { toast('Every face of this group is left out', 'bad'); return; }
         await post('name', { name: n, faces: ids }, `${ids.length} face(s) named ${n}`);
       };
       input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); name(); } });
       return h('div', { class: 'cluster' },
-        h('div', { class: 'faces' }, c.faces.map(f => faceImg(f, { class: 'face' + (off.has(f) ? ' off' : ''), title: off.has(f) ? 'left out: click to put back' : 'click to leave this face out',
+        h('div', { class: 'faces' }, shownFaces(c).map(f => faceImg(f, { class: 'face' + (off.has(f) ? ' off' : ''), title: off.has(f) ? 'left out: click to put back' : 'click to leave this face out',
           on: { click: e => { off.has(f) ? off.delete(f) : off.add(f); e.target.classList.toggle('off', off.has(f)); } } })),
-          c.more && c.more.length ? h('span', { class: 'muted small', style: { alignSelf: 'center' } }, `+ ${num(c.more.length)} more like these`) : null),
+          c.more && c.more.length && !expanded.has(c.faces[0])
+            ? h('button', { class: 'btn small', style: { alignSelf: 'center' }, title: 'show them all, to leave out the ones that are someone else', on: { click: () => { expanded.add(c.faces[0]); renderClusters(); } } }, `Show ${num(c.more.length)} more like these`)
+            : null),
         h('div', { class: 'row', style: { marginTop: '6px', gap: '8px' } }, input,
           h('button', { class: 'btn small primary', disabled: ro, on: { click: name } }, 'Name'),
           h('button', { class: 'btn small', on: { click: () => { hidden.add(c.faces[0]); renderClusters(); } } }, 'Skip')));
@@ -94,7 +99,7 @@
         h('div', { class: 'spacer' },
           skip ? h('button', { class: 'btn small', on: { click: () => { skip = Math.max(0, skip - 20); loadClusters(); } } }, 'Previous') : null,
           clusters.total > skip + 20 ? h('button', { class: 'btn small', on: { click: () => { skip += 20; loadClusters(); } } }, 'Next 20') : null)),
-      h('p', { class: 'small muted', style: { margin: '0 0 6px' } }, 'Faces that look alike are shown together. Click a face that is someone else to leave it out, then give the name. Naming one group of a person is enough to start: the rest of their faces are matched from it.'),
+      h('p', { class: 'small muted', style: { margin: '0 0 6px' } }, 'Faces that look alike are shown together. Click a face that is someone else to leave it out (“Show more” lists the rest of a group), then give the name: it applies to the faces you see. Naming one group of a person is enough to start: the rest of their faces are matched from it.'),
       body);
   }
 
