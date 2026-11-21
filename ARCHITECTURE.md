@@ -1047,10 +1047,9 @@ processes, runs without downloading models.
   `_prepare_document` for a photograph that is converted now): the photograph is described, then chunked and embedded once, complete,
   and published with everything else; the run takes as long as it takes. The model of several GB is held by **one** process: image
   files are converted one after another in the run's own process, after the parallel pool has done the documents, and the model is
-  released (`describe.close_shared`) before the embedder loads. While one photograph is described (GPU), two threads of that process read the next
-  four images ahead (`photo.read_ahead`): the camera data check, 3.0's quick text check and the face count (Apple Vision, which
-  lets go of the interpreter while it works), so these no longer wait for the model; memory is a few decoded images. A second
-  model process is not used: one model keeps the GPU busy, and a second copy of several GB would push a busy machine into swap. `models.describe` chooses the 8B (default) or the 4B
+  released (`describe.close_shared`) before the embedder loads. The quick text check (3.0) and the face count stay in that process, one image after the
+  other: done in background threads while the model was loaded (Apple Vision beside MLX) they hung a run, and a second model
+  process would add a copy of several GB to a machine that is already in swap. `models.describe` chooses the 8B (default) or the 4B
   (`rag-search photos model NAME`); the switch `models.describe_auto` (default on; `RAG_SEARCH_DESCRIBE_AUTO`,
   `rag-search photos auto on|off`) turns it off.
 * **A catch-up pass** for photographs indexed without a description (memory was short, the model was not downloaded) or with another

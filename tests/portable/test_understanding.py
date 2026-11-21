@@ -1,14 +1,10 @@
-"""What indexing understood of each document (core/understanding.py), the totals per kind in the run view, and the
-text check and face count read ahead for the images of a run (photo.read_ahead)."""
+"""What indexing understood of each document (core/understanding.py) and the totals per kind in the run view."""
 
 from __future__ import annotations
 
 import json
 import unittest
-from pathlib import Path
-from unittest import mock
-
-from rag_search.core import photo, understanding
+from rag_search.core import understanding
 from rag_search.core.conversion import runview
 
 FULL = ("- Taken: 2024-03-14 12:52\n- Position: Nirmal (geo:19.09,78.34)\n- Area: Nirmal, Telangana\n"
@@ -76,24 +72,6 @@ class RunViewKindsTests(unittest.TestCase):
         self.assertEqual(p["examples"]["position"], ["c/1.jpg", "c/2.jpg"])
         self.assertEqual(k["image"]["grades"], {"error": 1})
         self.assertEqual(sum(v["n"] for v in k.values()), 4)
-
-
-class ReadAheadTests(unittest.TestCase):
-    def tearDown(self):
-        photo.stop_ahead()
-
-    def test_the_text_check_and_face_count_are_done_once_and_taken_from_what_was_read_ahead(self):
-        calls = []
-        with mock.patch.object(photo, "read_exif", return_value={"camera": "x"}), \
-                mock.patch.object(photo, "_visible_text", side_effect=lambda p: calls.append(("t", p.name)) or ""), \
-                mock.patch.object(photo, "_faces_in", side_effect=lambda p: calls.append(("f", p.name)) or 2):
-            photo.read_ahead([Path("a.jpg"), Path("b.jpg")])
-            self.assertEqual(photo.visible_text(Path("a.jpg")), "")
-            self.assertEqual(photo.faces_in(Path("a.jpg")), 2)
-            self.assertEqual(photo.visible_text(Path("c.jpg")), "")          # not read ahead: read now
-            photo.stop_ahead()
-        self.assertEqual(sorted(c for c in calls if c[1] == "a.jpg"), [("f", "a.jpg"), ("t", "a.jpg")])
-        self.assertIn(("t", "c.jpg"), calls)
 
 
 if __name__ == "__main__":

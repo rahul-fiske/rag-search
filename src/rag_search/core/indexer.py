@@ -530,9 +530,6 @@ def _failed_conversion(kind: str, profile: dict[str, Any] | None, outcome: str, 
                            readers=["docling"])
 
 
-AHEAD_IMAGES = 4          # image files whose text check and face count run in the background while one is described
-
-
 def prepare_document(task: dict[str, Any]) -> dict[str, Any]:
     """Phase-1 worker (runs in a pool process; takes/returns plain dicts): ``_prepare_document`` framed by
     a ``work`` start / done event, so the dashboard knows which process holds which document whatever the
@@ -1591,12 +1588,8 @@ def run_index(
             else:
                 for t in others:
                     _collect(prepare_document(t))
-            try:
-                for i, t in enumerate(images):
-                    photo.read_ahead([Path(x["src"]) for x in images[i + 1:i + 1 + AHEAD_IMAGES]])
-                    _collect(prepare_document(t))
-            finally:
-                photo.stop_ahead()
+            for t in images:
+                _collect(prepare_document(t))
         finally:
             if watch is not None:
                 watch.stop()
