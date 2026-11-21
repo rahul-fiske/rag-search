@@ -27,8 +27,10 @@ from __future__ import annotations
 import contextlib
 import os
 import re
+import threading
 import time
 from collections.abc import Callable, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -151,7 +153,12 @@ MIN_LETTERS = 4                  # fewer letters than this found in a picture ar
 
 def visible_text(src: Path) -> str | None:
     """The text a quick OCR (Apple Vision, else Tesseract) finds in the picture; None when this machine has neither,
-    so the caller cannot tell a photograph from a page."""
+    so the caller cannot tell a photograph from a page.  Read ahead when ``read_ahead`` was given the file."""
+    got = _take(src)
+    return got["text"] if got is not None else _visible_text(src)
+
+
+def _visible_text(src: Path) -> str | None:
     from .conversion import applevision, tesseract
 
     try:
@@ -263,7 +270,14 @@ def set_extra(md_path: Path, extra: Sequence[str]) -> bool:
 
 def faces_in(image: Path) -> int | None:
     """How many faces Apple Vision finds in an (upright) image file; None where Vision is not available.  A count only:
-    nobody is identified."""
+    nobody is identified.  Read ahead when ``read_ahead`` was given the file."""
+    got = _AHEAD_DONE.pop(str(image), None)
+    if got is not None and "faces" in got:
+        return got["faces"]
+    return _faces_in(image)
+
+
+def _faces_in(image: Path) -> int | None:
     try:
         import Vision                                  # type: ignore
         from Foundation import NSURL                   # type: ignore
@@ -276,6 +290,69 @@ def faces_in(image: Path) -> int | None:
         return len(req.results() or []) if ok else None
     except Exception:  # noqa: BLE001 - no count is better than a failed photograph
         return None
+
+
+# ── reading ahead ────────────────────────────────────────────────────────────────────────────────────────────
+# The indexer converts image files one after another in one process, and a photograph spends most of its time in 3.9
+# Describe (the GPU).  The quick text check of 3.0 and the face count use Apple Vision (CPU and Neural Engine) and let
+# go of the interpreter while they work, so two threads do them for the next few images while the current one is
+# described.  Memory: a few decoded images at a time.  A file read ahead and never asked for costs only that work.
+AHEAD_THREADS = 2
+_AHEAD: dict[str, Future] = {}
+_AHEAD_DONE: dict[str, dict[str, Any]] = {}     # the text was taken, the face count is still to be asked for
+_AHEAD_LOCK = threading.Lock()
+_POOL: ThreadPoolExecutor | None = None
+
+
+def _ahead_job(src: Path) -> dict[str, Any]:
+    if not read_exif(src):                       # no camera data: not a photograph, nothing of this is asked for
+        return {"text": None, "skip": True}
+    text = _visible_text(src)
+    out: dict[str, Any] = {"text": text}
+    if is_photograph(text):
+        out["faces"] = _faces_in(src)
+    return out
+
+
+def read_ahead(paths: Sequence[Path]) -> None:
+    """Start the text check and the face count of these image files in the background (see above)."""
+    global _POOL
+    with _AHEAD_LOCK:
+        if _POOL is None:
+            _POOL = ThreadPoolExecutor(AHEAD_THREADS, thread_name_prefix="photo-ahead")
+        for p in paths:
+            if str(p) not in _AHEAD and str(p) not in _AHEAD_DONE:
+                _AHEAD[str(p)] = _POOL.submit(_ahead_job, Path(p))
+
+
+def _take(src: Path) -> dict[str, Any] | None:
+    """What was read ahead for *src* (waiting for it when it is under way), or None."""
+    with _AHEAD_LOCK:
+        fut = _AHEAD.pop(str(src), None)
+    if fut is None:
+        return None
+    try:
+        got = fut.result()
+    except Exception:  # noqa: BLE001 - read it now instead
+        return None
+    if got.get("skip"):
+        return None
+    if "faces" in got:
+        _AHEAD_DONE[str(src)] = got
+    return got
+
+
+def stop_ahead() -> None:
+    """Drop what was read ahead and stop the threads (end of the images of a run)."""
+    global _POOL
+    with _AHEAD_LOCK:
+        for f in _AHEAD.values():
+            f.cancel()
+        _AHEAD.clear()
+        _AHEAD_DONE.clear()
+        pool, _POOL = _POOL, None
+    if pool is not None:
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 def attach(md_path: Path, section: str) -> bool:

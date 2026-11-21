@@ -282,8 +282,6 @@ svg.dg { display: block; width: 100%; height: auto; min-width: 820px; font-famil
 .cvb-raster { background: var(--cv-raster); } .cvb-image { background: var(--cv-image); } .cvb-embedded { background: var(--cv-embedded); }
 .cvb-fallback { background: var(--cv-fallback); } .cvb-cached { background: var(--cv-cached); } .cvb-unknown { background: var(--cv-unknown); }
 .cvb-photo { background: var(--cv-photo); } .cvb-timeline { background: var(--cv-timeline); }
-.cv-other { margin-top: 18px; padding-top: 10px; border-top: 1px dashed var(--line-2); } .cv-other-h { margin-bottom: 4px; } .cv-other-l { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
-.cv-pipe-other { grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1fr) auto minmax(180px, 1fr); margin-top: 6px; }
 .cv-strip, .cv-bands { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--panel-2); min-width: 90px; gap: 1px; }
 .cv-bands { height: 16px; } .cv-strip i, .cv-bands i { display: block; height: 100%; min-width: 3px; }
 .cv-dot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; }
@@ -311,7 +309,29 @@ svg.dg { display: block; width: 100%; height: auto; min-width: 820px; font-famil
 .cv-rw-meter, .cv-rw-out { display: flex; flex: 1 1 auto; height: 8px; border-radius: 999px; overflow: hidden; background: var(--idle-soft); gap: 1px; min-width: 60px; }
 .cv-rw-meter i { display: block; height: 100%; background: var(--rw-c); min-width: 2px; }
 .rw-a .cv-rw-meter i { background: var(--rw-a); } .rw-b .cv-rw-meter i { background: var(--rw-b); } .rw-d .cv-rw-meter i { background: var(--rw-d); }
-.cv-step-bar { margin-top: 4px; } .cv-step-bar .small { margin-top: 2px; }
+/* Convert: one track per kind of file (core/understanding.py), then what was understood, by kind */
+.cv-flow { display: grid; grid-template-columns: minmax(170px, 210px) 1fr; gap: 10px 14px; margin-top: 12px; align-items: center; }
+.cv-sniff .cv-tn { border-width: 2px; }
+.cv-tracks { display: grid; gap: 8px; border-left: 2px solid var(--line-2); padding-left: 14px; }
+.cv-track { display: grid; grid-template-columns: 160px 1fr; gap: 10px; align-items: center; }
+.cv-track-l b { font-size: 13px; } .cv-track-n { font-size: 20px; font-weight: 600; line-height: 1.2; } .cv-track-l small { color: var(--muted); font-size: 11px; }
+.cv-track-steps { display: flex; gap: 6px; align-items: stretch; }
+.cv-track-steps > .cv-arrow { align-self: center; }
+.cv-tn { flex: 1 1 0; min-width: 0; border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 9px; background: var(--panel-2); font-size: 12px; display: grid; gap: 3px; align-content: start; }
+.cv-tn.on { background: var(--accent-soft); border-color: var(--accent); }
+.cv-tn-h { display: flex; align-items: center; gap: 6px; } .cv-tn-h b { flex: 1; } .cv-tn-id { color: var(--muted); font-variant-numeric: tabular-nums; }
+.cv-tn-fig { font-weight: 600; } .cv-tn:not(.on) .cv-tn-fig { color: var(--faint); font-weight: 400; }
+.cv-tn-note { color: var(--muted); font-size: 11px; }
+.cv-tn-bar { display: block; height: 6px; border-radius: 999px; background: var(--idle-soft); overflow: hidden; min-width: 50px; }
+.cv-tn-bar i { display: block; height: 100%; background: var(--ok); }
+.cv-und { margin-top: 18px; } .cv-und-wrap { overflow-x: auto; }
+.cv-und-t { width: 100%; border-collapse: collapse; font-size: 12px; }
+.cv-und-t th, .cv-und-t td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line-2); vertical-align: top; }
+.cv-und-t .num { text-align: right; font-variant-numeric: tabular-nums; }
+.cv-und-bar { display: flex; min-width: 120px; margin-top: 4px; }
+.cv-fact { display: grid; grid-template-columns: 120px minmax(60px, 1fr) 90px; gap: 6px; align-items: center; }
+.cv-more { margin-top: 14px; } .cv-more > summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+@media (max-width: 900px) { .cv-flow { grid-template-columns: 1fr; } .cv-tracks { border-left: 0; padding-left: 0; } .cv-track { grid-template-columns: 1fr; } .cv-track-steps { flex-wrap: wrap; } .cv-tn { flex-basis: 140px; } }
 .cv-rw-out { height: 6px; } .cv-rw-out i { display: block; height: 100%; min-width: 2px; }
 .cv-rw-out .o-ok { background: var(--ok); } .cv-rw-out .o-fix { background: var(--cv-repaired); } .cv-rw-out .o-bad { background: var(--bad); } .cv-rw-out .o-warn { background: var(--warn); }
 .cv-rw-n { white-space: nowrap; min-width: 110px; text-align: right; }

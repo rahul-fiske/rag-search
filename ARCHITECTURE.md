@@ -612,6 +612,18 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   `plan` events; a file not profiled yet is counted in `unprofiled`) -- and into per-lane page progress. The
   Indexing tab's Convert panel shows two bars: *Pages in active files* (`live.active`) and *Pages in
   successfully converted files* (`totals.ok_branches`: files that converted, not failed or empty ones).
+* **What was understood, per document** (`core/understanding.py`): the `work` event that closes a document's conversion
+  carries `understood` = its *kind* (what it turned out to be: photograph, photographed page, Google Maps Timeline, PDF
+  with a text layer, PDF scanned or partly scanned, Office or HTML document, text file, JSON data, image read as a
+  page; a failure is named by its format), a *grade* (complete | partial | no_text | error), the facts *found* and
+  the expected facts *missing*, read from the Markdown it was indexed as (a photograph: time, position, place,
+  places nearby, faces, description; complete = time, position, place and description; without a position only
+  "position" is missing). `runview` totals them per kind (`kinds`: count, grades, found, missing, a few example files
+  per gap) and the steps beside the lanes (`steps`: files through 3.0, 3.6, 3.7, 3.8, 3.9, seconds, the route 3.0
+  chose, how each photograph got its description). The Indexing tab's Convert panel draws one track per kind of file
+  3.0 tells apart (documents of pages, photographs, Timelines), each step with the one figure that says how it went
+  (a GPS position in N of M photographs, a place for N of M positions, described N of M), the table *What this run
+  understood, by kind of document*, and the four lanes of 3.2 in detail on request.
 * `docling_convert.py` returns `page_stats` per page (characters, script, tables, big pictures and
   docling's own confidence scores and grade, read defensively with `getattr`); `records.build_pages`
   merges them with the profile.
@@ -1035,7 +1047,10 @@ processes, runs without downloading models.
   `_prepare_document` for a photograph that is converted now): the photograph is described, then chunked and embedded once, complete,
   and published with everything else; the run takes as long as it takes. The model of several GB is held by **one** process: image
   files are converted one after another in the run's own process, after the parallel pool has done the documents, and the model is
-  released (`describe.close_shared`) before the embedder loads. `models.describe` chooses the 8B (default) or the 4B
+  released (`describe.close_shared`) before the embedder loads. While one photograph is described (GPU), two threads of that process read the next
+  four images ahead (`photo.read_ahead`): the camera data check, 3.0's quick text check and the face count (Apple Vision, which
+  lets go of the interpreter while it works), so these no longer wait for the model; memory is a few decoded images. A second
+  model process is not used: one model keeps the GPU busy, and a second copy of several GB would push a busy machine into swap. `models.describe` chooses the 8B (default) or the 4B
   (`rag-search photos model NAME`); the switch `models.describe_auto` (default on; `RAG_SEARCH_DESCRIBE_AUTO`,
   `rag-search photos auto on|off`) turns it off.
 * **A catch-up pass** for photographs indexed without a description (memory was short, the model was not downloaded) or with another

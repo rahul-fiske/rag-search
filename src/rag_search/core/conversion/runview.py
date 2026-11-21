@@ -40,7 +40,7 @@ def _fresh() -> dict[str, Any]:
                      "runway_outcomes": {}, "engines": {},
                      "first": 0.0, "last": 0.0, "tokens": 0, "gpu_s": 0.0,
                      "first_read": 0.0, "last_read": 0.0},
-            "steps": {}}
+            "steps": {}, "kinds": {}}
 
 
 def _lane(st: dict[str, Any], pid: int, role: str, ts: float) -> dict[str, Any]:
@@ -100,6 +100,8 @@ def _feed_work(st: dict[str, Any], ev: dict[str, Any]) -> None:
         return
     if ev.get("outcome") == "stalled":
         proc["gone"] = True
+    if phase == "convert" and ev.get("outcome") != "skipped" and not ev.get("known"):
+        _feed_understood(st, ev)
     proc["docs"][phase] = proc["docs"].get(phase, 0) + 1
     ph["done"] += 1
     out = str(ev.get("outcome") or "done")
@@ -176,6 +178,50 @@ def _feed(st: dict[str, Any], line: str) -> None:
         lane["progress"] = None
         if role == "convert":
             st["live"]["open"].pop(str(ev.get("file", "")), None)
+
+
+_EXAMPLES = 4                                   # files kept per kind and gap, to show what "missing" means
+
+
+def _feed_understood(st: dict[str, Any], ev: dict[str, Any]) -> None:
+    """One converted document into the totals per kind: how many, how complete, which facts were found and missing."""
+    u = ev.get("understood")
+    out = str(ev.get("outcome") or "")
+    if not isinstance(u, dict):
+        if out not in ("error", "no_text", "stalled"):
+            return                                   # a run made before this was recorded, or a document not tried again
+        u = {"kind": _format_of(str(ev.get("file", ""))), "grade": "no_text" if out == "no_text" else "error",
+             "found": [], "missing": []}
+    k = st["kinds"].setdefault(str(u.get("kind") or "other document"),
+                               {"n": 0, "grades": {}, "found": {}, "missing": {}, "examples": {}, "pages": 0,
+                                "weak_pages": 0, "visits": 0})
+    k["n"] += 1
+    g = str(u.get("grade") or "complete")
+    k["grades"][g] = k["grades"].get(g, 0) + 1
+    for f in u.get("found") or []:
+        k["found"][f] = k["found"].get(f, 0) + 1
+    gaps = list(u.get("missing") or []) + ([g] if g in ("error", "no_text") else [])
+    for f in gaps:
+        if f in u.get("missing") or []:
+            k["missing"][f] = k["missing"].get(f, 0) + 1
+        ex = k["examples"].setdefault(f, [])
+        ex.append(str(ev.get("file", "")))
+        del ex[:-_EXAMPLES]
+    for n in ("pages", "weak_pages", "visits"):
+        k[n] += int(u.get(n) or 0)
+
+
+def _format_of(file: str) -> str:
+    from ...paths import IMAGE_EXTENSIONS
+
+    ext = file.rsplit(".", 1)[-1].lower() if "." in file else ""
+    if ext == "pdf":
+        return "PDF"
+    if f".{ext}" in IMAGE_EXTENSIONS:
+        return "image"
+    if ext == "json":
+        return "JSON data"
+    return f".{ext} file" if ext else "other document"
 
 
 STEP_KEYS = ("sniff", "photo", "locate", "timeline", "describe")
@@ -467,5 +513,7 @@ def run_view(paths: Paths, job_id: str = "") -> dict[str, Any]:
             "now": now_view(st, lanes, rec, running), "phases": phases_view(st, rec, running),
             "phase": prog.get("phase", ""), "done": prog.get("done"), "total": prog.get("total"),
             "totals": totals, "lanes": lanes,
-            "live": live_view(st, running), "steps": _steps_view(st), "stall_limit_s": _stall_limit(),
+            "live": live_view(st, running), "steps": _steps_view(st),
+            "kinds": {k: {**v, "examples": {f: list(x) for f, x in v["examples"].items()}} for k, v in st["kinds"].items()},
+            "stall_limit_s": _stall_limit(),
             "started_at": rec.get("started_at"), "finished_at": rec.get("finished_at")}

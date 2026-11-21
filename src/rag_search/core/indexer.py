@@ -59,7 +59,7 @@ from ..paths import (
     sha256_file,
     write_json_atomic,
 )
-from . import chunker, describe, photo, stallwatch, timeline
+from . import chunker, describe, photo, stallwatch, timeline, understanding
 from .bm25 import TOKENIZER_VERSION
 from .conversion import (
     applevision,
@@ -530,6 +530,9 @@ def _failed_conversion(kind: str, profile: dict[str, Any] | None, outcome: str, 
                            readers=["docling"])
 
 
+AHEAD_IMAGES = 4          # image files whose text check and face count run in the background while one is described
+
+
 def prepare_document(task: dict[str, Any]) -> dict[str, Any]:
     """Phase-1 worker (runs in a pool process; takes/returns plain dicts): ``_prepare_document`` framed by
     a ``work`` start / done event, so the dashboard knows which process holds which document whatever the
@@ -540,13 +543,16 @@ def prepare_document(task: dict[str, Any]) -> dict[str, Any]:
     except (ValueError, TypeError, KeyError):
         rel = src.name
     work_event(slog, rel, "convert", "start")
-    outcome = "error"
+    outcome, understood, known = "error", None, False
     try:
         res = _prepare_document(task)
         outcome = str(res.get("status", "error"))
+        understood = res.get("understood")
+        known = bool(res.get("known"))
         return res
-    finally:
-        work_event(slog, rel, "convert", "done", outcome=outcome)
+    finally:                              # what was understood of it goes with the line that closes it (Indexing tab)
+        work_event(slog, rel, "convert", "done", outcome=outcome, **({"understood": understood} if understood else {}),
+                   **({"known": True} if known else {}))
 
 
 def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
@@ -566,6 +572,7 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
     meter = costs.Meter().start()
     idx_dir: Path | None = None
     sha = ""
+    route = ""
 
     def lasting(status: str, exc: BaseException | None, message: str) -> None:
         """Remember a result that will not change until the file does (see ``lasting_reason``)."""
@@ -834,16 +841,21 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         return {"status": "prepared", "src": str(src), "idx_dir": str(idx_dir), "sha": sha,
                 "nodes": len(nodes), "markdown": how, "convert_s": convert_s, "chunk_s": chunk_s,
                 "profile_s": prof_s, "conversion": conversion,
+                "understood": understanding.of_document(
+                    fmt=kind, suffix=src.suffix.lower(), status="prepared", text=text, route=route,
+                    branches=(conversion or {}).get("branches"), outcomes=(conversion or {}).get("outcomes")),
                 "elapsed_s": round(time.perf_counter() - t0, 2)}
     except NoTextError as exc:     # a photo, a blank document: nothing to index, not a failure
         lasting("no_text", exc, str(exc))
         return {"status": "no_text", "src": str(src), "message": str(exc),
+                "understood": understanding.of_document(fmt=kind, suffix=src.suffix.lower(), status="no_text", route=route),
                 "conversion": _failed_conversion(kind, profile, "no_text", prof_s, convert_s,
                                                  meter.cpu_now()),
                 "elapsed_s": round(time.perf_counter() - t0, 2)}
     except Exception as exc:  # noqa: BLE001 - reported per document
         lasting("error", exc, describe_error(exc))
         return {"status": "error", "src": str(src), "message": describe_error(exc),
+                "understood": understanding.of_document(fmt=kind, suffix=src.suffix.lower(), status="error", route=route),
                 "conversion": _failed_conversion(kind, profile, "error", prof_s, convert_s,
                                                  meter.cpu_now()),
                 "elapsed_s": round(time.perf_counter() - t0, 2)}
@@ -1579,8 +1591,12 @@ def run_index(
             else:
                 for t in others:
                     _collect(prepare_document(t))
-            for t in images:
-                _collect(prepare_document(t))
+            try:
+                for i, t in enumerate(images):
+                    photo.read_ahead([Path(x["src"]) for x in images[i + 1:i + 1 + AHEAD_IMAGES]])
+                    _collect(prepare_document(t))
+            finally:
+                photo.stop_ahead()
         finally:
             if watch is not None:
                 watch.stop()
