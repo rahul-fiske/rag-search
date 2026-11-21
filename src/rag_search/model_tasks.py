@@ -605,26 +605,16 @@ def run_describe(paths: Paths, task: Task, req: dict[str, Any]) -> dict[str, Any
 
 
 def run_faces(paths: Paths, task: Task, req: dict[str, Any]) -> dict[str, Any]:
-    """Download the face models when they are missing (about 38 MB, checked against their checksums), then find the faces
-    of the indexed photographs that have not been looked at (``core/people.py``).  Neither the Markdown nor the index
-    changes, so no indexing run follows."""
-    from .core import faces, people
+    """Download the face models when they are missing (about 38 MB, each checked against its checksum).  Finding the faces
+    is step 3.9 of the next indexing run (``core/faces.py``): nothing is scanned here."""
+    from .core import faces
 
-    fetched: list[str] = []
-    if faces.missing_models(paths):
-        task.phase("download", "downloading the face models")
-        try:
-            fetched = faces.download(paths, log=task.log)
-        except Exception as exc:  # noqa: BLE001
-            raise TaskError(f"could not download the face models: {exc}") from exc
-    task.phase("faces", "finding faces in the photographs")
+    task.phase("download", "downloading the face models")
     try:
-        res = people.scan(paths, collection=req.get("collection", ""), limit=int(req.get("limit") or 0),
-                          progress=lambda done, total, what: task.progress(done=done, total=total, unit="photos", model=what),
-                          log=task.log)
-    except RuntimeError as exc:
-        raise TaskError(str(exc)) from exc
-    return {**res, "downloaded": fetched}
+        fetched = faces.download(paths, log=task.log)
+    except Exception as exc:  # noqa: BLE001
+        raise TaskError(f"could not download the face models: {exc}") from exc
+    return {"downloaded": fetched}
 
 
 RUNNERS: dict[str, Callable[[Paths, Task, dict[str, Any]], dict[str, Any]]] = {

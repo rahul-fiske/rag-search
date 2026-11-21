@@ -6,7 +6,7 @@
 const STAGE_KEYS = {
   discover: ['1', 'Discover'], fingerprint: ['2', 'Fingerprint'], convert: ['3', 'Convert'],
   sniff: ['3.0', 'Sniff'], profile: ['3.1', 'Profile'], read: ['3.2', 'Read'], gate: ['3.3', 'Gate'], repair: ['3.4', 'Repair'],
-  reconcile: ['3.5', 'Reconcile'], photo: ['3.6', 'Photo details'], locate: ['3.7', 'Locate'], timeline: ['3.8', 'Timeline'], describe: ['3.9', 'Describe'],
+  reconcile: ['3.5', 'Reconcile'], photo: ['3.6', 'Photo details'], locate: ['3.7', 'Locate'], timeline: ['3.8', 'Timeline'], faces: ['3.9', 'Faces'], describe: ['3.10', 'Describe'],
   chunk: ['4', 'Chunk'], embed: ['5', 'Embed'], write: ['6', 'Write'],
   merge: ['7', 'Merge'], publish: ['8', 'Publish'],
   access: ['S1', 'Access'], keyword: ['S2', 'Keyword'], vectors: ['S3', 'Vectors'], fuse: ['S4', 'Fuse'],

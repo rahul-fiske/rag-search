@@ -50,6 +50,7 @@ LONG_SIDE = 1600            # pixels: faces are looked for in the photograph at 
 FIND_SCORE = 0.8            # YuNet's confidence for a face to be kept
 THUMB = 112                 # pixels: the small picture of each face the People tab shows
 DIM = 128
+LINE = "Faces detected:"       # the line of the photograph's details that says how many were found
 
 
 def model_dir(paths: Paths) -> Path:
@@ -176,26 +177,35 @@ def finder(paths: Paths) -> Finder:
         return _FINDER
 
 
-def for_photo(paths: Paths, src: Path, sha: str, *, store: "Store | None" = None) -> int | None:
-    """Find and remember the faces of one photograph (a photograph already looked at is not looked at again); returns how
-    many faces it has, or None when faces cannot be found here.  Never fails a photograph."""
+def for_photo(paths: Paths, src: Path, sha: str, *, store: "Store | None" = None) -> tuple[int | None, str]:
+    """3.9 Faces for one photograph: find and remember its faces unless they are remembered already.  Returns ``(count, how)``
+    with *how* ``found`` (looked at now), ``known`` (looked at before: nothing is read), ``unavailable`` (no face models on
+    this machine) or ``failed`` (the picture could not be read); *count* is None for the last two.  Never fails a photograph."""
     if available(paths):
-        return None
+        return None, "unavailable"
     own = store is None
     st = store or Store(paths)
     try:
         n = st.photo_faces(sha)
         if n is not None:
             st.seen_at(sha, src)
-            return n
+            return n, "known"
         found = finder(paths).faces(src)
         st.add_photo(sha, src, found)
-        return len(found)
+        return len(found), "found"
     except Exception:  # noqa: BLE001 - no faces is better than a failed photograph
-        return None
+        return None, "failed"
     finally:
         if own:
             st.close()
+
+
+def pending(paths: Paths, sha: str) -> bool:
+    """True when this photograph has not been looked at yet and the face models are here to do it."""
+    if available(paths):
+        return False
+    with Store(paths) as st:
+        return st.photo_faces(sha) is None
 
 
 # ── the store ────────────────────────────────────────────────────────────────

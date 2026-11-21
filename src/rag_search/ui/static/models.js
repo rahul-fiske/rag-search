@@ -360,7 +360,7 @@
       (d.choices || []).map(c => h('option', { value: c.id, selected: c.id === d.model }, `${c.label} · needs about ${c.need_gb.toFixed(1)} GB free${c.downloaded ? '' : ' · not downloaded'}`)));
     return h('div', { class: 'card', style: { marginTop: '16px' } },
       h('div', { class: 'card-head' }, h('h2', null, 'Photo descriptions'),
-        h('span', { class: 'muted small' }, 'a vision model writes a short description of each photograph while it is indexed (step 3.9) · lines are marked as machine-written')),
+        h('span', { class: 'muted small' }, 'a vision model writes a short description of each photograph while it is indexed (step 3.10) · lines are marked as machine-written')),
       d.unavailable ? h('div', { class: 'notice warn' }, d.unavailable) : null,
       h('p', { style: { margin: '0 0 8px' } }, h('b', null, `${num(d.photographs)} photograph(s)`), ': ',
         `${num(d.described)} described by the current model`, d.described_by_another_model ? `, ${num(d.described_by_another_model)} by another model or prompt` : '', `, ${num(d.pending)} to do.`),

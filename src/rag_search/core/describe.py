@@ -14,7 +14,7 @@ weather, indoors or outdoors).  It was tried on 38 of the Ranthambore photograph
 the 8B model made no false statement (the 4B about one photograph in twelve), but a model can still be wrong, which is why
 the lines say so.
 
-Describing is a step of the photograph's own way through a run, after 3.7 Locate and before 4 Chunk (step 3.9): the
+Describing is a step of the photograph's own way through a run, after 3.9 Faces and before 4 Chunk (step 3.10): the
 photograph is described, then chunked and embedded once, complete, and published with everything else.  The model of several
 GB is held by one process, the run's own: 3.0 Sniff has sorted the files by kind before the run, and the photographs are
 converted one after another there (``indexer.by_kind``), and the model is released before the embedder loads.  A machine
@@ -25,8 +25,7 @@ described by another model or prompt.  Each result is also kept in ``<workspace>
 the prompt version, so converting the photograph again (a full rebuild) puts the description back without running the model,
 and a map refresh carries it over.  A photograph counts as one when its Markdown holds little text beyond the details
 section (a photographed page is read, not described).
-The face count comes from the face finder (``faces.py``), which also keeps each face's fingerprint for naming people
-(``people.py``); no name is ever written here.
+The face count is step 3.9 Faces (``faces.py``), before this step, and is not made here.
 """
 
 from __future__ import annotations
@@ -44,7 +43,7 @@ from typing import Any
 
 from .. import machine, models
 from ..paths import NODES_FILE, Paths
-from . import faces, photo
+from . import photo
 
 PROMPT_VERSION = "d1"
 PROMPT = (
@@ -68,7 +67,6 @@ MAX_TAGS = 10
 LOOKS = "Looks like (model-written):"
 THINGS = "Things seen (model-written):"
 PEOPLE = "People in the picture (model count):"
-FACES = "Faces detected:"
 BY = "Described by:"
 KEYS = (LOOKS, THINGS, PEOPLE, BY)           # the lines a description replaces (the face count is separate)
 
@@ -376,8 +374,7 @@ def close_shared() -> None:
 
 
 def for_indexing(paths: Paths, src: Path, sha: str) -> tuple[list[str], dict[str, Any]]:
-    """The lines a photograph gets while it is converted, after Locate: the face count (``faces.py``, which also keeps the
-    faces for naming) and the description, from
+    """The lines a photograph gets while it is converted, after 3.9 Faces: its description, from
     the cache or from the model (loaded once per process).  Returns (lines, info): ``info["described"]`` is ``model``,
     ``cache`` or ``""``, ``info["why"]`` says why a description is missing (memory, model, a photograph the model could not
     describe).  Nothing here fails a photograph."""
@@ -393,7 +390,6 @@ def for_indexing(paths: Paths, src: Path, sha: str) -> tuple[list[str], dict[str
         except Exception as exc:  # noqa: BLE001 - a picture that cannot be rendered has no face count and no description
             info["why"] = f"the picture could not be rendered ({type(exc).__name__})"
             return restore_lines(paths, sha), info
-        n = faces.for_photo(paths, src, sha)
         rec = cached(paths, sha, made_by)
         if rec is not None:
             info["described"] = "cache"
@@ -419,8 +415,6 @@ def for_indexing(paths: Paths, src: Path, sha: str) -> tuple[list[str], dict[str
                 info["seconds"] = round(time.perf_counter() - t0, 2)
         if rec is not None:
             out = lines(rec, made_by)
-        if n is not None:
-            out.append(f"{FACES} {n}")
         return out, info
     finally:
         import shutil
@@ -513,11 +507,7 @@ def describe_all(paths: Paths, *, collection: str = "", limit: int = 0, redo: bo
                 res["described"] += 1
             else:
                 res["from_cache"] += 1
-            extra = lines(rec, made_by)
-            n = faces.for_photo(paths, src, sha)
-            if n is not None:
-                extra.append(f"{FACES} {n}")
-            if photo.set_extra(md, extra):
+            if photo.set_extra(md, lines(rec, made_by)):
                 touched.append(md)
             if i % 25 == 0:
                 say(f"{i}/{len(todo)} photographs, {(time.monotonic() - t0) / i:.1f} s each")

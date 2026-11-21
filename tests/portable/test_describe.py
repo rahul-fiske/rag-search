@@ -351,7 +351,7 @@ class AutomaticTests(IndexedPhotoTests):
 
 
 class InlineDescribeTests(IndexedPhotoTests):
-    """A photograph is described while it is indexed (3.9, after Locate and before Chunk) and embedded once, complete."""
+    """A photograph is described while it is indexed (3.10, after Faces and before Chunk) and embedded once, complete."""
 
     def setUp(self):
         super().setUp()
@@ -394,7 +394,7 @@ class InlineDescribeTests(IndexedPhotoTests):
         self.assertIn("describe", order)
         self.assertEqual(positions, sorted(positions))
         done = next(e for e in self.events(log) if e.get("stage") == "describe" and e.get("status") == "done")
-        self.assertEqual((done["id"], done["source"]), ("3.9", "model"))
+        self.assertEqual((done["id"], done["source"]), ("3.10", "model"))
         self.assertIsNone(describe._SHARED)                                           # the model is released before the embedder loads
         self.assertEqual(describe.status(self.paths)["described"], 1)
 

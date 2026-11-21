@@ -277,12 +277,12 @@ def _format_of(file: str) -> str:
     return f".{ext} file" if ext else "other document"
 
 
-STEP_KEYS = ("sniff", "photo", "locate", "timeline", "describe")
+STEP_KEYS = ("sniff", "photo", "locate", "timeline", "faces", "describe")
 
 
 def _feed_step(st: dict[str, Any], ev: dict[str, Any]) -> None:
-    """Totals of the steps that are not page lanes (3.0 Sniff, 3.6 Photo details, 3.7 Locate, 3.8 Timeline, 3.9 Describe):
-    files through each, seconds, and what they decided (route, source of a description, why one was left)."""
+    """Totals of the steps that are not page lanes (3.0 Sniff, 3.6 Photo details, 3.7 Locate, 3.8 Timeline, 3.9 Faces, 3.10 Describe):
+    files through each, seconds, and what they decided (route, how faces were found, source of a description, why one was left)."""
     key = str(ev.get("stage") or "")
     if key not in STEP_KEYS or ev.get("status") != "done":
         return
@@ -302,6 +302,10 @@ def _feed_step(st: dict[str, Any], ev: dict[str, Any]) -> None:
         bump("kinds", "photograph" if ev.get("photograph") else "photographed page")
     elif key == "locate":
         bump("places", "with places nearby" if ev.get("nearby") else "area and town only")
+    elif key == "faces":
+        bump("how", str(ev.get("how") or "found"))
+        bump("scope", "indexed earlier" if ev.get("earlier") else "in this run")
+        sp["faces"] = sp.get("faces", 0) + int(ev.get("faces") or 0)
     elif key == "describe":
         src = str(ev.get("source") or "none")
         bump("sources", src)

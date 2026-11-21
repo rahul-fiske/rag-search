@@ -30,37 +30,39 @@
     fill(refs.names, (data.people || []).map(p => h('option', { value: p.name })));
   }
 
-  /* ---- face finding: the models and the photographs looked at ---- */
+  /* ---- faces: the models, and what the indexing run (step 3.9 Faces) has found ---- */
   function renderSetup() {
     const c = data.counts || {}, t = data.task, ro = readOnly(), busy = taskActive();
     const missing = (data.missing_models || []).length > 0;
     let task = null;
     if (t && (busy || (Date.now() / 1000 - (t.finished_at || t.updated_at || 0)) < 3600)) {
-      const p = t.progress || {}, pct = p.total ? Math.min(100, Math.round(100 * (p.done || 0) / p.total)) : null, res = t.result || {};
       task = h('div', { style: { margin: '8px 0' } },
-        h('div', { class: 'small' }, pill(t.status, t.status === 'failed' ? 'bad' : t.status === 'succeeded' ? 'ok' : 'warn', busy), ' ',
-          busy ? `${t.phase || ''}${p.total ? ` · ${num(p.done)} of ${num(p.total)} photographs` : ''}` : ''),
-        busy && pct !== null ? h('div', { class: 'bar', style: { margin: '6px 0' } }, h('i', { style: { width: pct + '%' } })) : null,
-        t.error ? h('div', { class: 'notice bad' }, t.error) : null,
-        t.status === 'succeeded' ? h('div', { class: 'notice ok' }, `Looked at ${num(res.looked_at)} photograph(s), found ${num(res.faces)} face(s); ${num(res.already)} were looked at before.`) : null);
+        h('div', { class: 'small' }, pill(t.status, t.status === 'failed' ? 'bad' : t.status === 'succeeded' ? 'ok' : 'warn', busy), ' ', busy ? (t.phase || '') : ''),
+        t.error ? h('div', { class: 'notice bad' }, t.error) : null);
     }
     fill(refs.setup,
       h('div', { class: 'card-head' }, h('h2', null, 'Faces'),
-        h('div', { class: 'spacer' }, h('button', { class: 'btn small primary', disabled: ro || busy || (!!data.available && !missing), on: { click: scan } },
-          missing ? 'Download face models (38 MB) and find faces' : 'Find faces in photographs not looked at yet'))),
+        h('div', { class: 'spacer' },
+          missing ? h('button', { class: 'btn small primary', disabled: ro || busy, on: { click: setup } }, 'Download the face models (38 MB)')
+            : h('button', { class: 'btn small primary', disabled: ro, on: { click: indexNow } }, 'Index now to find faces'))),
       c.photos !== undefined ? h('div', { class: 'cd-tiles' }, statCard(num(c.photos), 'photographs looked at'), statCard(num(c.faces), 'faces found'),
         statCard(num(c.people), 'people named'), statCard(num(c.labelled), 'faces you named'), statCard(num(c.named_auto), 'faces matched to them'),
         statCard(num(c.unknown), 'faces nobody is matched to')) : null,
-      data.available && !missing ? h('div', { class: 'notice warn' }, data.available) : null,
+      !missing && data.available ? h('div', { class: 'notice warn' }, data.available) : null,
       task,
       h('p', { class: 'small muted', style: { margin: '8px 0 0' } },
-        'New photographs get their faces found while they are indexed. Name a few faces of each person below; every other face that is clearly theirs is matched automatically, and a weaker match is asked about under the person. ',
-        'Then search with the names: “me and Samidha”, “Avni eating ice cream”, “my family at the beach”. The names stay in this store, never in the photographs or the index, so renaming or regrouping changes one place.'));
+        missing ? 'The face models are downloaded once and run on this computer. ' : '',
+        'Faces are found by the indexing run, as its step 3.9 Faces: in each photograph while it is converted, and in photographs indexed before without converting them again, so the first run after the download looks at all of them (about 0.1 s each). Follow it on the ', h('a', { href: '#/indexing' }, 'Indexing'), ' tab. ',
+        'Name a few faces of each person below; every other face that is clearly theirs is matched automatically, and a weaker match is asked about under the person. Then search with the names: \u201cme and Samidha\u201d, \u201cAvni eating ice cream\u201d, \u201cmy family at the beach\u201d. The names stay in this store, never in the photographs or the index, so renaming or regrouping changes one place.'));
   }
-  async function scan() {
-    const r = await api('people/scan', {});
+  async function setup() {
+    const r = await api('people/setup', {});
     if (r.ok === false) { toast(r.error || 'failed', 'bad'); return; }
-    toast('Started: see the progress here.', 'ok'); load();
+    toast('Downloading the face models.', 'ok'); load();
+  }
+  async function indexNow() {
+    const r = await act('index/start', { mode: 'new' });
+    if (r.ok !== false) toast(r.already_running ? 'A run is already active: it finds the faces as it goes' : 'Indexing started', r.already_running ? '' : 'ok');
   }
 
   /* ---- who is this: faces nobody is matched to, in groups of look-alikes ---- */

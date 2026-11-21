@@ -1036,7 +1036,7 @@ def _cmd_people(a: argparse.Namespace) -> int:
 
     p = get_paths()
     if a.action == "setup":
-        req = {"op": "faces", "model": "find faces", "collection": a.collection, "limit": a.limit}
+        req = {"op": "faces", "model": "face models"}
         try:
             rec = model_tasks.run(p, req, echo=lambda m: print(m, file=sys.stderr))
         except model_tasks.TaskBusy as exc:
@@ -1053,7 +1053,7 @@ def _cmd_people(a: argparse.Namespace) -> int:
         return EXIT_OK
     c = st["counts"]
     if st["missing_models"]:
-        print("the face models are not downloaded: `rag-search people setup` downloads them (about 38 MB) and finds the faces")
+        print("the face models are not downloaded: `rag-search people setup` downloads them (about 38 MB); the next indexing run then finds the faces (step 3.9)")
     elif st["available"]:
         print(st["available"])
     if c:
@@ -1176,7 +1176,7 @@ def _cmd_photos(a: argparse.Namespace) -> int:
     print(f"{st['photographs']} photograph(s): {st['described']} described by the current model ({st['made_by']}), "
           f"{st['described_by_another_model']} by another model or prompt, {st['pending']} to do"
           + (f", {st['failed']} the model could not describe (tried again only by `describe`)" if st["failed"] else ""))
-    print(f"automatic: {'on: a photograph is described while it is indexed (step 3.9), and a pass after a run catches up the rest' if st['auto'] else 'off'} (`rag-search photos auto on|off`)")
+    print(f"automatic: {'on: a photograph is described while it is indexed (step 3.10), and a pass after a run catches up the rest' if st['auto'] else 'off'} (`rag-search photos auto on|off`)")
     print(f"model: {st['model_label']} ({st['source']}), needs about {st['need_gb']:.1f} GB free, "
           f"{'downloaded' if st['downloaded'] else 'NOT downloaded (rag-search models download ' + st['model'] + ')'}")
     if st["unavailable"]:
@@ -3009,7 +3009,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = add("photos", "a short description of each photograph, written by a vision model", _cmd_photos,
             description="status: how many photographs are described. By default a photograph is described while it is indexed "
-            "(step 3.9, between Locate and Chunk) and a pass after a run catches up the rest (auto on|off). describe: describe the "
+            "(step 3.10, between Faces and Chunk) and a pass after a run catches up the rest (auto on|off). describe: describe the "
             "ones that are not now (a model "
             "of several GB runs in one process; each description is cached by the photograph's checksum, the model and the "
             "prompt version, and written into the photograph's record as machine-written lines). model NAME: choose the 8B "
@@ -3022,13 +3022,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = add("people", "faces in photographs, and the names you give them (named on the dashboard's People tab)", _cmd_people,
             description="status: how many photographs were looked at, faces found and people named. setup: download the face "
-            "models when they are missing (OpenCV YuNet and SFace, about 38 MB) and find the faces of the indexed photographs "
-            "that were not looked at; new photographs get theirs while they are indexed. The names, groups and the faces you "
-            "named are kept in <home>/people.sqlite, never in the photographs or the index; a search that names people keeps "
-            "to their photographs.")
+            "models when they are missing (OpenCV YuNet and SFace, about 38 MB). The faces are found by the indexing run (step "
+            "3.9 Faces): in a photograph while it is converted, and in the photographs indexed before without converting them "
+            "again. The names, groups and the faces you named are kept in <home>/people.sqlite, never in the photographs or "
+            "the index; a search that names people keeps to their photographs.")
     p.add_argument("action", nargs="?", choices=["status", "setup"], default="status")
-    p.add_argument("--collection", default="", help="setup: only this collection")
-    p.add_argument("--limit", type=int, default=0, help="setup: look at no more than this many photographs (a trial)")
 
     p = add("paths", "print data and index folder locations", _cmd_paths)
     p.add_argument("name", nargs="?", default="")

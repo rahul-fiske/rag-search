@@ -14,7 +14,8 @@ from tests.helpers import FakeEmbedder, TempHome
 from tests.portable.test_search_daemon import DaemonCase
 
 from rag_search import client, protocol
-from rag_search.core import describe, faces, people
+from rag_search.core import faces, people
+from rag_search.core.conversion import runview
 
 
 def unit(v):
@@ -156,28 +157,89 @@ class ResolveTests(PeopleCase):
         self.assertIsNone(people.resolve(self.paths, "tigers in Ranthambore"))
 
 
-class IndexingTests(TempHome):
-    def test_without_the_models_no_face_is_looked_for(self):
-        self.assertIn("not downloaded", faces.available(self.paths))
-        self.assertIsNone(faces.for_photo(self.paths, Path("/nowhere.jpg"), "x"))
-        self.assertFalse(faces.store_file(self.paths).exists())
+class FacesStepTests(TempHome):
+    """3.9 Faces is a step of the run like the others: its own stage event, in the photograph's way before Describe, and a
+    catch-up for photographs indexed before that converts and embeds nothing again."""
 
-    def test_the_face_count_line_comes_from_the_face_finder(self):
-        src = self.sdir / "p.jpg"
+    def setUp(self):
+        super().setUp()
         from tests.portable.test_photo import jpeg
 
-        jpeg(src)
-        with mock.patch.object(faces, "for_photo", return_value=3) as fp:
-            got, _info = describe.for_indexing(self.paths, src, "sha1")
-        fp.assert_called_once_with(self.paths, src, "sha1")
-        self.assertIn(f"{describe.FACES} 3", got)
+        (self.sdir / "c").mkdir()
+        self.src = jpeg(self.sdir / "c" / "p.jpg")
+        self.events = []
 
+    def run_index_(self):
+        from rag_search.core import indexer
+
+        srcs = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
+        return indexer.run_index(self.paths, srcs, self.roots(), jobs=1, embedder=FakeEmbedder(),
+                                 progress=lambda e: self.events.append(e))
+
+    def test_without_the_models_no_face_is_looked_for_and_the_step_is_left_out(self):
+        self.assertIn("not downloaded", faces.available(self.paths))
+        self.assertEqual(faces.for_photo(self.paths, Path("/nowhere.jpg"), "x"), (None, "unavailable"))
+        self.assertFalse(faces.store_file(self.paths).exists())
+
+    def test_a_photograph_gets_its_face_count_and_is_looked_at_once(self):
+        from rag_search.core import indexer, photo
+
+        calls = []
+        stage = []
+
+        def fake(paths, src, sha, *, store=None):
+            calls.append(sha)
+            return 2, "found"
+        with mock.patch.object(faces, "available", return_value=""), mock.patch.object(faces, "for_photo", fake), \
+                mock.patch.object(indexer, "stage_event", lambda *a, **k: stage.append((a[2], a[3], k))), \
+                mock.patch.object(photo, "visible_text", return_value=""):
+            self.run_index_()
+        self.assertEqual(len(calls), 1)
+        text = next(self.paths.markup.rglob("p.md")).read_text(encoding="utf-8")
+        self.assertIn(f"- {faces.LINE} 2", text)
+        step = [k for st, status, k in stage if st == "faces"]
+        self.assertEqual([(k["how"], k["faces"], k["earlier"]) for k in step], [("found", 2, False)])
+        order = [st for st, _s, _k in stage if st in ("locate", "faces", "describe", "chunk")]
+        self.assertLess(order.index("faces"), order.index("describe"))
+
+    def test_a_photograph_indexed_before_is_looked_at_without_being_converted_again(self):
+        from rag_search.core import indexer, photo
+
+        with mock.patch.object(faces, "available", return_value="the models are not here"), \
+                mock.patch.object(photo, "visible_text", return_value=""):
+            self.run_index_()
+        md = next(self.paths.markup.rglob("p.md"))
+        before = (md.read_text(encoding="utf-8"), md.stat().st_mtime_ns, next(self.paths.index.rglob("nodes.json")).stat().st_mtime_ns)
+        stage = []
+        with mock.patch.object(faces, "available", return_value=""), \
+                mock.patch.object(faces, "for_photo", return_value=(3, "found")) as fp, \
+                mock.patch.object(indexer, "stage_event", lambda *a, **k: stage.append((a[2], k))), \
+                mock.patch.object(photo, "visible_text", side_effect=AssertionError("not sniffed again")):
+            s = self.run_index_()
+        fp.assert_called_once()
+        self.assertEqual(s["indexed"], 0)                                       # nothing converted or embedded
+        self.assertEqual(before, (md.read_text(encoding="utf-8"), md.stat().st_mtime_ns,
+                                  next(self.paths.index.rglob("nodes.json")).stat().st_mtime_ns))
+        self.assertEqual([k for st, k in stage if st == "faces"],
+                         [{"seconds": mock.ANY, "how": "found", "earlier": True, "faces": 3}])
+
+    def test_the_run_view_counts_the_step_like_the_others(self):
+        st = runview._fresh()
+        feed = lambda **kw: runview._feed(st, json.dumps(kw))
+        feed(event="stage", stage="faces", status="done", pid=1, ts=1, seconds=0.2, how="found", faces=3, earlier=False)
+        feed(event="stage", stage="faces", status="done", pid=1, ts=2, seconds=0.1, how="known", faces=0, earlier=True)
+        v = runview._steps_view(st)["faces"]
+        self.assertEqual((v["n"], v["faces"], v["how"], v["scope"]),
+                         (2, 3, {"found": 1, "known": 1}, {"in this run": 1, "indexed earlier": 1}))
+
+
+class OnePhotographTests(PeopleCase):
     def test_a_photograph_is_looked_at_once(self):
-        with faces.Store(self.paths) as st:
-            st.add_photo("s", Path("/a.jpg"), [face(like(A))])
-            st.add_photo("s", Path("/a.jpg"), [face(like(A)), face(like(B))])
-            st.seen_at("s", Path("/moved/a.jpg"))
-            self.assertEqual((st.photo_faces("s"), st.counts()["faces"], st.sources(["s"])), (1, 1, {"s": "/moved/a.jpg"}))
+        self.st.add_photo("s", Path("/a.jpg"), [face(like(A))])
+        self.st.add_photo("s", Path("/a.jpg"), [face(like(A)), face(like(B))])
+        self.st.seen_at("s", Path("/moved/a.jpg"))
+        self.assertEqual((self.st.photo_faces("s"), self.st.counts()["faces"], self.st.sources(["s"])),
+                         (1, 1, {"s": "/moved/a.jpg"}))
 
 
 class SearchTests(DaemonCase):

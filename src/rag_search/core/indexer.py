@@ -60,7 +60,7 @@ from ..paths import (
     sha256_file,
     write_json_atomic,
 )
-from . import chunker, describe, photo, stallwatch, timeline, understanding
+from . import chunker, describe, faces, photo, stallwatch, timeline, understanding
 from .bm25 import TOKENIZER_VERSION
 from .conversion import (
     applevision,
@@ -571,6 +571,30 @@ def _fills_description(task: dict[str, Any], kind: str, md_path: Path, sha: str)
     return sha not in describe.failures(get_paths(), describe.current_id())
 
 
+def _wants_faces(task: dict[str, Any], kind: str, md_path: Path) -> bool:
+    """An unchanged photograph is looked at for faces when none were found for it yet and the face models are here: only the
+    People store changes (its Markdown and index entry are not touched, so nothing is converted or embedded again)."""
+    if kind != "image" or not task.get("faces_ready"):
+        return False
+    try:
+        return describe.is_photograph(md_path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return False
+
+
+def _faces_step(task: dict[str, Any], src: Path, sha: str, slog: Any, rel_name: str,
+                earlier: bool = False) -> tuple[int | None, str, float]:
+    """3.9 Faces: find and remember the faces of one photograph (``faces.for_photo``), as a step of the run with its own
+    stage event (seconds, how many, and whether they were found now, known already or could not be looked for)."""
+    t0 = time.perf_counter()
+    n, how = faces.for_photo(get_paths(), src, sha)
+    secs = round(time.perf_counter() - t0, 2)
+    if how != "unavailable":
+        stage_event(slog, rel_name, "faces", "done", seconds=secs, how=how, earlier=earlier,
+                    **({"faces": n} if n is not None else {}))
+    return n, how, secs
+
+
 def sniff_document(task: dict[str, Any]) -> dict[str, Any]:
     """3.0 Sniff ahead of the conversions (runs in a pool process: Apple Vision's text check must never run in a thread
     beside the loaded vision model).  ``{"src", "route", "seen", "fill"}``; ``route`` is "" for a file that will not be
@@ -673,6 +697,8 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
                 _repoint(idx_dir, src)
                 stage_event(slog, rel_name, "fingerprint", "done", seconds=round(time.perf_counter() - t_fp, 3),
                             unchanged=True)
+                if _wants_faces(task, kind, md_path):          # 3.9 Faces for a photograph indexed before faces were found
+                    _faces_step(task, src, sha, slog, rel_name, earlier=True)
                 return {"status": "skipped", "src": str(src), "idx_dir": str(idx_dir)}
         known = None if task["rebuild"] or task["force_md"] or fill else known_outcome(idx_dir, sha, task.get("ocr"))
         if known:
@@ -754,7 +780,11 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
             if "- Area:" in photo_section or "- Town:" in photo_section:
                 stage_event(slog, rel_name, "locate", "done", seconds=round(loc_s, 3),
                             nearby="- Nearby:" in photo_section)
-        if photograph:                                 # 3.9 Describe: after Locate, before Chunk (the face count goes with it)
+        if photograph:                                 # 3.9 Faces: after Locate; its count is a line of the details
+            n_faces, f_how, f_s = _faces_step(task, src, sha, slog, rel_name)
+            if n_faces is not None:
+                photo_section = photo.insert_extra(photo_section, [f"{faces.LINE} {n_faces}"])
+        if photograph:                                 # 3.10 Describe: after Faces, before Chunk
             t_de = time.perf_counter()
             extra, dinfo = describe.for_indexing(get_paths(), src, sha)
             photo_section = photo.insert_extra(photo_section, extra)
@@ -1411,7 +1441,7 @@ def _sniff_all(tasks: list[dict[str, Any]], workers: int, progress: Callable[[in
 
 def by_kind(tasks: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """``(pool, main)``: the files for the conversion pool, and those for this process, which holds the vision models --
-    photographs (3.9 Describe) and pictures of pages (bound to the same GPU).  Decided by the kind 3.0 Sniff found, not by
+    photographs (3.10 Describe) and pictures of pages (bound to the same GPU).  Decided by the kind 3.0 Sniff found, not by
     the extension; a file that was not sniffed (or will not be converted) goes by its format."""
     main, pool = [], []
     for t in tasks:
@@ -1621,6 +1651,7 @@ def run_index(
             describe_ready = not describe.inline_ready()
         except Exception:  # noqa: BLE001 - not knowing is "no"
             describe_ready = False
+        faces_ready = not faces.available(paths)       # the face models are here: a photograph's faces are found (3.9)
         tasks = [{
             "src": str(s),
             "roots": roots.to_dict(),
@@ -1630,6 +1661,7 @@ def run_index(
             "model": model, "ocr": ocr,
             "stage_log": str(stage_log) if stage_log else None,
             "describe_ready": describe_ready,
+            "faces_ready": faces_ready,
         } for s in todo]
 
         # Phase 1 — convert + chunk (parallel, no model)
@@ -1721,7 +1753,7 @@ def run_index(
         try:
             # 3.0 Sniff first, for every file, in pool processes: what each file is decides where it goes.  Photographs
             # (and pictures of pages) are converted one after another in this process: a photograph is described by a
-            # vision model of several GB (3.9), which one process must hold, and the document reader is bound to the same
+            # vision model of several GB (3.10), which one process must hold, and the document reader is bound to the same
             # GPU.  The documents of pages go to the pool -- before the photographs, or beside them (kinds_together).
             def _pool_part(part: list[dict[str, Any]]) -> None:
                 if jobs > 1 and len(part) > 1:

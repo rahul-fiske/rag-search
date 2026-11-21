@@ -837,12 +837,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def _people_post(self, action: str, body: dict[str, Any]) -> None:
         """Names, labels and groups (each a small change to ``<home>/people.sqlite``), and the task that downloads the face
-        models and finds the faces of photographs indexed before (op "faces")."""
+        models (op "faces"); the faces themselves are found by the indexing run, step 3.9."""
         from ..core import faces
 
         paths = self.app.paths
-        if action == "scan":
-            req = {"op": "faces", "model": "find faces", "collection": str(body.get("collection") or "")}
+        if action == "setup":
+            req = {"op": "faces", "model": "face models"}
             try:
                 rec = model_tasks.start_detached(paths, req)
             except model_tasks.TaskBusy as exc:

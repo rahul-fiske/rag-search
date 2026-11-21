@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from . import describe
+from . import describe, faces
 
 PHOTOGRAPH = "photograph"
 PHOTOGRAPHED_PAGE = "photographed page"
@@ -27,7 +27,7 @@ TIMELINE = "Google Maps Timeline"
 
 # a photograph: label in its Photo details section -> fact
 _PHOTO_FACTS = (("time", "- Taken:"), ("position", "- Position:"), ("place", ("- Area:", "- Town:")),
-                ("nearby", "- Nearby:"), ("faces", f"- {describe.FACES}"), ("description", f"- {describe.LOOKS}"))
+                ("nearby", "- Nearby:"), ("faces", f"- {faces.LINE}"), ("description", f"- {describe.LOOKS}"))
 # what a complete photograph has; "faces" and "nearby" are reported but not expected (a landscape has no face, a
 # position in a field has no place within 100 m)
 PHOTO_EXPECTED = ("time", "position", "place", "description")
@@ -36,7 +36,7 @@ _TIMELINE_HEAD = re.compile(r"(\d+) visits and (\d+) journeys")
 FORMAT_NAMES = {"pdf": "PDF", "image": "image", "office": "Office or HTML document", "text": "text or Markdown file"}
 
 
-_FACES = re.compile(rf"^- {re.escape(describe.FACES)} ([1-9]\d*)", re.M)
+_FACES = re.compile(rf"^- {re.escape(faces.LINE)} ([1-9]\d*)", re.M)
 
 
 def photo_facts(text: str) -> list[str]:

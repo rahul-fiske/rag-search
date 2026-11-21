@@ -285,7 +285,7 @@ One numbered list of stages describes a document's way into the index and a quer
 numbers are the same everywhere: the progress events of a run (`stage` events carry `id`), the indexer's
 log lines ("3 Convert started", "2 Fingerprint unchanged: skipped"), `rag-search index` output, the
 Architecture tab's diagram, the Indexing tab ("Settings in effect, by pipeline stage"), the Settings tab
-(one card per stage; the steps 3.1-3.9 are cards inside 3 Convert, and 3.2 Read has one card for the router and one
+(one card per stage; the steps 3.1-3.10 are cards inside 3 Convert, and 3.2 Read has one card for the router and one
 for each lane), the page traces, the Playground and this document.
 `stages.py` (stdlib only) is the registry: each `Stage` has its number, key, name, scope, where it runs, a
 one-line description, the settings it owns (`section.key` of `config.json`, the keys the Settings tab edits)
@@ -298,7 +298,7 @@ the Settings tab, the Indexing tab's "Settings in effect" and a Playground exper
 per group, so it is plain which setting acts on which lane. `tests/test_stages.py` checks that every tunable belongs
 to exactly one stage, that every setting and variable of a grouped stage is in exactly one group, that every environment variable listed is really read, and that the browser's copy of the keys
 (`ui/static/pipeline.js`) equals the registry. Conversion is not a side branch: 3 Convert is a stage like
-the others, with its steps 3.1-3.9 numbered inside it: 3.1-3.5 are for pages; 3.0 Sniff comes first and decides, from the file itself, which path a file takes; 3.6 Photo details, 3.7 Locate and 3.9 Describe are the path of a photograph and 3.8 Timeline and 3.7 Locate that of a Google Maps Timeline `.json` (3.1-3.5 are for pages), drawn in the Architecture diagram and on the Indexing tab's Convert picture, recorded as the page branches `photo` and `timeline` and as `stage` events with the ids 3.0 (with the `route` it chose), 3.6, 3.7, 3.8 and 3.9; only pages are profiled (3.1), and the plan a run announces says `photo` or `timeline` for the others. 3.9 Describe is described in 5.3b.
+the others, with its steps 3.1-3.10 numbered inside it: 3.1-3.5 are for pages; 3.0 Sniff comes first and decides, from the file itself, which path a file takes; 3.6 Photo details, 3.7 Locate and 3.9 Describe are the path of a photograph and 3.8 Timeline and 3.7 Locate that of a Google Maps Timeline `.json` (3.1-3.5 are for pages), drawn in the Architecture diagram and on the Indexing tab's Convert picture, recorded as the page branches `photo` and `timeline` and as `stage` events with the ids 3.0 (with the `route` it chose), 3.6, 3.7, 3.8 and 3.9; only pages are profiled (3.1), and the plan a run announces says `photo` or `timeline` for the others. 3.9 Describe is described in 5.3b.
 
 Indexing (one run; 3.2 has four lanes, chosen per page by the router: 3.2a docling on the text layer, 3.2b
 OCR for a clean scan, 3.2c docling on the text layer plus the document reader on its pictures and regions, 3.2d
@@ -315,10 +315,11 @@ the document reader for every other scan and image; a page a cheaper lane doubts
 | 3.3 | Gate | CPU | document | deterministic checks on every page: coverage, script, tables, resolution, running balances and totals, runaway output | – |
 | 3.4 | Repair (optional) | GPU | document | a table cell that breaks the arithmetic is cut out, read again and replaced only when a second, independent reader and the arithmetic agree | `indexer.repair`, `models.repair`; env `RAG_SEARCH_REPAIR_SECOND` |
 | 3.5 | Reconcile | CPU | document | a table that runs across a page break is joined (the continuation gets the header) and checked across the break | – |
-| 3.6 | Photo details (optional) | CPU | document | a photograph (3.0 decided) is indexed from a section of facts, never read by the document reader: time and zone, GPS, camera, how many faces were found (5.3c), text found in the picture, a cached description; a photographed page goes down the lanes and gets the same section at the end | – |
+| 3.6 | Photo details (optional) | CPU | document | a photograph (3.0 decided) is indexed from a section of facts, never read by the document reader: time and zone, GPS, camera, how many faces were found (3.9), text found in the picture, a cached description; a photographed page goes down the lanes and gets the same section at the end | – |
 | 3.7 | Locate (optional) | CPU | document | for every position: the Overture area, the GeoNames town and the Overture places within 100 m, from the map data that is installed (nothing is downloaded here) | – |
 | 3.8 | Timeline (optional) | CPU | document | a Google Maps Timeline `.json` (recognised by its content) becomes a day-by-day log of visits and journeys with `geo:` positions and Google place IDs as they are | – |
-| 3.9 | Describe (optional) | GPU | document | a photograph (3.0 decided) is described by a vision model after 3.7 and before 4 Chunk: a short description written into its record, marked as machine-written, so it is chunked and embedded once, complete. One process holds the model (photographs are converted one after another in the run's own process, after the documents of pages); cached by photograph, model and prompt. When memory is short or the model is missing the description is a missing fact, like a missing position: the photograph is indexed with what it has, and a later run that can describe it converts it again | `models.describe`, `models.describe_auto` |
+| 3.9 | Faces (optional) | CPU | document | a photograph's faces are found (YuNet) and fingerprinted (SFace) after 3.7 and kept in the People store (5.3c), never in the Markdown or the index; the count is a line of its details. A photograph indexed before is looked at without being converted or embedded again, so the first run after the face models are downloaded catches up everything; without the models the step is left out | – |
+| 3.10 | Describe (optional) | GPU | document | a photograph (3.0 decided) is described by a vision model after 3.9 and before 4 Chunk: a short description written into its record, marked as machine-written, so it is chunked and embedded once, complete. One process holds the model (photographs are converted one after another in the run's own process, after the documents of pages); cached by photograph, model and prompt. When memory is short or the model is missing the description is a missing fact, like a missing position: the photograph is indexed with what it has, and a later run that can describe it converts it again | `models.describe`, `models.describe_auto` |
 | 4 | Chunk | CPU | document | split the Markdown into passages that never cross a page; tables and code stay whole where they fit | `indexer.chunk_size`, `indexer.chunk_overlap` |
 | 5 | Embed | GPU | run | turn every new passage into a vector; the model is loaded once per run, after all documents are converted | `models.embedding`, `models.embed_batch`, `models.max_seq`, `models.dtype`, `models.device` |
 | 6 | Write | CPU | document | nodes.json and embeddings.npy, then index.meta.json last, so a half-written document is never taken for a finished one | – |
@@ -626,7 +627,7 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   the expected facts *missing*, read from the Markdown it was indexed as (a photograph: time, position, place,
   places nearby, faces, description; complete = time, position, place and description; without a position only
   "position" is missing). `runview` totals them per kind (`kinds`: count, grades, found, missing, a few example files
-  per gap) and the steps beside the lanes (`steps`: files through 3.0, 3.6, 3.7, 3.8, 3.9, seconds, the route 3.0
+  per gap) and the steps beside the lanes (`steps`: files through 3.0, 3.6, 3.7, 3.8, 3.9, 3.10, seconds, the route 3.0
   chose, how each photograph got its description). The Indexing tab's Convert panel draws one track per kind of file
   3.0 tells apart (documents of pages, photographs, Timelines), each step with the one figure that says how it went
   (a GPS position in N of M photographs, a place for N of M positions, described N of M), the table *What this run
@@ -1065,9 +1066,9 @@ processes, runs without downloading models.
   The photographs follow the documents of pages; `RAG_SEARCH_KINDS_TOGETHER=1` runs the pool beside them in a thread of the
   run's process (the results are collected under a lock).
 
-### 5.3b Photo descriptions (`core/describe.py`, step 3.9)
+### 5.3b Photo descriptions (`core/describe.py`, step 3.10)
 
-* **Step 3.9 of the photograph's own way through a run**, between 3.7 Locate and 4 Chunk (`describe.for_indexing`, called from
+* **Step 3.10 of the photograph's own way through a run**, between 3.9 Faces and 4 Chunk (`describe.for_indexing`, called from
   `_prepare_document` for a photograph that is converted now): the photograph is described, then chunked and embedded once, complete,
   and published with everything else; the run takes as long as it takes. The model of several GB is held by **one** process: 3.0
   Sniff has sorted every file by kind before anything is converted, and the photographs (with the pictures of pages, bound to the
@@ -1075,7 +1076,7 @@ processes, runs without downloading models.
   (`RAG_SEARCH_KINDS_TOGETHER=1` runs the two side by side; off by default, see *Scheduling by kind* in 5.3); the model is
   released (`describe.close_shared`) before the embedder loads. The quick text check of 3.0 runs in the pool processes of the
   sniff, never in threads: done in background threads while the model was loaded (Apple Vision beside MLX) it hung a run. Faces
-  are found (5.3c) in the model's process too, one photograph after another, and a second model process would add a copy of several GB to a machine that is already in swap.
+  (3.9, 5.3c) are found in the model's process too, one photograph after another, and a second model process would add a copy of several GB to a machine that is already in swap.
 * **A photograph's result, like every document's**: `_prepare_document` writes its Markdown from its details (`photo.only`) on its
   own way, never through the no-text path; a photograph with no details at all (no time, no position, no description) is a
   genuine `no_text`. Its `understood` record (kind photograph, grade, facts found and missing) is the same record every kind ends
@@ -1093,7 +1094,7 @@ processes, runs without downloading models.
   failure; the `describe` stage event says why); a photograph the model could not describe is recorded in the cache's `failed` table
   for that model and prompt and is not tried again automatically (a describe run started by hand tries it again), so nothing loops.
 * **What it writes**: lines in the photograph's *Photo details* section, marked as machine-written (`Looks like`, `Things seen`,
-  `People in the picture (model count)`, `Described by: <model>, prompt <version>`), plus `Faces detected` from the face finder
+  `People in the picture (model count)`, `Described by: <model>, prompt <version>`), plus the `Faces detected` line that 3.9 Faces wrote
   (5.3c). A word
   filter drops the guesses the model still makes (seasons, weather, indoors or outdoors). Tried on 38 photographs: main subject
   right every time; no visibly false statement from the 8B, two photographs with one from the 4B.
@@ -1123,9 +1124,16 @@ who      every other face -> the nearest labelled person, when clearly theirs   
   work together; Apple Vision gives other points and would need its own alignment, so it is no longer used for faces). About
   0.1 s a photograph on the CPU with the OpenCV that is installed. The models (about 38 MB, MIT and Apache-2.0) are downloaded
   only on request (`rag-search people setup`, the People tab) into `<home>/models/faces` and checked against their checksums;
-  without them no face is looked for and nothing fails. During a run faces are found at step 3.9 (`describe.for_indexing` calls
-  `faces.for_photo`), once per photograph checksum; photographs indexed before are looked at by a `model_tasks` task
-  (`op: "faces"`, `people.scan`), which changes neither the Markdown nor the index.
+  without them the step is left out and nothing fails (`model_tasks` op `faces` downloads them).
+* **Step 3.9 Faces, a step of the run like the others** (`indexer._faces_step`, after 3.7 Locate and before 3.10 Describe, CPU,
+  optional): its own `stage` event (seconds, `how` = found / known / failed, `faces`, `earlier`), counted by the run view
+  (`runview._feed_step`, `steps.faces`) and drawn as a node of the photograph track on the Indexing tab and in the pipeline
+  diagram. Once per photograph checksum: a photograph already in the store is `known` and nothing is read. The count is a line of
+  the photograph's details. **A photograph indexed before** (unchanged, so 2 Fingerprint would skip it) gets this one step from
+  `_prepare_document`'s unchanged branch (`_wants_faces`: an image whose Markdown is a photograph, with the models here): only the
+  People store changes, its Markdown and index entry are not touched, nothing is converted, chunked or embedded again, and the
+  stage event says `earlier`. So the first run after the models are installed looks at every photograph once (about 0.1 s each, in
+  the pool processes), and no separate scan exists.
 * **Who each face is** (`people.work_out`, cached per process until the store changes): a face you labelled is that person.
   Any other face takes the person whose closest labelled face is closest (cosine), when that is at least 0.40 (OpenCV's line for
   "same person" is 0.363), at least 0.06 ahead of the next person (relatives look alike), the face is at least 40 px and the

@@ -153,7 +153,7 @@ INDEXING: tuple[Stage, ...] = (
           "the break"),
     Stage("3.6", "photo", "Photo details", DOCUMENT, CPU,
           "a photograph (3.0 decided) is indexed from a section of facts, never read by the document reader: when it was taken (with "
-          "the time zone), the GPS position, camera and size, how many faces were found (3.9), a text found in the picture of at least "
+          "the time zone), the GPS position, camera and size, how many faces were found (3.9 Faces), a text found in the picture of at least "
           "four letters, and a description from the cache; a photographed page goes down the lanes and gets the same section "
           "added at the end",
           optional=True, constants=(("letters of text found in a picture kept", 4),)),
@@ -168,10 +168,16 @@ INDEXING: tuple[Stage, ...] = (
           "ID as it is, and the 3.7 lines; a .json that is not one (3.0 found out, or the file proved not to be) is read as "
           "plain structured text",
           optional=True),
-    Stage("3.9", "describe", "Describe", DOCUMENT, GPU,
-          "a photograph is described by a vision model, after 3.7 Locate and before 4 Chunk: a short description written into its "
-          "record, marked as machine-written, with the face count; the faces themselves (where each is, its fingerprint) "
-          "go to the People store (`core/faces.py`), never names into the record, so it is chunked and embedded once, complete. "
+    Stage("3.9", "faces", "Faces", DOCUMENT, CPU,
+          "a photograph's faces are found (OpenCV YuNet, five points on each) and fingerprinted (SFace, 128 numbers) after 3.7 Locate; "
+          "the count is a line of its details and each face goes to the People store (`core/faces.py`, never into the Markdown or "
+          "the index), once per photograph checksum. A photograph indexed before its faces were found is looked at without being "
+          "converted or embedded again, so the first run after the models are installed catches up everything. Without the "
+          "models (downloaded on request: `rag-search people setup`, the People tab) the step is left out",
+          optional=True, constants=(("a face the finder must be this sure of", 0.8),)),
+    Stage("3.10", "describe", "Describe", DOCUMENT, GPU,
+          "a photograph is described by a vision model, after 3.9 Faces and before 4 Chunk: a short description written into its "
+          "record, marked as machine-written, so it is chunked and embedded once, complete. "
           "One process holds the model (image files are converted one after another in the run's own process, after the "
           "documents; the model is released before the embedder loads). Cached by the photograph, the model and the prompt, so "
           "a map refresh or a rebuild never repeats it. Left undescribed for now when memory is short or the model is missing: "

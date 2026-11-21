@@ -191,7 +191,7 @@ const CV = (function () {
     const P = kinds[PHOTO] || { n: 0, found: {} }, pf = P.found || {}, nP = P.n, pos = pf.position || 0;
     const TL = kinds[TIMELINE] || { n: 0, found: {} };
     const nPageDocs = Object.entries(kinds).filter(([k]) => k !== PHOTO && k !== TIMELINE).reduce((a, [, v]) => a + v.n, 0);
-    const dsrc = S('describe').sources || {};
+    const dsrc = S('describe').sources || {}, fs = S('faces'), fhow = fs.how || {}, fscope = fs.scope || {};
     const rw = t.runways || {}, total = sumOf(rw), out = t.outcomes || {}, read = sumOf(out), okPages = (out.pass || 0) + (out.repaired || 0);
     const pp = (kinds[PHOTOGRAPHED] || {}).n || 0;
     return h('div', { class: 'cv-flow' },
@@ -209,12 +209,15 @@ const CV = (function () {
               pp ? `${num(pp)} photographed pages also got photo details` : ''].filter(Boolean).join(' · ') || null)]),
         track('photograph', num(nP || ro.photograph || 0), [
           tnode('3.6', 'Photo details', 'cpu', nP ? `GPS position in ${num(pos)} of ${num(nP)}` : '', nP ? pctOf(pos, nP) : null,
-            'Time, GPS position, camera, faces counted. The bar: the share with a GPS position (without one a photograph cannot be placed).',
+            'Time, GPS position, camera and size. The bar: the share with a GPS position (without one a photograph cannot be placed).',
             nP ? `time in ${num(pf.time || 0)} · faces seen in ${num(pf.faces || 0)}` : null),
           tnode('3.7', 'Locate', 'cpu', pos ? `a place for ${num(pf.place || 0)} of ${num(pos)} positions` : '', pos ? pctOf(pf.place || 0, pos) : null,
             'Area and town from the installed map data (GeoNames, Overture) and Overture places within 100 m. A position outside the downloaded map cells gets no place: download its cells on the Models tab, then refresh.',
             pos ? `places nearby for ${num(pf.nearby || 0)}` : null),
-          tnode('3.9', 'Describe', 'gpu', nP ? `described ${num(pf.description || 0)} of ${num(nP)}` : '', nP ? pctOf(pf.description || 0, nP) : null,
+          tnode('3.9', 'Faces', 'cpu', fs.n ? `looked at ${num(fs.n)} photograph${fs.n === 1 ? '' : 's'}: ${num(fs.faces || 0)} faces` : '', nP && fs.n ? pctOf(pf.faces || 0, nP) : null,
+            'The faces of each photograph are found and fingerprinted (YuNet and SFace, on the CPU) and kept in the People store, never in the Markdown or the index; the count is a line of the details. A photograph indexed before its faces were found is looked at without being converted again. The bar: the share of this run\'s photographs with a face.',
+            fs.n ? `found now ${num(fhow.found || 0)} · known already ${num(fhow.known || 0)}` + (fhow.failed ? ` · could not be read ${num(fhow.failed)}` : '') + (fscope['indexed earlier'] ? ` · of which indexed earlier ${num(fscope['indexed earlier'])}` : '') : (nP ? 'not run: the face models are not downloaded (People tab)' : null)),
+          tnode('3.10', 'Describe', 'gpu', nP ? `described ${num(pf.description || 0)} of ${num(nP)}` : '', nP ? pctOf(pf.description || 0, nP) : null,
             'A vision model writes a short description before the photograph is chunked; cached by photograph, model and prompt, so a map refresh or a rebuild never repeats it. A description is a fact like the others: one that could not be made now is missing, and a later run fills it in.',
             sumOf(dsrc) ? `by the model ${num(dsrc.model || 0)} · from the cache ${num(dsrc.cache || 0)}` + (dsrc.none ? ` · missing ${num(dsrc.none)} (a later run fills them in)` : '') : null)]),
         track('timeline', num(TL.n || ro.timeline || 0), [

@@ -65,7 +65,7 @@
       !block.count ? h('p', { class: 'small muted', style: { margin: 0 } }, 'Nothing to configure.') : null);
   }
 
-  /* One stage = one card.  Its sub-stages (3.1 - 3.9 of 3 Convert) are cards inside it, and a stage whose settings
+  /* One stage = one card.  Its sub-stages (3.1 - 3.10 of 3 Convert) are cards inside it, and a stage whose settings
      belong to several parts (3.2: the router and the four lanes) shows one card per part. */
   function stageCard(s, all) {
     const kids = all.filter(x => x.parent === s.id);
