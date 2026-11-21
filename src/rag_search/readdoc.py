@@ -18,6 +18,7 @@ import difflib
 import fnmatch
 import os
 import re
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -129,10 +130,20 @@ def page_slice(text: str, pages: str) -> tuple[str, dict[str, Any]]:
 
 
 def read(markup_root: Path | None, collection: str, docs: list[dict[str, Any]], ident: str, *, offset: int = 0,
-         max_chars: int = DEFAULT_MAX_CHARS, pages: str = "") -> dict[str, Any]:
+         max_chars: int = DEFAULT_MAX_CHARS, pages: str = "",
+         people: Callable[[Path], list[str]] | None = None) -> dict[str, Any]:
+    """*people* (the Markdown file -> names) adds who is in a photograph: the names are kept apart from its text."""
     entry = resolve(docs, collection, ident)
-    text = _text(markup_file(markup_root, collection, entry))
+    path = markup_file(markup_root, collection, entry)
+    text = _text(path)
     extra: dict[str, Any] = {}
+    if people is not None:
+        try:
+            names = people(path)
+        except Exception:  # noqa: BLE001 - the document is read without them
+            names = []
+        if names:
+            extra["people"] = names
     if pages and pages.strip():
         text, extra = page_slice(text, pages)
         if not text:

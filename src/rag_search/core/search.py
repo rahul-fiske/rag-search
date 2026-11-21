@@ -296,8 +296,13 @@ class SearchEngine:
                collections: list[str] | None = None, *,
                stages: "tuple[str, ...] | list[str] | str | None" = None,
                retrieval_pool_n: int | None = None, rerank_pool_n: int | None = None,
-               rrf_k: int | None = None) -> dict[str, Any]:
+               rrf_k: int | None = None, only: "set[str] | None" = None,
+               people_of: "Any" = None) -> dict[str, Any]:
         """Search the given collections (already policy-checked by the caller).
+
+        ``only`` (source paths) keeps the search to those documents -- the photographs of the people a query names
+        (``core/people.py``); an empty query then lists them.  ``people_of`` (a source path -> names) adds who is in each
+        photograph found.
 
         ``stages`` (default: bm25+dense+rerank, i.e. today's behaviour) lets a caller isolate
         one retriever, or turn reranking off, to troubleshoot the pipeline; at least one of
@@ -312,7 +317,7 @@ class SearchEngine:
         """
         t0 = time.perf_counter()
         query = (query or "").strip()
-        if not query:
+        if not query and only is None:
             return {"results": [], "error": "empty query"}
         top_k = max(1, min(int(top_k), MAX_TOP_K))
         stages = parse_stages(stages)
@@ -337,6 +342,8 @@ class SearchEngine:
                     if gen.number is None else "no matching collections")
             timing["total_ms"] = int((time.perf_counter() - t0) * 1000)
             return {"results": [], "note": note, "timing": timing}
+        if only is not None and not query:
+            return self._listing(gen, wanted, only, top_k, people_of, timing, t0)
         if embedder is None:
             self.load_models()
             with self._swap:
@@ -355,10 +362,15 @@ class SearchEngine:
         keyword_s = dense_s = 0.0
         for coll in wanted:
             data = gen.get(coll)
+            keep = _mask(data, only)
+            if keep is not None and not keep.any():
+                continue
             bm25_scores = dense_scores = None
             if use_bm25:
                 t = time.perf_counter()
                 bm25_scores = data.bm25.scores(qtok)
+                if keep is not None:
+                    bm25_scores = np.where(keep, bm25_scores, 0.0)
                 kw = _top(bm25_scores, pool_n, positive_only=True)
                 keyword_s += time.perf_counter() - t
             else:
@@ -366,7 +378,9 @@ class SearchEngine:
             if use_dense:
                 t = time.perf_counter()
                 dense_scores = data.emb @ qvec
-                dn = _top(dense_scores, pool_n)
+                if keep is not None:
+                    dense_scores = np.where(keep, dense_scores, -np.inf)
+                dn = [i for i in _top(dense_scores, pool_n) if np.isfinite(dense_scores[i])]
                 dense_s += time.perf_counter() - t
             else:
                 dn = []
@@ -445,9 +459,48 @@ class SearchEngine:
                 "heading": m.get("heading", ""),
                 "text": text if len(text) <= SNIPPET_CHARS else text[:SNIPPET_CHARS] + " …",
                 **({"confidence": "low"} if m.get("confidence") == "low" else {}),
+                **_people(people_of, m),
             })
         timing["total_ms"] = int((time.perf_counter() - t0) * 1000)
         return {"results": results, "timing": timing}
+
+    def _listing(self, gen: Generation, wanted: list[str], only: set[str], top_k: int, people_of: Any,
+                 timing: dict[str, Any], t0: float) -> dict[str, Any]:
+        """The documents of *only*, one result each (its first passage), by name: a query that only names people."""
+        seen: set[str] = set()
+        rows = []
+        for coll in wanted:
+            for node in gen.get(coll).nodes:
+                m = node["metadata"]
+                src = m.get("src_path", "")
+                if src in only and src not in seen:
+                    seen.add(src)
+                    rows.append((coll, node))
+        rows.sort(key=lambda r: (r[1]["metadata"].get("doc_path") or r[1]["metadata"].get("file_name", "")))
+        results = []
+        for rank, (coll, node) in enumerate(rows[:top_k], 1):
+            m, text = node["metadata"], node["text"]
+            results.append({"rank": rank, "score": None, "collection": coll, "file": m.get("file_name", ""),
+                            "source": m.get("source_name", ""), "doc": m.get("doc_path") or m.get("file_name", ""),
+                            "page": m.get("page_label", "?"), "heading": m.get("heading", ""),
+                            "text": text if len(text) <= SNIPPET_CHARS else text[:SNIPPET_CHARS] + " …",
+                            **_people(people_of, m)})
+        timing["total_ms"] = int((time.perf_counter() - t0) * 1000)
+        return {"results": results, "timing": timing, "matching": len(rows)}
+
+
+def _mask(data: IndexData, only: "set[str] | None") -> "np.ndarray | None":
+    """Which passages belong to the documents of *only* (None: all of them)."""
+    if only is None:
+        return None
+    return np.fromiter((n["metadata"].get("src_path", "") in only for n in data.nodes), dtype=bool, count=len(data.nodes))
+
+
+def _people(people_of: Any, m: dict[str, Any]) -> dict[str, Any]:
+    if people_of is None:
+        return {}
+    names = people_of(m.get("src_path", ""))
+    return {"people": names} if names else {}
 
 
 def _top1_top2(values: "list[float] | np.ndarray") -> tuple[float, float | None]:

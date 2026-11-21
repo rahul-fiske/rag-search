@@ -477,3 +477,13 @@ table.cost { width: 100%; margin: 6px 0 10px; }
 table.cost th, table.cost td { padding: 4px 10px; text-align: left; }
 table.cost th.num, table.cost td.num { text-align: right; }
 table.cost tr.total td { border-top: 1px solid var(--line); }
+
+/* People tab: faces */
+.faces { display: flex; flex-wrap: wrap; gap: 6px; }
+.face { width: 72px; height: 72px; border-radius: 8px; object-fit: cover; border: 2px solid var(--line); background: var(--panel-2); cursor: pointer; }
+.face.off { opacity: .25; border-style: dashed; }
+.facebox { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.face-actions { display: flex; gap: 2px; }
+.btn.tiny { padding: 0 6px; font-size: 12px; line-height: 18px; }
+.cluster { border-top: 1px solid var(--line); padding: 10px 0; }
+tr.sel td { background: var(--accent-soft); }

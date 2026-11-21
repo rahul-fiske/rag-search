@@ -435,6 +435,8 @@ class Handler(BaseHTTPRequestHandler):
             task = model_tasks.read_task(app.paths)
             return self._json({"ok": True, **describe.status(app.paths, (q.get("collection") or [""])[0]),
                                "task": task if task and task.get("op") == "describe" else None})
+        if name == "people" or name.startswith("people/"):
+            return self._people_get(name[len("people/"):] if name != "people" else "", q)
         if name == "maps":
             from .. import maps
 
@@ -602,6 +604,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._maps_post(name[len("maps/"):], body)
             if name.startswith("photos/"):
                 return self._photos_post(name[len("photos/"):], body)
+            if name.startswith("people/"):
+                return self._people_post(name[len("people/"):], body)
             if name.startswith("playground/"):
                 return self._playground_post(name[len("playground/"):], body)
         except ValueError as exc:
@@ -798,6 +802,113 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(400, str(exc))
         self.app.live.nudge(catalog=True)
         self._json({"ok": True, "task": rec})
+
+    def _people_get(self, what: str, q: dict[str, list[str]]) -> None:
+        """The People tab: names and groups, the faces nobody is matched to (in groups of look-alikes), one person's faces,
+        and the small picture of a face.  See core/faces.py and core/people.py."""
+        from ..core import faces, people
+
+        paths = self.app.paths
+
+        def num(key: str, default: int = 0) -> int:
+            try:
+                return int((q.get(key) or [default])[0])
+            except (TypeError, ValueError):
+                return default
+        if what == "":
+            task = model_tasks.read_task(paths)
+            return self._json({"ok": True, **people.overview(paths),
+                               "task": task if task and task.get("op") == "faces" else None})
+        if what == "clusters":
+            return self._json({"ok": True, **people.cluster_view(paths, limit=max(1, min(num("limit", 20), 100)),
+                                                                skip=max(0, num("skip")))})
+        if what == "person":
+            r = people.person_view(paths, num("id"))
+            return self._json({"ok": True, **r}) if "error" not in r else self._error(404, r["error"])
+        if what == "face":
+            if not faces.store_file(paths).exists():
+                return self._error(404, "no faces yet")
+            with faces.Store(paths) as st:
+                jpg = st.thumb(num("id"))
+            if jpg is None:
+                return self._error(404, "no such face")
+            return self._send(200, jpg, "image/jpeg", {"Cache-Control": "private, max-age=86400"})
+        self._error(404, "not found")
+
+    def _people_post(self, action: str, body: dict[str, Any]) -> None:
+        """Names, labels and groups (each a small change to ``<home>/people.sqlite``), and the task that downloads the face
+        models and finds the faces of photographs indexed before (op "faces")."""
+        from ..core import faces
+
+        paths = self.app.paths
+        if action == "scan":
+            req = {"op": "faces", "model": "find faces", "collection": str(body.get("collection") or "")}
+            try:
+                rec = model_tasks.start_detached(paths, req)
+            except model_tasks.TaskBusy as exc:
+                return self._error(409, str(exc))
+            except model_tasks.TaskError as exc:
+                return self._error(400, str(exc))
+            return self._json({"ok": True, "task": rec})
+
+        def ints(key: str) -> list[int]:
+            v = body.get(key)
+            v = v if isinstance(v, list) else [v] if v is not None else []
+            try:
+                return [int(x) for x in v]
+            except (TypeError, ValueError):
+                raise faces.StoreError(f"{key} must be a list of numbers") from None
+
+        def one(key: str) -> int:
+            got = ints(key)
+            if len(got) != 1:
+                raise faces.StoreError(f"expected one {key}")
+            return got[0]
+
+        def text(key: str) -> str:
+            v = body.get(key)
+            return v if isinstance(v, str) else ""
+        try:
+            with faces.Store(paths) as st:
+                if action == "name":                       # these faces are this person (a new one when the name is new)
+                    person = st.person_id(text("name").strip(), create=True)
+                    n = st.label(ints("faces"), person)    # type: ignore[arg-type]
+                    return self._json({"ok": True, "person": person, "labelled": n})
+                if action == "confirm":
+                    return self._json({"ok": True, "labelled": st.label(ints("faces"), one("person"))})
+                if action == "reject":
+                    for f in ints("faces"):
+                        st.reject(f, one("person"))
+                    return self._json({"ok": True})
+                if action == "unlabel":
+                    for f in ints("faces"):
+                        st.unlabel(f)
+                    return self._json({"ok": True})
+                if action == "rename":
+                    r = st.rename(one("person"), text("name"), merge=body.get("merge") is True)
+                    if r.get("merge_needed"):
+                        return self._json({"ok": False, "merge_needed": True,
+                                           "error": f"{text('name')!r} is already a person: merge the two?"}, 409)
+                    return self._json({"ok": True, **r})
+                if action == "aliases":
+                    return self._json({"ok": True, "aliases": st.set_aliases(one("person"), text("aliases").split(","))})
+                if action == "delete":
+                    st.delete_person(one("person"))
+                    return self._json({"ok": True})
+                if action == "group/create":
+                    return self._json({"ok": True, "group": st.group_id(text("name").strip(), create=True)})
+                if action == "group/rename":
+                    st.rename_group(one("group"), text("name"))
+                    return self._json({"ok": True})
+                if action == "group/members":
+                    st.set_members(one("group"), ints("people"))
+                    return self._json({"ok": True})
+                if action == "group/delete":
+                    st.delete_group(one("group"))
+                    return self._json({"ok": True})
+        except faces.StoreError as exc:
+            return self._error(400, str(exc))
+        self._error(404, "not found")
 
     def _photos_post(self, action: str, body: dict[str, Any]) -> None:
         """Describing photographs runs as a detached task like a model download (op "describe"); the page polls GET /api/photos."""

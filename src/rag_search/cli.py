@@ -1030,6 +1030,42 @@ def _cmd_service(a: argparse.Namespace) -> int:
 
 # ── local commands ───────────────────────────────────────────────────────────
 
+def _cmd_people(a: argparse.Namespace) -> int:
+    from . import model_tasks
+    from .core import people
+
+    p = get_paths()
+    if a.action == "setup":
+        req = {"op": "faces", "model": "find faces", "collection": a.collection, "limit": a.limit}
+        try:
+            rec = model_tasks.run(p, req, echo=lambda m: print(m, file=sys.stderr))
+        except model_tasks.TaskBusy as exc:
+            _err(str(exc))
+            return EXIT_FAIL
+        if rec.get("status") != "succeeded":
+            _err(rec.get("error") or rec.get("status", "failed"))
+            return EXIT_FAIL
+        _json(rec.get("result") or {})
+        return EXIT_OK
+    st = people.overview(p)
+    if a.json:
+        _json(st)
+        return EXIT_OK
+    c = st["counts"]
+    if st["missing_models"]:
+        print("the face models are not downloaded: `rag-search people setup` downloads them (about 38 MB) and finds the faces")
+    elif st["available"]:
+        print(st["available"])
+    if c:
+        print(f"{c['photos']} photograph(s) looked at, {c['faces']} face(s); {c['people']} people named, "
+              f"{c['labelled']} face(s) named by you and {c['named_auto']} matched to them, {c['unknown']} nobody is matched to")
+    for x in st["people"]:
+        also = f" (also {', '.join(x['aliases'])})" if x["aliases"] else ""
+        print(f"  {x['name']}{also}: {x['photos']} photograph(s)" + (f", groups {', '.join(x['groups'])}" if x["groups"] else ""))
+    print("Name the faces and make groups on the dashboard's People tab (rag-search ui); then search with the names.")
+    return EXIT_OK
+
+
 def _cmd_paths(a: argparse.Namespace) -> int:
     p = get_paths()
     info = {"home": p.home, "locations": p.locations_file, "workspace": p.workspace, "index": p.index,
@@ -2983,6 +3019,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--collection", default="", help="only this collection")
     p.add_argument("--limit", type=int, default=0, help="describe: at most this many photographs (a trial)")
     p.add_argument("--redo", action="store_true", help="describe: also the ones already described by the current model")
+
+    p = add("people", "faces in photographs, and the names you give them (named on the dashboard's People tab)", _cmd_people,
+            description="status: how many photographs were looked at, faces found and people named. setup: download the face "
+            "models when they are missing (OpenCV YuNet and SFace, about 38 MB) and find the faces of the indexed photographs "
+            "that were not looked at; new photographs get theirs while they are indexed. The names, groups and the faces you "
+            "named are kept in <home>/people.sqlite, never in the photographs or the index; a search that names people keeps "
+            "to their photographs.")
+    p.add_argument("action", nargs="?", choices=["status", "setup"], default="status")
+    p.add_argument("--collection", default="", help="setup: only this collection")
+    p.add_argument("--limit", type=int, default=0, help="setup: look at no more than this many photographs (a trial)")
 
     p = add("paths", "print data and index folder locations", _cmd_paths)
     p.add_argument("name", nargs="?", default="")

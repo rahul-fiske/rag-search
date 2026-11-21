@@ -604,8 +604,32 @@ def run_describe(paths: Paths, task: Task, req: dict[str, Any]) -> dict[str, Any
     return {**res, "reindex": started}
 
 
+def run_faces(paths: Paths, task: Task, req: dict[str, Any]) -> dict[str, Any]:
+    """Download the face models when they are missing (about 38 MB, checked against their checksums), then find the faces
+    of the indexed photographs that have not been looked at (``core/people.py``).  Neither the Markdown nor the index
+    changes, so no indexing run follows."""
+    from .core import faces, people
+
+    fetched: list[str] = []
+    if faces.missing_models(paths):
+        task.phase("download", "downloading the face models")
+        try:
+            fetched = faces.download(paths, log=task.log)
+        except Exception as exc:  # noqa: BLE001
+            raise TaskError(f"could not download the face models: {exc}") from exc
+    task.phase("faces", "finding faces in the photographs")
+    try:
+        res = people.scan(paths, collection=req.get("collection", ""), limit=int(req.get("limit") or 0),
+                          progress=lambda done, total, what: task.progress(done=done, total=total, unit="photos", model=what),
+                          log=task.log)
+    except RuntimeError as exc:
+        raise TaskError(str(exc)) from exc
+    return {**res, "downloaded": fetched}
+
+
 RUNNERS: dict[str, Callable[[Paths, Task, dict[str, Any]], dict[str, Any]]] = {
-    "switch": run_switch, "download": run_download, "verify": run_verify, "runtime": run_runtime, "maps": run_maps, "describe": run_describe}
+    "switch": run_switch, "download": run_download, "verify": run_verify, "runtime": run_runtime, "maps": run_maps,
+    "describe": run_describe, "faces": run_faces}
 
 
 def run(paths: Paths, request: dict[str, Any], echo: Callable[[str], None] | None = None,

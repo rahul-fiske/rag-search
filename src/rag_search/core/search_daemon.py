@@ -330,8 +330,23 @@ class SearchDaemon(DaemonBase):
         # models per query and serialises only the model calls, so concurrent clients are not
         # queued behind one another's BM25/vector/fusion work (or a slow many-collection query).
         queue_ms = int((time.perf_counter() - t_req) * 1000)       # warm-up wait
-        result = self.engine.search(str(req.get("query", "")), top_k,
-                                    scope, stages=stages, **pool_kw)
+        query = str(req.get("query", ""))
+        named, people_of = None, None
+        try:                                    # names of people in the query keep it to their photographs
+            from . import people
+
+            if req.get("people", True) is not False:
+                named = people.resolve(self.paths, query)
+            people_of = people.people_of_src(self.paths)
+        except Exception as exc:  # noqa: BLE001 - a broken people store must not break search
+            log.warning("people lookup failed: %s", exc)
+        if named is not None:
+            result = self.engine.search(named["rest"], top_k, scope, stages=stages, only=named["photos"],
+                                        people_of=people_of, **pool_kw)
+            result["people"] = {"people": named["people"], "groups": named["groups"], "photos": len(named["photos"]),
+                                "searched_for": named["rest"]}
+        else:
+            result = self.engine.search(query, top_k, scope, stages=stages, people_of=people_of, **pool_kw)
         result.setdefault("timing", {}).update(
             queue_ms=queue_ms, server_ms=int((time.perf_counter() - t_req) * 1000))
         return {"ok": True, "result": result}

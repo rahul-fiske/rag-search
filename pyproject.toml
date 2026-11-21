@@ -34,6 +34,8 @@ dependencies = [
   "huggingface_hub>=0.24",
   # the MCP adapter (Claude Desktop, Claude Code and other MCP hosts)
   "mcp>=1.12,<2",
+  # OpenCV finds the faces in photographs and fingerprints them (core/faces.py); docling's OCR already brings it
+  "opencv-python-headless>=4.8",
   # pillow-heif lets the document reader read iPhone photos (.heic)
   "pillow-heif>=0.18",
   # macOS: Apple Vision (ocrmac) reads scanned pages, and is the independent second reader that confirms repaired table cells

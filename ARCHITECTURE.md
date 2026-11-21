@@ -315,7 +315,7 @@ the document reader for every other scan and image; a page a cheaper lane doubts
 | 3.3 | Gate | CPU | document | deterministic checks on every page: coverage, script, tables, resolution, running balances and totals, runaway output | – |
 | 3.4 | Repair (optional) | GPU | document | a table cell that breaks the arithmetic is cut out, read again and replaced only when a second, independent reader and the arithmetic agree | `indexer.repair`, `models.repair`; env `RAG_SEARCH_REPAIR_SECOND` |
 | 3.5 | Reconcile | CPU | document | a table that runs across a page break is joined (the continuation gets the header) and checked across the break | – |
-| 3.6 | Photo details (optional) | CPU | document | a photograph (3.0 decided) is indexed from a section of facts, never read by the document reader: time and zone, GPS, camera, faces Apple Vision counts, text found in the picture, a cached description; a photographed page goes down the lanes and gets the same section at the end | – |
+| 3.6 | Photo details (optional) | CPU | document | a photograph (3.0 decided) is indexed from a section of facts, never read by the document reader: time and zone, GPS, camera, how many faces were found (5.3c), text found in the picture, a cached description; a photographed page goes down the lanes and gets the same section at the end | – |
 | 3.7 | Locate (optional) | CPU | document | for every position: the Overture area, the GeoNames town and the Overture places within 100 m, from the map data that is installed (nothing is downloaded here) | – |
 | 3.8 | Timeline (optional) | CPU | document | a Google Maps Timeline `.json` (recognised by its content) becomes a day-by-day log of visits and journeys with `geo:` positions and Google place IDs as they are | – |
 | 3.9 | Describe (optional) | GPU | document | a photograph (3.0 decided) is described by a vision model after 3.7 and before 4 Chunk: a short description written into its record, marked as machine-written, so it is chunked and embedded once, complete. One process holds the model (photographs are converted one after another in the run's own process, after the documents of pages); cached by photograph, model and prompt. When memory is short or the model is missing the description is a missing fact, like a missing position: the photograph is indexed with what it has, and a later run that can describe it converts it again | `models.describe`, `models.describe_auto` |
@@ -1074,8 +1074,8 @@ processes, runs without downloading models.
   same GPU) are converted one after another in the run's own process, after the parallel pool has done the documents of pages
   (`RAG_SEARCH_KINDS_TOGETHER=1` runs the two side by side; off by default, see *Scheduling by kind* in 5.3); the model is
   released (`describe.close_shared`) before the embedder loads. The quick text check of 3.0 runs in the pool processes of the
-  sniff, never in threads: done in background threads while the model was loaded (Apple Vision beside MLX) it hung a run. The face
-  count stays in the model's process, and a second model process would add a copy of several GB to a machine that is already in swap.
+  sniff, never in threads: done in background threads while the model was loaded (Apple Vision beside MLX) it hung a run. Faces
+  are found (5.3c) in the model's process too, one photograph after another, and a second model process would add a copy of several GB to a machine that is already in swap.
 * **A photograph's result, like every document's**: `_prepare_document` writes its Markdown from its details (`photo.only`) on its
   own way, never through the no-text path; a photograph with no details at all (no time, no position, no description) is a
   genuine `no_text`. Its `understood` record (kind photograph, grade, facts found and missing) is the same record every kind ends
@@ -1093,7 +1093,8 @@ processes, runs without downloading models.
   failure; the `describe` stage event says why); a photograph the model could not describe is recorded in the cache's `failed` table
   for that model and prompt and is not tried again automatically (a describe run started by hand tries it again), so nothing loops.
 * **What it writes**: lines in the photograph's *Photo details* section, marked as machine-written (`Looks like`, `Things seen`,
-  `People in the picture (model count)`, `Described by: <model>, prompt <version>`), plus Apple Vision's `Faces detected`. A word
+  `People in the picture (model count)`, `Described by: <model>, prompt <version>`), plus `Faces detected` from the face finder
+  (5.3c). A word
   filter drops the guesses the model still makes (seasons, weather, indoors or outdoors). Tried on 38 photographs: main subject
   right every time; no visibly false statement from the 8B, two photographs with one from the 4B.
 * **Only photographs**: a document with a Photo details section and little text beyond it; a photographed page is read, not described.
@@ -1102,6 +1103,41 @@ processes, runs without downloading models.
   renewed (a map refresh rewrites only the place lines); a photograph converted again (a full rebuild) gets its description back from the
   cache while it is converted, without the model. A new model or prompt makes the photographs candidates again.
 * **Embedding**: inside a run the description is part of the photograph's text when it is chunked, so it is embedded once; the catch-up pass marks the photograph's index entry out of date and starts `index new`, which reuses the Markdown and embeds the new text.
+
+### 5.3c People in photographs (`core/faces.py`, `core/people.py`, the People tab)
+
+Who is in a photograph is kept **apart from the index and the photographs**, in `<home>/people.sqlite` (outside the indexer's
+workspace, so a rebuild keeps it). Only the face count goes into a photograph's Markdown; names are added when a photograph is
+found or read. Renaming a person is one row, regrouping touches no face, and a better face model recomputes only the fingerprints.
+
+```
+faces    the photograph's checksum, where the face is, a small picture of it     facts, made once per photograph
+vectors  the face's fingerprint for a face model (128 numbers, SFace)              facts, made again by a new model
+people   names and aliases ("me");  groups and members ("family")                  what you decide
+labels   "this face is Avni" / "this face is not Avni"                             what you decide, never recomputed
+who      every other face -> the nearest labelled person, when clearly theirs      worked out when needed, never stored
+```
+
+* **Finding faces** (`faces.Finder`): OpenCV's YuNet finds each face with five points (eyes, nose, mouth corners) in the
+  photograph upright at 1600 px; SFace makes a 128-number fingerprint from a crop lined up on those points (the two are made to
+  work together; Apple Vision gives other points and would need its own alignment, so it is no longer used for faces). About
+  0.1 s a photograph on the CPU with the OpenCV that is installed. The models (about 38 MB, MIT and Apache-2.0) are downloaded
+  only on request (`rag-search people setup`, the People tab) into `<home>/models/faces` and checked against their checksums;
+  without them no face is looked for and nothing fails. During a run faces are found at step 3.9 (`describe.for_indexing` calls
+  `faces.for_photo`), once per photograph checksum; photographs indexed before are looked at by a `model_tasks` task
+  (`op: "faces"`, `people.scan`), which changes neither the Markdown nor the index.
+* **Who each face is** (`people.work_out`, cached per process until the store changes): a face you labelled is that person.
+  Any other face takes the person whose closest labelled face is closest (cosine), when that is at least 0.40 (OpenCV's line for
+  "same person" is 0.363), at least 0.06 ahead of the next person (relatives look alike), the face is at least 40 px and the
+  finder sure of it (0.85), and you have not said it is not that person. From 0.30 it is a suggestion, asked about under the
+  person. Every labelled face is a reference of its own, not an average, so a child's faces years apart are each matched by the
+  labels nearest to them. Unnamed faces close to each other (0.45) are grouped so the People tab asks "who is this?" once.
+* **Search** (`people.resolve`, in the search daemon): the names, aliases and groups in a query are taken out of it and become the
+  photographs that have every person named and, for each group, at least one more of its members ("me" after "show", "give",
+  "find" asks rather than names). The rest of the query is searched among those photographs only (`SearchEngine.search(only=...)`
+  masks the other passages before BM25 and the vectors rank); a query of names only lists them. Results say who is in each
+  photograph (`people`), the reply says what was understood (`people: {people, groups, photos, searched_for}`), and
+  `rag_read_document` adds `people` to a photograph.
 
 ### 5.4 Playground (`core/playground.py`)
 

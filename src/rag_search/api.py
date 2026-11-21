@@ -173,8 +173,11 @@ def read_document(paths: Paths, collection: str, doc: str, *, offset: int = 0,
     if err:
         return err
     try:
+        from .core import people
+
         return {"ok": True, "source": "local", "result": readdoc.read(
-            paths.live_markup(), name, docs, doc, offset=offset, max_chars=max_chars, pages=pages)}
+            paths.live_markup(), name, docs, doc, offset=offset, max_chars=max_chars, pages=pages,
+            people=lambda md: people.people_of_markdown(paths, md))}
     except readdoc.DocError as exc:
         return protocol.error(protocol.BAD_REQUEST, str(exc))
 

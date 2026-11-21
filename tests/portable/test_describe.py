@@ -112,8 +112,6 @@ class DescribeRunTests(IndexedPhotoTests):
         self.assertIn("- Looks like (model-written): A tiger walks", text)
         self.assertIn(f"- Described by: {describe.current_id()}", text)
         self.assertIn("Text in the picture: EXIT 4", text)
-        if photo.faces_in(Path(next(Path(self.tmp).rglob("*.jpg")))) is not None:
-            self.assertRegex(text, r"- Faces detected: \d")
         self.assertFalse((self.paths.index / "c" / "p" / "index.meta.json").exists())   # marked for embedding
         self.assertEqual(describe.status(self.paths)["described"], 1)
         again = describe.describe_all(self.paths, reader=model)

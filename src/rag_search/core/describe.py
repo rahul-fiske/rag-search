@@ -25,7 +25,8 @@ described by another model or prompt.  Each result is also kept in ``<workspace>
 the prompt version, so converting the photograph again (a full rebuild) puts the description back without running the model,
 and a map refresh carries it over.  A photograph counts as one when its Markdown holds little text beyond the details
 section (a photographed page is read, not described).
-The face count is Apple Vision's (a count, never who it is).
+The face count comes from the face finder (``faces.py``), which also keeps each face's fingerprint for naming people
+(``people.py``); no name is ever written here.
 """
 
 from __future__ import annotations
@@ -43,7 +44,7 @@ from typing import Any
 
 from .. import machine, models
 from ..paths import NODES_FILE, Paths
-from . import photo
+from . import faces, photo
 
 PROMPT_VERSION = "d1"
 PROMPT = (
@@ -375,7 +376,8 @@ def close_shared() -> None:
 
 
 def for_indexing(paths: Paths, src: Path, sha: str) -> tuple[list[str], dict[str, Any]]:
-    """The lines a photograph gets while it is converted, after Locate: Apple Vision's face count and the description, from
+    """The lines a photograph gets while it is converted, after Locate: the face count (``faces.py``, which also keeps the
+    faces for naming) and the description, from
     the cache or from the model (loaded once per process).  Returns (lines, info): ``info["described"]`` is ``model``,
     ``cache`` or ``""``, ``info["why"]`` says why a description is missing (memory, model, a photograph the model could not
     describe).  Nothing here fails a photograph."""
@@ -391,7 +393,7 @@ def for_indexing(paths: Paths, src: Path, sha: str) -> tuple[list[str], dict[str
         except Exception as exc:  # noqa: BLE001 - a picture that cannot be rendered has no face count and no description
             info["why"] = f"the picture could not be rendered ({type(exc).__name__})"
             return restore_lines(paths, sha), info
-        n = photo.faces_in(image)
+        n = faces.for_photo(paths, src, sha)
         rec = cached(paths, sha, made_by)
         if rec is not None:
             info["described"] = "cache"
@@ -512,7 +514,7 @@ def describe_all(paths: Paths, *, collection: str = "", limit: int = 0, redo: bo
             else:
                 res["from_cache"] += 1
             extra = lines(rec, made_by)
-            n = photo.faces_in(image)
+            n = faces.for_photo(paths, src, sha)
             if n is not None:
                 extra.append(f"{FACES} {n}")
             if photo.set_extra(md, extra):

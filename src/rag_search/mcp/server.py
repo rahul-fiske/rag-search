@@ -105,8 +105,11 @@ def make_tools(client: str) -> dict[str, Callable[..., Awaitable[str]]]:
         server_ms, round_trip_ms, ...}}. `score` is the reranker relevance in [0, 1]. `page`
         is the page number in the source document - use it as the citation. A result with
         `"confidence": "low"` comes from a page the converter could not fully verify (a scan
-        whose figures did not add up, say): quote it with that caveat and check the source. If the engine is
-        still starting the reply has status "warming_up": wait ~30 s and call again.
+        whose figures did not add up, say): quote it with that caveat and check the source. A photograph whose
+        faces the user has named carries `people: [names]`. When the query names people, their aliases ("me") or groups
+        ("family") the user set up on the People tab, the search keeps to the photographs that have them and the reply
+        says so in `people: {people, groups, photos, searched_for}`; a query of names only lists those photographs.
+        If the engine is still starting the reply has status "warming_up": wait ~30 s and call again.
         """
         r = await asyncio.to_thread(api.search, get_paths(), query, top_k=top_k,
                                     collections=collection, client=client, wait_s=40)
@@ -154,6 +157,7 @@ def make_tools(client: str) -> dict[str, Callable[..., Awaitable[str]]]:
             pages: Optional page range for a paged document: "3", "2-4" or "3-". Offsets then count within it.
 
         Returns JSON {collection, doc, source, text, offset, next_offset, total_chars, truncated, indexed_at}
+        (and `people: [names]` for a photograph whose faces the user has named)
         (+ pages, total_pages when `pages` is used). `next_offset` is null at the end; while it is a number,
         call again with offset=next_offset: the slices join exactly, with no gap or overlap.
         """

@@ -261,23 +261,6 @@ def set_extra(md_path: Path, extra: Sequence[str]) -> bool:
     return True
 
 
-def faces_in(image: Path) -> int | None:
-    """How many faces Apple Vision finds in an (upright) image file; None where Vision is not available.  A count only:
-    nobody is identified."""
-    try:
-        import Vision                                  # type: ignore
-        from Foundation import NSURL                   # type: ignore
-    except ImportError:
-        return None
-    try:
-        req = Vision.VNDetectFaceRectanglesRequest.alloc().init()
-        handler = Vision.VNImageRequestHandler.alloc().initWithURL_options_(NSURL.fileURLWithPath_(str(image)), {})
-        ok, _err = handler.performRequests_error_([req], None)
-        return len(req.results() or []) if ok else None
-    except Exception:  # noqa: BLE001 - no count is better than a failed photograph
-        return None
-
-
 def attach(md_path: Path, section: str) -> bool:
     """Put *section* into the Markdown (under page 1), replacing the one that is there.  True when the file changed."""
     text = md_path.read_text(encoding="utf-8", errors="replace")
