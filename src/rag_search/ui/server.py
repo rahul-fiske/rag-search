@@ -103,6 +103,23 @@ def _task_stamp(task: dict[str, Any] | None) -> tuple[Any, ...]:
     return (task.get("id"), task.get("status")) if task else ()
 
 
+def _warm(app: Any) -> None:
+    """Work out the slow answers (and the People tab's groups) once the server is up, so the first page already finds them."""
+    try:
+        from .. import maps
+        from ..core import describe, people
+
+        stamp = _task_stamp(model_tasks.read_task(app.paths))
+        _SLOW.get(("models", stamp), lambda: models.state(app.paths))
+        _SLOW.get(("photos", "", stamp), lambda: describe.status(app.paths, ""))
+        _SLOW.get(("maps", stamp), lambda: (maps.status(app.paths), maps.plan(app.paths)))
+        w = people.who(app.paths)
+        if w is not None:
+            w.clusters()
+    except Exception:  # noqa: BLE001, S110 - only a head start: the pages work it out themselves
+        pass
+
+
 DEFAULT_PORT = 8765
 COOKIE = "rag_search_ui"
 MAX_BODY = 64 * 1024
@@ -1137,6 +1154,7 @@ class UiServer(ThreadingHTTPServer):
     def __init__(self, addr: tuple[str, int], app: UiApp):
         self.app = app
         super().__init__(addr, Handler)
+        threading.Thread(target=_warm, args=(app,), name="ui-warm", daemon=True).start()
 
     def server_bind(self) -> None:
         """Bind without the standard library's ``socket.getfqdn()``: it asks the resolver about 127.0.0.1, which can take
