@@ -26,6 +26,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from http.cookies import SimpleCookie
 import socketserver
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -52,6 +53,55 @@ def installed_version() -> str:
             version = ""
         _INSTALLED.update(at=now, version=version)
     return str(_INSTALLED["version"])
+
+class _Slow:
+    """Answers that take seconds to work out (they read every trace and Markdown file of the index: the Models tab's
+    model list, the photograph counts, the map plan), kept in memory.  An answer is served as it is and, when older than
+    *ttl* seconds, worked out again in the background (one at a time), so a page never waits on it and open tabs polling
+    every few seconds do not keep the server busy.  The first call works it out; an action (any POST) or a change in the
+    background task's state (*stamp*) throws the answers away, so a download or a description that just ended shows."""
+
+    def __init__(self, ttl: float = 60.0) -> None:
+        self.ttl = ttl
+        self.items: dict[Any, dict[str, Any]] = {}
+        self.lock = threading.Lock()
+
+    def clear(self) -> None:
+        with self.lock:
+            self.items.clear()
+
+    def get(self, key: Any, work: Callable[[], Any]) -> Any:
+        with self.lock:
+            item = self.items.get(key)
+            stale = item is not None and not item["busy"] and time.monotonic() - item["at"] > self.ttl
+            if stale:
+                item["busy"] = True
+        if item is None:
+            value = work()
+            with self.lock:
+                self.items[key] = {"value": value, "at": time.monotonic(), "busy": False}
+            return value
+        if stale:
+            threading.Thread(target=self._refresh, args=(key, item, work), name="ui-refresh", daemon=True).start()
+        return item["value"]
+
+    def _refresh(self, key: Any, item: dict[str, Any], work: Callable[[], Any]) -> None:
+        try:
+            value = work()
+        except Exception:  # noqa: BLE001 - the older answer stays until the next try
+            value = item["value"]
+        with self.lock:
+            if self.items.get(key) is item:
+                item.update(value=value, at=time.monotonic(), busy=False)
+
+
+_SLOW = _Slow()
+
+
+def _task_stamp(task: dict[str, Any] | None) -> tuple[Any, ...]:
+    """What of a background task changes the slow answers: that one started, or ended (not its progress)."""
+    return (task.get("id"), task.get("status")) if task else ()
+
 
 DEFAULT_PORT = 8765
 COOKIE = "rag_search_ui"
@@ -427,13 +477,15 @@ class Handler(BaseHTTPRequestHandler):
                                "architecture_doc": {"html": markdown.render(arch),
                                                     "toc": markdown.headings(arch)}})
         if name == "models":
-            return self._json({"ok": True, **models.state(app.paths),
-                               "task": model_tasks.read_task(app.paths)})
+            task = model_tasks.read_task(app.paths)
+            return self._json({"ok": True, **_SLOW.get(("models", _task_stamp(task)), lambda: models.state(app.paths)),
+                               "task": task})
         if name == "photos":
             from ..core import describe
 
             task = model_tasks.read_task(app.paths)
-            return self._json({"ok": True, **describe.status(app.paths, (q.get("collection") or [""])[0]),
+            coll = (q.get("collection") or [""])[0]
+            return self._json({"ok": True, **_SLOW.get(("photos", coll, _task_stamp(task)), lambda: describe.status(app.paths, coll)),
                                "task": task if task and task.get("op") == "describe" else None})
         if name == "people" or name.startswith("people/"):
             return self._people_get(name[len("people/"):] if name != "people" else "", q)
@@ -441,7 +493,8 @@ class Handler(BaseHTTPRequestHandler):
             from .. import maps
 
             task = model_tasks.read_task(app.paths)
-            return self._json({"ok": True, "datasets": maps.status(app.paths), "plan": maps.plan(app.paths),
+            got = _SLOW.get(("maps", _task_stamp(task)), lambda: (maps.status(app.paths), maps.plan(app.paths)))
+            return self._json({"ok": True, "datasets": got[0], "plan": got[1],
                                "task": task if task and task.get("op") == "maps" else None})
         if name == "models/plan":
             try:
@@ -496,6 +549,7 @@ class Handler(BaseHTTPRequestHandler):
     # -- POST API ---------------------------------------------------------------
     def _api_post(self, name: str, body: dict[str, Any]) -> None:
         app, paths = self.app, self.app.paths
+        _SLOW.clear()                              # an action may change what the slow answers say
         readonly_ok = {"search", "grep", "read", "documents", "doctor", "playground/search", "playground/compare",
                       "playground/list", "playground/preview", "playground/run", "playground/runs",
                       "playground/settings", "conversion/estimate"}

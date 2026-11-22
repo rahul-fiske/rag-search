@@ -279,3 +279,35 @@ class HelperTests(TempHome):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SlowAnswerTests(unittest.TestCase):
+    def test_an_answer_is_worked_out_once_then_served_and_refreshed_in_the_background(self):
+        slow, calls = ui_server._Slow(ttl=0.05), []
+        gate = threading.Event()
+
+        def work():
+            calls.append(1)
+            if len(calls) > 1:
+                gate.wait(5)                       # the refresh takes a while: the caller must not wait for it
+            return len(calls)
+        self.assertEqual(slow.get("k", work), 1)
+        self.assertEqual(slow.get("k", work), 1)    # served from memory
+        import time as _t
+        _t.sleep(0.1)
+        self.assertEqual(slow.get("k", work), 1)    # stale: the old answer now, the new one is being worked out
+        self.assertEqual(slow.get("k", work), 1)    # and only one refresh runs at a time
+        gate.set()
+        for _ in range(100):
+            if slow.get("k", work) == 2:
+                break
+            _t.sleep(0.02)
+        self.assertEqual((slow.get("k", work), len(calls)), (2, 2))
+
+    def test_an_action_or_a_new_task_state_throws_the_answers_away(self):
+        slow = ui_server._Slow(ttl=3600)
+        n = []
+        self.assertEqual(slow.get(("models", ()), lambda: n.append(1) or len(n)), 1)
+        self.assertEqual(slow.get(("models", ("t1", "running")), lambda: n.append(1) or len(n)), 2)   # another task state
+        slow.clear()
+        self.assertEqual(slow.get(("models", ()), lambda: n.append(1) or len(n)), 3)
