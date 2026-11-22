@@ -31,6 +31,8 @@ from .paths import (
     MERGE_MANIFEST,
     META_FILE,
     NODES_FILE,
+    PICTURES_FILE,
+    PICTURES_ROWS,
     SUPPORTED_EXTENSIONS,
     Paths,
     read_json,
@@ -152,8 +154,10 @@ def _collect(paths: Paths) -> list[dict[str, Any]]:
                 index_bytes += size
                 chunk_bytes += size if fname == NODES_FILE else 0
                 vector_bytes += size if fname == EMB_FILE else 0
+        rows = read_json(all_dir / PICTURES_ROWS) if (all_dir / PICTURES_FILE).exists() else {}
         out.append({
             "collection": cdir.name, "manifest_sha": manifest.get("sha256", ""),
+            "picture_model": str(rows.get("model", "") or ""), "pictures": len(rows.get("rows", []) or []),
             "chunks": manifest.get("nodes", 0), "documents": docs,
             "model": next(iter(models), ""), "dim": next(iter(dims), 0),
             # one commit when every document agrees, "" when unknown or mixed
@@ -269,6 +273,9 @@ def _publish(paths: Paths, force: bool, allow_drop: bool) -> dict[str, Any]:
             for fname in (NODES_FILE, EMB_FILE, MERGE_MANIFEST):
                 _link_or_copy(paths.index / coll / ALL_DIR / fname,
                               tmp / "index" / coll / ALL_DIR / fname)
+            if c.get("picture_model"):                  # 5.2's vectors (a collection without photographs has none)
+                for fname in (PICTURES_FILE, PICTURES_ROWS):
+                    _link_or_copy(paths.index / coll / ALL_DIR / fname, tmp / "index" / coll / ALL_DIR / fname)
             for d in c["documents"]:
                 md = paths.markup / coll / (d["name"] + ".md")
                 if md.is_file():
@@ -278,6 +285,7 @@ def _publish(paths: Paths, force: bool, allow_drop: bool) -> dict[str, Any]:
         write_json_atomic(tmp / CATALOG, {
             "generation": n, "published_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "content_sha": sha, "model": next(iter(models), ""),
+            "picture_model": next((c["picture_model"] for c in collections if c.get("picture_model")), ""),
             "collections": collections,
         })
         final = paths.gen_dir(n)

@@ -49,6 +49,8 @@ READ_BY: dict[str, tuple[str, str, str]] = {
                     "auto: scans, large pictures and image files are read by the document reader when it can run"),
     "models.reader": ("rag_search.models", "reader_choice", "the vision model behind lanes 3.2c and 3.2d"),
     "models.describe": ("rag_search.models", "describe_selection", "the vision model that describes photographs (step 3.10)"),
+    "models.picture": ("rag_search.models", "picture_selection",
+                       "the picture model of step 5.2 and S3b (off: photographs are found by their text only)"),
     "models.describe_auto": ("rag_search.models", "describe_auto",
                              "on: a photograph is described while it is indexed (3.10), and the photographs left undescribed are caught up after a run"),
     "models.memory_limit_gb": ("rag_search.models", "memory_limit_gb",
@@ -210,7 +212,8 @@ def _source(setting: str, t: spec.Tunable | None, cfg: Mapping[str, Any], amb: M
         return "environment"
     envs = {"models.embedding": "RAG_SEARCH_MODEL", "models.reranker": "RAG_SEARCH_RERANK_MODEL",
             "models.reader": "RAG_SEARCH_VLM_MODEL", "models.repair": "RAG_SEARCH_REPAIR_MODEL",
-            "models.describe": "RAG_SEARCH_DESCRIBE_MODEL", "models.describe_auto": "RAG_SEARCH_DESCRIBE_AUTO"}
+            "models.describe": "RAG_SEARCH_DESCRIBE_MODEL", "models.describe_auto": "RAG_SEARCH_DESCRIBE_AUTO",
+            "models.picture": "RAG_SEARCH_PICTURE_MODEL"}
     if setting in envs and amb.get(envs[setting]):
         return "environment"
     v = (cfg.get(section) or {}).get(key)
@@ -263,10 +266,10 @@ def resolve(cfg: Mapping[str, Any], base_env: Mapping[str, str] | None = None) -
 
 _LABELS = {
     "models.embedding": "Embedding model", "models.reranker": "Reranker", "models.reader": "Document reader model",
-    "models.repair": "Repair model", "models.describe": "Photo description model", "models.describe_auto": "Describe photographs after each run", "models.memory_limit_gb": "Memory limit for models (GB)",
+    "models.repair": "Repair model", "models.describe": "Photo description model", "models.picture": "Picture model", "models.describe_auto": "Describe photographs after each run", "models.memory_limit_gb": "Memory limit for models (GB)",
     "indexer.jobs": "Documents converted side by side", "indexer.auto_publish": "Publish after a run",
     "search.prewarm": "Load the models when the daemon starts",
 }
 _APPLIES = {"models.embedding": "re-embed", "models.reranker": "restart", "models.reader": "next-run",
-            "models.repair": "next-run", "models.describe": "next-run", "models.describe_auto": "next-run", "models.memory_limit_gb": "immediate", "indexer.jobs": "next-run",
+            "models.repair": "next-run", "models.describe": "next-run", "models.picture": "next-run", "models.describe_auto": "next-run", "models.memory_limit_gb": "immediate", "indexer.jobs": "next-run",
             "indexer.auto_publish": "next-run", "search.prewarm": "restart"}

@@ -29,7 +29,7 @@ class RegistryTests(unittest.TestCase):
                 self.assertIn(s.parent, stages.BY_ID, s.id)
         self.assertEqual([s.id for s in stages.INDEXING if not s.parent], [str(i) for i in range(1, 9)])
         self.assertEqual([s.id for s in stages.children("3")], ["3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7", "3.8", "3.9", "3.10"])
-        self.assertEqual([s.id for s in stages.SEARCH], ["S1", "S2", "S3", "S4", "S5", "S6"])
+        self.assertEqual([s.id for s in stages.SEARCH], ["S1", "S2", "S3", "S3b", "S4", "S5", "S6"])
 
     def test_every_tunable_belongs_to_exactly_one_stage(self):
         for t in spec.TUNABLES:

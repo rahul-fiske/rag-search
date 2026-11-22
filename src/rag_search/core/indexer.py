@@ -61,7 +61,7 @@ from ..paths import (
     sha256_file,
     write_json_atomic,
 )
-from . import chunker, describe, faces, photo, sniffcache, stallwatch, timeline, understanding
+from . import chunker, describe, faces, photo, pictures, sniffcache, stallwatch, timeline, understanding
 from .bm25 import TOKENIZER_VERSION
 from .conversion import (
     applevision,
@@ -595,6 +595,18 @@ def _wants_faces(task: dict[str, Any], kind: str, md_path: Path) -> bool:
         return False
 
 
+def _wants_picture(task: dict[str, Any], kind: str, md_path: Path, idx_dir: Path, sha: str) -> bool:
+    """An unchanged photograph gets its picture vector (5.2) when it has none for the chosen picture model yet: nothing is
+    converted or embedded again, only ``pictures.npy`` is written (the first run after a switch catches every one up)."""
+    model = task.get("picture_model") or ""
+    if kind != "image" or not model or pictures.is_current(idx_dir, sha, model):
+        return False
+    try:
+        return describe.is_photograph(md_path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return False
+
+
 def _faces_step(task: dict[str, Any], src: Path, sha: str, slog: Any, rel_name: str,
                 earlier: bool = False) -> tuple[int | None, str, float]:
     """3.9 Faces: find and remember the faces of one photograph (``faces.for_photo``), as a step of the run with its own
@@ -713,7 +725,8 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
                             unchanged=True)
                 if _wants_faces(task, kind, md_path):          # 3.9 Faces for a photograph indexed before faces were found
                     _faces_step(task, src, sha, slog, rel_name, earlier=True)
-                return {"status": "skipped", "src": str(src), "idx_dir": str(idx_dir)}
+                return {"status": "skipped", "src": str(src), "idx_dir": str(idx_dir), "sha": sha,
+                        **({"picture": True} if _wants_picture(task, kind, md_path, idx_dir, sha) else {})}
         known = None if task["rebuild"] or task["force_md"] or fill else known_outcome(idx_dir, sha, task.get("ocr"))
         if known:
             stage_event(slog, rel_name, "fingerprint", "done", seconds=round(time.perf_counter() - t_fp, 3),
@@ -957,6 +970,7 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
                     part="nodes.json")
         forget_outcome(idx_dir)
         return {"status": "prepared", "src": str(src), "idx_dir": str(idx_dir), "sha": sha,
+                **({"picture": True} if route == "photograph" and task.get("picture_model") else {}),
                 "nodes": len(nodes), "markdown": how, "convert_s": convert_s, "chunk_s": chunk_s,
                 "profile_s": prof_s, "conversion": conversion,
                 "understood": understanding.of_document(
@@ -1042,6 +1056,63 @@ def embed_document(idx_dir: Path, src: Path, sha: str, embedder: Any, *, chunk_s
     return meta
 
 
+def _picture_phase(todo: list[dict[str, Any]], model: str, roots: SourceRoots, sink: ProgressFn,
+                   emit: Callable[[dict[str, Any]], None], errors: list[dict[str, str]],
+                   stage_log: Path | None = None) -> dict[str, Any]:
+    """5.2 Picture vectors: one vector per photograph, after the text vectors (the picture model is loaded once, here).
+    Only a photograph whose document is complete is done (its index.meta.json is written: a failed text embedding
+    leaves it for the next run).  A photograph that cannot be opened is reported and left without one."""
+    jobs = [r for r in todo if (Path(r["idx_dir"]) / META_FILE).exists()
+            and not pictures.is_current(Path(r["idx_dir"]), r["sha"], model)]
+    if not jobs or not model:
+        return {"done": 0, "model": model}
+    t0 = time.perf_counter()
+    sink({"phase_event": {"phase": "pictures", "status": "start", "total": len(jobs), "model": model}})
+    done = failed = 0
+    try:
+        emb = pictures.make_picture_embedder(model)
+        if hasattr(emb, "load"):
+            emb.load()
+    except Exception as exc:  # noqa: BLE001 - search goes on without picture vectors
+        log.warning("5.2 Picture vectors: the picture model could not be loaded (%s)", exc)
+        errors.append({"src": f"picture model:{model}", "message": f"picture vectors not made: {exc}"})
+        sink({"phase_event": {"phase": "pictures", "status": "done", "total": len(jobs), "done": 0, "error": str(exc)}})
+        return {"done": 0, "model": model, "error": str(exc)}
+    step = pictures.BATCH * 4
+    for i in range(0, len(jobs), step):
+        part = jobs[i:i + step]
+        emit({"phase": "pictures", "done": i, "total": len(jobs), "current": Path(part[0]["src"]).name,
+              "message": f"5.2 Picture vectors: {i} of {len(jobs)} photographs"})
+        t_part = time.perf_counter()
+        try:
+            vecs = emb.encode_images([Path(r["src"]) for r in part])
+        except Exception as exc:  # noqa: BLE001 - this part is left for the next run
+            log.warning("5.2 Picture vectors failed for %d photographs: %s", len(part), exc)
+            failed += len(part)
+            continue
+        each = round((time.perf_counter() - t_part) / max(1, len(part)), 3)
+        for r, v in zip(part, vecs):
+            rel = Path(r["src"]).name
+            with contextlib.suppress(ValueError):
+                rel = mirror_rel(Path(r["src"]), roots).as_posix()
+            if not np.any(v):
+                failed += 1
+                stage_event(stage_log, rel, "pictures", "done", seconds=each, made=False)
+                continue
+            pictures.write(Path(r["idx_dir"]), v, r["sha"], model)
+            done += 1
+            stage_event(stage_log, rel, "pictures", "done", seconds=each, made=True, earlier=r["status"] == "skipped")
+    secs = round(time.perf_counter() - t0, 1)
+    emit({"phase": "pictures", "done": len(jobs), "total": len(jobs)})
+    sink({"phase_event": {"phase": "pictures", "status": "done", "total": len(jobs), "done": done, "failed": failed,
+                          "seconds": secs}})
+    del emb
+    from .embedding import release_memory
+
+    release_memory()
+    return {"done": done, "failed": failed, "model": model, "seconds": secs}
+
+
 # ── step 4: merge a collection into _all/ ────────────────────────────────────
 
 def per_doc_dirs(coll_dir: Path) -> list[Path]:
@@ -1071,6 +1142,8 @@ def _manifest_sha(coll_dir: Path, dirs: list[Path]) -> str:
     for d in sorted(dirs):
         h.update(str(d.relative_to(coll_dir)).encode())
         h.update((d / META_FILE).read_bytes())
+        with contextlib.suppress(OSError):              # a picture vector added later changes the merged index too
+            h.update((d / pictures.META).read_bytes())
     return h.hexdigest()
 
 
@@ -1092,8 +1165,10 @@ def merge_collection(coll_dir: Path, *, force: bool = False) -> dict[str, Any]:
 
     nodes: list[dict[str, Any]] = []
     mats: list[np.ndarray] = []
+    firsts: list[tuple[Path, int]] = []
     for d in docs:
         n = read_json(d / NODES_FILE).get("nodes", [])
+        firsts.append((d, len(nodes)))
         m = np.load(d / EMB_FILE)
         if m.shape[0] != len(n):
             raise RuntimeError(f"{d}: {len(n)} chunks but {m.shape[0]} embeddings; re-index it")
@@ -1106,6 +1181,14 @@ def merge_collection(coll_dir: Path, *, force: bool = False) -> dict[str, Any]:
     all_dir.mkdir(parents=True, exist_ok=True)
     _save_npy(all_dir / EMB_FILE, np.concatenate(mats, axis=0))
     write_json_atomic(all_dir / NODES_FILE, {"format": INDEX_FORMAT, "nodes": nodes}, indent=None)
+    pics, rows = pictures.merged(firsts)                # 5.2's vectors, row -> passage (none: searched as before)
+    if pics is None:
+        for f in (pictures.FILE, pictures.ROWS):
+            with contextlib.suppress(OSError):
+                (all_dir / f).unlink()
+    else:
+        _save_npy(all_dir / pictures.FILE, pics)
+        write_json_atomic(all_dir / pictures.ROWS, rows, indent=None)
     write_json_atomic(all_dir / MERGE_MANIFEST, {
         "sha256": sha, "nodes": len(nodes), "built_at": _now(),
         "docs": [str(d.relative_to(coll_dir)) for d in docs],
@@ -1163,6 +1246,7 @@ def _remove_doc_index(d: Path) -> None:
     for f in (META_FILE, EMB_FILE, NODES_FILE, EMB_FILE + ".tmp", OUTCOME_FILE):   # completion marker first
         with contextlib.suppress(OSError):
             (d / f).unlink()
+    pictures.remove(d)
     with contextlib.suppress(OSError):
         for f in d.iterdir():
             if f.is_file() and f.name.startswith(".") and f.name.endswith(".tmp"):
@@ -1613,7 +1697,7 @@ def run_index(
     conv = trace.RunTotals()             # what this run has converted: pages per branch, time, cost
 
     def emit(ev: dict[str, Any]) -> None:
-        if ev.get("phase") in ("convert", "embed", "merge"):
+        if ev.get("phase") in ("convert", "embed", "pictures", "merge"):
             ev["phase_started_at"] = phase_t0.setdefault(ev["phase"], round(time.time(), 3))
         if "phase" in ev and (conv.docs or conv.files):
             ev["conversion"] = conv.snapshot()
@@ -1671,6 +1755,10 @@ def run_index(
         except Exception:  # noqa: BLE001 - not knowing is "no"
             describe_ready = False
         faces_ready = not faces.available(paths)       # the face models are here: a photograph's faces are found (3.9)
+        picture_model = pictures.selected()            # 5.2: a photograph's picture vector, when the model is here
+        picture_why = pictures.ready(picture_model)
+        if picture_why:
+            picture_model = ""
         tasks = [{
             "src": str(s),
             "roots": roots.to_dict(),
@@ -1681,10 +1769,12 @@ def run_index(
             "stage_log": str(stage_log) if stage_log else None,
             "describe_ready": describe_ready,
             "faces_ready": faces_ready,
+            "picture_model": picture_model,
         } for s in todo]
 
         # Phase 1 — convert + chunk (parallel, no model)
         prepared: list[dict[str, Any]] = []
+        picture_todo: list[dict[str, Any]] = []       # photographs whose picture vector is made in 5.2
         total = len(tasks)
         done = 0
 
@@ -1705,6 +1795,8 @@ def run_index(
                           total_s=res.get("elapsed_s"))
                 emit({"phase": "convert", "done": done, "total": total, "current": name, "message": "not tried again"})
                 return
+            if res.get("picture"):
+                picture_todo.append(res)
             if res["status"] != "skipped":
                 conv.add(res.get("conversion"), ok=res["status"] == "prepared")
             if res["status"] == "prepared":
@@ -1911,6 +2003,11 @@ def run_index(
             _sink({"phase_event": {"phase": "embed", "status": "done", "total": len(prepared), "indexed": indexed}})
 
         phase_s["embed"] = round(time.perf_counter() - t_phase, 1)
+        picture_info = _picture_phase(picture_todo, picture_model, roots, _sink, emit, errors, stage_log)
+        if picture_info.get("seconds") is not None:
+            phase_s["pictures"] = picture_info["seconds"]
+        if picture_why:
+            picture_info["why_not"] = picture_why
 
         # Phase 3 — merge (cheap: concatenation)
         t_phase = time.perf_counter()
@@ -1946,6 +2043,7 @@ def run_index(
         "phase_s": phase_s,
         "conversion": conv.snapshot(),
         "page_cache": cache_info,
+        "pictures": picture_info,
         "scanned": len(sources),
         "removed": removed,
         "orphans_removed": orphans_removed,

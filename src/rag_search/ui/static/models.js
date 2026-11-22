@@ -377,6 +377,36 @@
       h('p', { class: 'small muted', style: { margin: '8px 0 0' } }, 'About 2.5 seconds a photograph with the 8B model and 1.5 with the 4B. Each description is cached by the photograph, the model and the prompt, so downloading map data or refreshing places never describes a photograph again. Only photographs are described; a photographed page is read as text. With about 8 GB of memory short, the photograph is indexed without a description and caught up later.'));
   }
 
+  async function choosePicture(model) {
+    const r = await act('models/picture', { model }, model === 'off' ? 'Picture vectors turned off' : 'Picture model chosen: the next indexing run embeds the photographs');
+    if (r.ok !== false) load(true);
+  }
+  function pictureCard() {
+    const d = data.picture;
+    if (!d) return null;
+    const ro = readOnly(), busy = taskActive();
+    const rows = d.models.map(r => h('tr', null,
+      h('td', { style: { whiteSpace: 'normal', minWidth: '260px' } }, h('b', null, r.label), h('div', { class: 'mono small muted' }, r.id),
+        r.note ? h('div', { class: 'small muted' }, r.note) : null),
+      h('td', { class: 'nowrap' }, r.license),
+      h('td', { class: 'num nowrap' }, gb(r.mem_gb)),
+      h('td', null, [selectedChip(r), dlChip(r)]),
+      h('td', { class: 'nowrap' },
+        r.active ? null : h('button', { class: 'btn small primary', disabled: ro, title: 'Use this model (nothing is downloaded by this; the next run embeds only the photographs)', on: { click: () => choosePicture(r.id) } }, 'Use this'), ' ',
+        r.cached ? null : h('button', { class: 'btn small', disabled: ro || busy, title: 'Download only', on: { click: () => download(r.id) } }, r.partial ? 'Resume download' : 'Download'))));
+    return h('div', { class: 'card', style: { marginTop: '16px' } },
+      h('div', { class: 'card-head' }, h('h2', null, 'Picture model'),
+        h('span', { class: 'muted small' }, 'one vector per photograph from its pixels (step 5.2), searched with the query (S3b) · switching embeds only the photographs again'),
+        h('div', { class: 'spacer' }, d.off
+          ? h('button', { class: 'btn small', disabled: ro, on: { click: () => choosePicture(d.models[0].id) } }, 'Turn on')
+          : h('button', { class: 'btn small', disabled: ro, on: { click: () => choosePicture('off') } }, 'Turn off'))),
+      d.off ? h('div', { class: 'notice warn' }, 'Picture vectors are turned off: photographs are found by their details and description only.') : null,
+      !d.off && !d.reranker_sees_pictures ? h('div', { class: 'notice warn' }, 'The reranker reads text only, so it pushes a photograph found by its picture back down. Choose Qwen3-VL-Reranker 2B above for picture vectors to count.') : null,
+      h('div', { class: 'table-wrap' }, h('table', null,
+        h('thead', null, h('tr', null, ['Model', 'Licence', 'Weights', 'State', ''].map((t, i) => h('th', { class: i === 2 ? 'num' : '' }, t)))),
+        h('tbody', null, rows))));
+  }
+
   async function downloadFaces() {
     const r = await api('people/setup', {});
     if (r.ok === false) { toast(r.error || 'failed', 'bad'); return; }
@@ -426,7 +456,7 @@
     patch(refs.body,
       error ? h('div', { class: 'notice bad', style: { marginBottom: '12px' } }, error) : null,
       taskCard(),
-      embeddingCard(), rerankerCard(), readerCard(), photoCard(), faceCard(), mapsCard(),
+      embeddingCard(), rerankerCard(), pictureCard(), readerCard(), photoCard(), faceCard(), mapsCard(),
       h('div', { class: 'grid g2', style: { marginTop: '16px' } }, presetsCard(), machineCard()));
     refs.customBtn.disabled = readOnly() || taskActive();
   }

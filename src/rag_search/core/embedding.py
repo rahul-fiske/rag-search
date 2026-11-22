@@ -7,6 +7,8 @@ Three backends:
 * ``Reranker``      any sentence-transformers cross-encoder (bge-reranker, mxbai-rerank, ...).
 * ``Qwen3Reranker`` the Qwen3-Reranker models: a causal LM asked "does the document answer the
                     query? yes/no", scored as P(yes).
+* ``Qwen3VLReranker`` Qwen3-VL-Reranker: a multimodal cross-encoder; a photograph is judged by its
+                    picture and its details together, any other passage by its text (``sees_pictures``).
 
 All are lazy: torch / sentence-transformers are imported on first use, so the MCP front-end and
 the CLI's cheap commands never pay for them.
@@ -487,6 +489,107 @@ class Qwen3Reranker:
         return [float(v) for v in out]
 
 
+QWEN3_VL_PROMPT = "Retrieve images or text relevant to the user's query."
+PICTURE_PX = 256           # the picture a photograph is judged by (the trial: as good as 512 px, and faster)
+PICTURE_DROP = ("- Position:", "- Camera:", "- Size:")   # details the picture says better (or that say nothing)
+
+
+def _add_named_template(model: Any, repo: str, name: str) -> None:
+    """Give the model's processor the chat template *name* of ``additional_chat_templates/``.  transformers finds those
+    by listing the repository on the Hub, so a model loaded from the local cache alone has only its default template, and
+    sentence-transformers then refuses the query/document pairs."""
+    with contextlib.suppress(Exception):
+        proc = model[0].processor
+        for holder in (proc, getattr(proc, "tokenizer", None)):
+            if holder is None:
+                continue
+            have = getattr(holder, "chat_template", None)
+            if isinstance(have, dict) and name in have:
+                continue
+            text = _cached_file(repo, f"additional_chat_templates/{name}.jinja")
+            if not text:
+                return
+            holder.chat_template = {**({"default": have} if isinstance(have, str) else have or {}), name: text}
+
+
+def _cached_file(repo: str, name: str) -> str:
+    """The text of *name* in the local copy of *repo* ("" when it is not there)."""
+    with contextlib.suppress(Exception):
+        from huggingface_hub import try_to_load_from_cache
+
+        path = try_to_load_from_cache(repo, name)
+        if isinstance(path, str):
+            with open(path, encoding="utf-8") as f:
+                return f.read()
+    return ""
+
+
+def trimmed_photo_text(text: str) -> str:
+    """A photograph's passage without its GPS position, camera and size lines (the trial: slightly better ranking,
+    fewer tokens per pair)."""
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(PICTURE_DROP))
+
+
+class Qwen3VLReranker:
+    """Qwen3-VL-Reranker through sentence-transformers (``CrossEncoder`` with multimodal inputs): every candidate on one
+    scale, a photograph as its picture plus its trimmed details, a passage as its text; scores are sigmoid
+    probabilities."""
+
+    sees_pictures = True
+
+    def __init__(self, name: str | None = None, batch_size: int | None = None):
+        self.name = name or rerank_model_name()
+        self.batch_size = batch_size or min(4, env_int("RAG_SEARCH_RERANK_BATCH", RERANK_BATCH))
+        self._model = None
+        self.device = ""
+
+    def load(self):
+        if self._model is None:
+            prepare_environment()
+            import torch
+            from sentence_transformers import CrossEncoder
+
+            self.device = pick_device()
+            dtype = torch_dtype(torch, self.device)
+            if dtype is torch.float16:
+                dtype = torch.bfloat16         # the model card's precision; float16 overflows in its vision part
+            extra = {"model_kwargs": {"dtype": dtype}} if dtype is not None else {}
+            log.info("Loading reranker %s (device=%s, multimodal)", self.name, self.device)
+            # no max_length: cutting a pair short would cut a picture's tokens (transformers refuses it); passages are at
+            # most a chunk long and the picture is 256 px
+            model = _load_model(self.name, lambda **kw: CrossEncoder(self.name, device=self.device, **extra, **kw))
+            _add_named_template(model, self.name, "reranker")
+            self._model = model
+        return self._model
+
+    def memory_bytes(self) -> int | None:
+        return _param_bytes(self._model)
+
+    def score(self, query: str, texts: list[str], images: "list[str | None] | None" = None) -> list[float]:
+        if not texts:
+            return []
+        model = self.load()
+        import torch
+
+        from .pictures import open_image
+
+        docs: list[dict[str, Any]] = []
+        for i, text in enumerate(texts):
+            path = images[i] if images and i < len(images) else None
+            picture = None
+            if path:
+                try:
+                    picture = open_image(path, PICTURE_PX)
+                except Exception as exc:  # noqa: BLE001 - judged by its text alone
+                    log.info("picture of %s not shown to the reranker: %s", path, exc)
+            docs.append({"text": trimmed_photo_text(text), "image": picture} if picture is not None else {"text": text})
+        raw = model.predict([(query, d) for d in docs], batch_size=self.batch_size, show_progress_bar=False,
+                            activation_fn=torch.nn.Sigmoid(), prompt=QWEN3_VL_PROMPT)
+        vals = np.asarray(raw, dtype=np.float64).reshape(-1)
+        _finite_or_raise(vals, "the candidates", self.name)
+        return [float(v) for v in vals]
+
+
 def _from_spec(spec: str):
     mod, _, attr = spec.partition(":")
     if not mod or not attr:
@@ -517,4 +620,6 @@ def make_reranker(name: str | None = None):
     known = models.find(name)
     if known is not None and known.backend == models.QWEN3_RERANKER:
         return Qwen3Reranker(name)
+    if known is not None and known.backend == models.QWEN3_VL_RERANKER:
+        return Qwen3VLReranker(name)
     return Reranker(name)

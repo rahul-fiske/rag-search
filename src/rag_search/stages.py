@@ -18,11 +18,12 @@ Indexing (one run)::
          3.5 Reconcile   tables that run on across pages
     4  Chunk           Markdown -> passages                       (document)
     5  Embed           passages -> vectors                        (run, model loaded once)
+         5.2 Picture vectors  a photograph's pixels -> one vector    GPU
     6  Write           nodes.json, embeddings, index.meta.json    (document)
     7  Merge           per-collection index for search            (collection)
     8  Publish         swap the serving generation                (collection)
 
-Search (one query): S1 Access, S2 Keyword, S3 Vectors, S4 Fuse, S5 Rerank, S6 Top k.
+Search (one query): S1 Access, S2 Keyword, S3 Vectors, S3b Picture vectors, S4 Fuse, S5 Rerank, S6 Top k.
 
 Each :class:`Stage` lists the settings it *owns* (``section.key`` of ``config.json``, the same keys the
 Settings tab edits) and the environment-only variables it reads.  ``tests/test_stages.py`` checks that
@@ -192,6 +193,13 @@ INDEXING: tuple[Stage, ...] = (
           settings=("models.embedding", "models.embed_batch", "models.max_seq", "models.dtype", "models.device", "models.quantize"),
           also_used_by={"models.dtype": ("S3", "S5"), "models.device": ("S3", "S5"), "models.quantize": ("S3", "S5"), "models.embedding": ("S3",),
                         "models.max_seq": ("S3",), "models.embed_batch": ("S3",)}),
+    Stage("5.2", "pictures", "Picture vectors", RUN, GPU,
+          "one vector per photograph from its pixels (SigLIP 2, `core/pictures.py`), after the text vectors, with the "
+          "picture model loaded once; kept in pictures.npy with a key of its own, so a new picture model embeds only the "
+          "photographs again and a photograph indexed before picture vectors existed is caught up without being converted "
+          "or embedded again. Nothing is downloaded by a run: without the model (Models tab) the step is left out",
+          settings=("models.picture",), also_used_by={"models.picture": ("S3b",)}, optional=True,
+          constants=(("photographs per second, SigLIP 2 base on the Apple GPU (opening the file included)", "about 18"),)),
     Stage("6", "write", "Write", DOCUMENT, CPU,
           "nodes.json and embeddings.npy, then index.meta.json last, so a half-written document is never taken "
           "for a finished one"),
@@ -212,10 +220,16 @@ SEARCH: tuple[Stage, ...] = (
     Stage("S3", "vectors", "Vectors", QUERY, GPU, "cosine similarity of the query vector with every passage vector; the "
                                                     "models are loaded when the search daemon starts",
           settings=("search.prewarm",)),
-    Stage("S4", "fuse", "Fuse", QUERY, CPU, "reciprocal rank fusion of the two lists into one pool",
+    Stage("S3b", "picture_search", "Picture vectors", QUERY, GPU,
+          "the query through the picture model's text side (\"a photo of ...\") against every photograph's picture "
+          "vector: finds what a photograph shows when its description does not say it. No floor: the reranker keeps "
+          "photographs out of document queries", optional=True),
+    Stage("S4", "fuse", "Fuse", QUERY, CPU, "reciprocal rank fusion of the three lists (keyword, text vectors, "
+                                              "picture vectors) into one pool",
           settings=("search.rrf_k", "search.stages")),
     Stage("S5", "rerank", "Rerank", QUERY, GPU, "a cross-encoder reads query and passage together and re-orders the "
-                                                  "best candidates",
+                                                  "best candidates; the multimodal one (Qwen3-VL-Reranker) also looks "
+                                                  "at the picture of each photograph",
           settings=("models.reranker", "search.rerank_pool", "models.rerank_batch", "models.rerank_max_len"),
           optional=True),
     Stage("S6", "top_k", "Top k", QUERY, CPU, "the best passages with page, heading, snippet and score",
@@ -233,10 +247,11 @@ FINGERPRINT_INPUTS: tuple[tuple[str, str], ...] = (
      "and the document reader or repair being switched off", "3"),
     ("chunk size, chunk overlap, chunker version, index format", "4"),
     ("the embedding model", "5"),
+    ("the picture model (photographs only; nothing is converted or embedded again)", "5.2"),
 )
 
 # Settings that are `config.json` keys but not tunables of spec.py (a model choice, a switch, a limit).
-MODEL_KEYS = ("models.embedding", "models.reranker", "models.reader", "models.repair", "models.describe", "models.describe_auto", "models.memory_limit_gb")
+MODEL_KEYS = ("models.embedding", "models.reranker", "models.picture", "models.reader", "models.repair", "models.describe", "models.describe_auto", "models.memory_limit_gb")
 CONFIG_KEYS = MODEL_KEYS + ("indexer.jobs", "indexer.auto_publish", "search.prewarm")
 
 

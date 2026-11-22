@@ -843,6 +843,12 @@ class Handler(BaseHTTPRequestHandler):
                 models.set_vlm_selection(paths, action, model.strip())
                 self.app.live.nudge(catalog=True)
                 return self._json({"ok": True, "kind": action, "model": model.strip()})
+            if action == "picture":                  # the picture model (5.2): a choice; the next run embeds the photographs
+                if not isinstance(model, str) or not model.strip():
+                    return self._error(400, "expected {model}")
+                models.set_picture_selection(paths, model.strip())
+                self.app.live.nudge(catalog=True)
+                return self._json({"ok": True, "kind": "picture", "model": model.strip()})
             if action == "switch":
                 if not isinstance(kind, str) or not isinstance(model, str):
                     return self._error(400, "expected {kind, model}")

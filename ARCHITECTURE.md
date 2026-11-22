@@ -322,6 +322,7 @@ the document reader for every other scan and image; a page a cheaper lane doubts
 | 3.10 | Describe (optional) | GPU | document | a photograph (3.0 decided) is described by a vision model after 3.9 and before 4 Chunk: a short description written into its record, marked as machine-written, so it is chunked and embedded once, complete. One process holds the model (photographs are converted one after another in the run's own process, after the documents of pages); cached by photograph, model and prompt. When memory is short or the model is missing the description is a missing fact, like a missing position: the photograph is indexed with what it has, and a later run that can describe it converts it again | `models.describe`, `models.describe_auto` |
 | 4 | Chunk | CPU | document | split the Markdown into passages that never cross a page; tables and code stay whole where they fit | `indexer.chunk_size`, `indexer.chunk_overlap` |
 | 5 | Embed | GPU | run | turn every new passage into a vector; the model is loaded once per run, after all documents are converted | `models.embedding`, `models.embed_batch`, `models.max_seq`, `models.dtype`, `models.device` |
+| 5.2 | Picture vectors (optional) | GPU | run | one vector per photograph from its pixels (SigLIP 2), after the text vectors, with the picture model loaded once; `pictures.npy` with a key of its own (`pictures.json`: model and checksum), so a new picture model embeds only the photographs again and a photograph indexed before picture vectors existed is caught up without being converted or embedded again. Nothing is downloaded by a run: without the model the step is left out (5.3d) | `models.picture` |
 | 6 | Write | CPU | document | nodes.json and embeddings.npy, then index.meta.json last, so a half-written document is never taken for a finished one | – |
 | 7 | Merge | CPU | collection | concatenate the documents' vectors into the collection's index for search (nothing is re-embedded) | – |
 | 8 | Publish | CPU | collection | hard-link the new generation, switch the "current" symlink, tell the search daemon to reload; the last three generations are kept | `indexer.auto_publish` |
@@ -333,8 +334,9 @@ Search (one query):
 | S1 | Access | CPU | query | which collections this client may search; an unknown name is refused like a typo | – |
 | S2 | Keyword | CPU | query | BM25 over the chunk text: exact terms, identifiers, versions; the pool size below applies to both retrievers | `search.retrieval_pool` |
 | S3 | Vectors | GPU | query | cosine similarity of the query vector with every passage vector; the models are loaded when the search daemon starts | `search.prewarm` |
-| S4 | Fuse | CPU | query | reciprocal rank fusion of the two lists into one pool | `search.rrf_k`, `search.stages` |
-| S5 | Rerank (optional) | GPU | query | a cross-encoder reads query and passage together and re-orders the best candidates | `models.reranker`, `search.rerank_pool`, `models.rerank_batch`, `models.rerank_max_len` |
+| S3b | Picture vectors (optional) | GPU | query | the query through the picture model's text side ("a photo of ...") against every photograph's picture vector; no floor (the reranker keeps photographs out of document queries) | – |
+| S4 | Fuse | CPU | query | reciprocal rank fusion of the three lists (keyword, text vectors, picture vectors) into one pool | `search.rrf_k`, `search.stages` |
+| S5 | Rerank (optional) | GPU | query | a cross-encoder reads query and passage together and re-orders the best candidates; the multimodal one (Qwen3-VL-Reranker) also looks at the picture of each photograph | `models.reranker`, `search.rerank_pool`, `models.rerank_batch`, `models.rerank_max_len` |
 | S6 | Top k | CPU | query | the best passages with page, heading, snippet and score | `search.top_k` |
 
 **Settings really in effect (`effective.py`).** `config.json` holds the defaults; an environment variable the
@@ -1149,6 +1151,43 @@ who      every other face -> the nearest labelled person, when clearly theirs   
   masks the other passages before BM25 and the vectors rank); a query of names only lists them. Results say who is in each
   photograph (`people`), the reply says what was understood (`people: {people, groups, photos, searched_for}`), and
   `rag_read_document` adds `people` to a photograph.
+
+### 5.3d Picture vectors (`core/pictures.py`, steps 5.2 and S3b)
+
+A photograph's description says what the describing model chose to say; a query can ask for what it left out (the
+name of a landmark, a whiteboard, a payment screenshot). Picture vectors make the pixels a third retriever with the same
+standing as BM25 and the text vectors.
+
+* **Model.** SigLIP 2 (`google/siglip2-base-patch16-224` by default, 768 numbers; so400m as the larger choice), an
+  image encoder and a text encoder trained into one space, run through transformers on the GPU in half precision.
+  Chosen on the Models tab (`models.picture`, `RAG_SEARCH_PICTURE_MODEL`; `off` turns the step off) and downloaded
+  only there.
+* **Index (5.2).** After 5 Embed, every photograph of the run (and every unchanged photograph without a current picture
+  vector: `indexer._wants_picture`) is opened at most 768 px, turned the way the camera held it, and embedded in
+  batches. Per document folder: `pictures.npy` (one row) and `pictures.json` (`model`, `src_sha256`, `dim`), written
+  last. The key is separate from the text key, so switching the picture model, or the first run after the step exists,
+  embeds only the photographs; nothing is converted or embedded again. A photograph that cannot be opened is left
+  without one.
+* **Merge (7).** `_all/pictures.npy` holds the collection's picture vectors (one model: the one most documents have)
+  and `_all/pictures.rows.json` the passage each row belongs to (the photograph's first passage). The picture key is
+  part of the merge manifest, so a picture added later re-merges and re-publishes the collection. The generation's
+  `catalog.json` records `picture_model`.
+* **Search (S3b).** The search daemon loads the picture model's text side with the other models. The query, as
+  "a photo of <query>" (64 tokens, as SigLIP was trained), is compared with every picture vector; the best `pool_n`
+  join the fusion (S4) as a third list, restricted to the photographs of the people a query names like the others.
+  `stages=pictures` isolates it; results carry `picture_score` and `picture_rank`.
+* **Rerank (S5).** A text-only reranker undoes picture vectors (a photograph found by its picture, whose text does not
+  say it, is pushed back down). `Qwen/Qwen3-VL-Reranker-2B` (`Qwen3VLReranker`) judges every candidate on one scale:
+  a photograph as its picture (256 px) plus its details without the Position, Camera and Size lines, any other passage
+  as its text. Its `reranker` chat template sits in `additional_chat_templates/`, which transformers finds only by
+  listing the repository online, so it is handed to the processor from the local cache. No token cap is set (cutting a
+  pair would cut a picture's tokens).
+* **Why so.** The trial (300 photographs among 3,010 passages of other collections, 35 labelled photo queries, 6
+  document queries): photo nDCG@10 0.778 today; pictures in the merge with bge-reranker 0.788; pictures plus the
+  multimodal reranker 0.950, with document queries as clean as before (0.2 photographs in their top 10). A floor on the
+  picture scores, or `max(text, picture)` after the reranker, did worse: SigLIP's probabilities are small even for a
+  correct match. Cost: about 6 ms per photograph to embed (opening the file takes longer), 1 GB of GPU memory; the
+  multimodal reranker takes about 3-5 s per query against about 1 s.
 
 ### 5.4 Playground (`core/playground.py`)
 

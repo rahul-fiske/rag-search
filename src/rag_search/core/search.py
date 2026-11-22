@@ -26,8 +26,8 @@ from typing import Any
 
 import numpy as np
 
-from ..paths import (ALL_DIR, DEFAULT_TOP_K, EMB_FILE, NODES_FILE, Paths, env_flag, model_name,
-                     read_json, rerank_model_name)
+from ..paths import (ALL_DIR, DEFAULT_TOP_K, EMB_FILE, NODES_FILE, PICTURES_FILE, PICTURES_ROWS, Paths, env_flag,
+                     model_name, read_json, rerank_model_name)
 from ..publish import read_catalog
 from ..spec import (MAX_TOP_K, RRF_K, SNIPPET_CHARS, clamp_rerank_pool, clamp_retrieval_pool,
                     clamp_rrf_k, parse_stages, rerank_pool, retrieval_pool)
@@ -46,6 +46,18 @@ class IndexData:
     nodes: list[dict[str, Any]]
     emb: np.ndarray
     bm25: BM25
+    pics: "np.ndarray | None" = None      # 5.2 picture vectors, one row per photograph (S3b)
+    pic_rows: "np.ndarray | None" = None  # the passage each picture row belongs to
+    pic_model: str = ""
+
+    @property
+    def pic_of(self) -> dict[int, int]:
+        """passage index -> picture row (the photographs whose picture the reranker can be shown)."""
+        cached = getattr(self, "_pic_of", None)
+        if cached is None:
+            cached = {} if self.pic_rows is None else {int(n): r for r, n in enumerate(self.pic_rows)}
+            self._pic_of = cached                               # type: ignore[attr-defined]
+        return cached
 
 
 def _deep_size(obj: Any, seen: set[int] | None = None) -> int:
@@ -72,8 +84,9 @@ def index_memory(d: "IndexData") -> dict[str, int]:
         per = sum(_deep_size(n) for n in sample) / len(sample) if sample else 0.0
         passages = int(per * len(d.nodes))
         keyword = d.bm25.memory_bytes()
-        cached = {"vectors": int(d.emb.nbytes), "passages": passages, "keyword": keyword,
-                  "total": int(d.emb.nbytes) + passages + keyword}
+        pics = int(d.pics.nbytes) if d.pics is not None else 0
+        cached = {"vectors": int(d.emb.nbytes), "pictures": pics, "passages": passages, "keyword": keyword,
+                  "total": int(d.emb.nbytes) + pics + passages + keyword}
         d._memory = cached                                     # type: ignore[attr-defined]
     return cached
 
@@ -83,7 +96,16 @@ def load_index(d: Path) -> IndexData:
     emb = np.load(d / EMB_FILE)
     if emb.shape[0] != len(nodes):
         raise RuntimeError(f"{d}: {len(nodes)} chunks but {emb.shape[0]} embeddings")
-    return IndexData(nodes, emb, BM25([tokenize(n["text"]) for n in nodes]))
+    data = IndexData(nodes, emb, BM25([tokenize(n["text"]) for n in nodes]))
+    if (d / PICTURES_FILE).exists():
+        rows = read_json(d / PICTURES_ROWS) or {}
+        pics = np.load(d / PICTURES_FILE)
+        idx = np.asarray(rows.get("rows", []), dtype=np.int64)
+        if pics.ndim == 2 and len(idx) == pics.shape[0] and (idx.size == 0 or (idx.min() >= 0 and idx.max() < len(nodes))):
+            data.pics, data.pic_rows, data.pic_model = pics.astype(np.float32), idx, str(rows.get("model", ""))
+        else:
+            log.warning("%s: picture vectors do not match the passages; searched without them", d)
+    return data
 
 
 def _top(scores: np.ndarray, n: int, *, positive_only: bool = False) -> list[int]:
@@ -135,6 +157,7 @@ class SearchEngine:
         self.rerank = env_flag("RAG_SEARCH_RERANK", True) if rerank is None else rerank
         self.gen = Generation()
         self.model = model_name()
+        self.pictures: Any = None             # the picture model's text side (S3b), loaded when an index has pictures
         # Searches run concurrently.  `_swap` makes (generation, embedder, reranker) one
         # consistent snapshot per query; `_infer` serialises only the model calls (one model on
         # one device), so BM25, the vector product and fusion of different queries overlap.
@@ -173,6 +196,33 @@ class SearchEngine:
                 if hasattr(self.reranker, "load"):
                     self.reranker.load()
 
+    def _picture_embedder(self, model: str) -> Any:
+        """The picture model that made *model*'s vectors, loaded once (a generation built with another picture model
+        brings its own on first use); None when it cannot be loaded (search then goes on without pictures)."""
+        have = self.pictures
+        if have is not None and getattr(have, "name", model) == model:
+            return have
+        from .pictures import make_picture_embedder
+
+        with self._infer:
+            try:
+                emb = make_picture_embedder(model)
+                if hasattr(emb, "load"):
+                    emb.load()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("picture model %s could not be loaded: %s", model, exc)
+                return None
+            with self._swap:
+                old, self.pictures = self.pictures, emb
+        del old
+        return emb
+
+    def load_pictures(self) -> None:
+        """Load the picture model of the published generation now (search daemon start), not on the first query."""
+        model = str(read_catalog(self.paths.current_gen()).get("picture_model", "") or "")
+        if model:
+            self._picture_embedder(model)
+
     def prepare_reranker(self) -> Any:
         """A reranker for the *configured* model, loaded off to the side; None when the loaded
         one is already right (or was injected, or reranking is off, or nothing is loaded yet)."""
@@ -200,7 +250,8 @@ class SearchEngine:
     def models_info(self) -> dict[str, str]:
         """Names of the models loaded now (what search uses)."""
         return {"embedding": getattr(self.embedder, "name", "") or self.model,
-                "reranker": getattr(self.reranker, "name", "") if self.reranker is not None else ""}
+                "reranker": getattr(self.reranker, "name", "") if self.reranker is not None else "",
+                "pictures": getattr(self.pictures, "name", "") if self.pictures is not None else ""}
 
     def memory_info(self) -> dict[str, Any]:
         """What the serving generation keeps in memory (embeddings and chunk text exactly;
@@ -216,7 +267,7 @@ class SearchEngine:
             emb += e
             txt += t
         models: dict[str, int] = {}
-        for label, m in (("embedder", self.embedder), ("reranker", self.reranker)):
+        for label, m in (("embedder", self.embedder), ("reranker", self.reranker), ("pictures", self.pictures)):
             fn = getattr(m, "memory_bytes", None)
             b = fn() if callable(fn) else None
             if b is not None:
@@ -321,9 +372,9 @@ class SearchEngine:
             return {"results": [], "error": "empty query"}
         top_k = max(1, min(int(top_k), MAX_TOP_K))
         stages = parse_stages(stages)
-        use_bm25, use_dense = "bm25" in stages, "dense" in stages
+        use_bm25, use_dense, use_pics = "bm25" in stages, "dense" in stages, "pictures" in stages
         want_rerank = "rerank" in stages
-        fused = use_bm25 and use_dense
+        fused = use_bm25 + use_dense + use_pics >= 2
         with self._swap:  # one consistent snapshot for the whole query
             gen, embedder, reranker = self.gen, self.embedder, self.reranker
         have = gen.collections()
@@ -358,8 +409,27 @@ class SearchEngine:
                 qvec = np.asarray(encode_query(query) if callable(encode_query)
                                   else embedder.encode([query])[0], dtype=np.float32)
         timing["embed_query_ms"] = int((time.perf_counter() - t_embed) * 1000)
+        # S3b: the query through the picture model's text side, when a collection in scope has picture vectors
+        pvec: dict[str, np.ndarray] = {}
+        if use_pics:
+            t_pic = time.perf_counter()
+            for coll in wanted:
+                data = gen.get(coll)
+                if data.pics is None or not data.pic_model or data.pic_model in pvec:
+                    continue
+                pe = self._picture_embedder(data.pic_model)
+                if pe is not None:
+                    with self._infer:
+                        pvec[data.pic_model] = np.asarray(pe.encode_query(query), dtype=np.float32)
+            timing["picture_query_ms"] = int((time.perf_counter() - t_pic) * 1000)
         cand: dict[tuple[str, str], dict[str, Any]] = {}
-        keyword_s = dense_s = 0.0
+        keyword_s = dense_s = pics_s = 0.0
+
+        def slot_of(coll: str, i: int, node: dict[str, Any]) -> dict[str, Any]:
+            return cand.setdefault((coll, node["id"]), {"rrf": 0.0, "node": node, "coll": coll, "i": i,
+                                   "bm25_score": None, "bm25_rank": None, "dense_score": None, "dense_rank": None,
+                                   "picture_score": None, "picture_rank": None})
+
         for coll in wanted:
             data = gen.get(coll)
             keep = _mask(data, only)
@@ -384,28 +454,39 @@ class SearchEngine:
                 dense_s += time.perf_counter() - t
             else:
                 dn = []
+            pq = pvec.get(data.pic_model) if data.pics is not None else None
+            pn: list[tuple[int, float]] = []
+            if pq is not None and data.pics is not None and data.pic_rows is not None and data.pics.shape[1] == pq.shape[0]:
+                t = time.perf_counter()
+                pic_scores = data.pics @ pq
+                if keep is not None:
+                    pic_scores = np.where(keep[data.pic_rows], pic_scores, -np.inf)
+                pn = [(int(data.pic_rows[j]), float(pic_scores[j])) for j in _top(pic_scores, pool_n)
+                      if np.isfinite(pic_scores[j])]
+                pics_s += time.perf_counter() - t
             for r, i in enumerate(kw):
-                node = data.nodes[i]
-                slot = cand.setdefault((coll, node["id"]), {"rrf": 0.0, "node": node, "coll": coll,
-                                       "bm25_score": None, "bm25_rank": None,
-                                       "dense_score": None, "dense_rank": None})
+                slot = slot_of(coll, i, data.nodes[i])
                 slot["rrf"] += 1.0 / (k + r + 1)
                 slot["bm25_score"], slot["bm25_rank"] = float(bm25_scores[i]), r + 1
             for r, i in enumerate(dn):
-                node = data.nodes[i]
-                slot = cand.setdefault((coll, node["id"]), {"rrf": 0.0, "node": node, "coll": coll,
-                                       "bm25_score": None, "bm25_rank": None,
-                                       "dense_score": None, "dense_rank": None})
+                slot = slot_of(coll, i, data.nodes[i])
                 slot["rrf"] += 1.0 / (k + r + 1)
                 slot["dense_score"], slot["dense_rank"] = float(dense_scores[i]), r + 1
+            for r, (i, score) in enumerate(pn):
+                slot = slot_of(coll, i, data.nodes[i])
+                slot["rrf"] += 1.0 / (k + r + 1)
+                slot["picture_score"], slot["picture_rank"] = score, r + 1
         timing["keyword_ms"] = int(keyword_s * 1000)     # BM25 over all collections in scope
         timing["dense_ms"] = int(dense_s * 1000)         # cosine over all collections in scope
+        if use_pics:
+            timing["pictures_ms"] = int(pics_s * 1000)   # cosine with the picture vectors (S3b)
         timing["retrieve_ms"] = int((time.perf_counter() - t0) * 1000)   # embed + both + fusion
         timing["candidates"] = len(cand)
         _stage_stats(timing, cand.values())
 
         sort_key = ((lambda s: s["rrf"]) if fused else
-                   (lambda s: s["bm25_score"]) if use_bm25 else (lambda s: s["dense_score"]))
+                   (lambda s: s["bm25_score"]) if use_bm25 else
+                   (lambda s: s["dense_score"]) if use_dense else (lambda s: s["picture_score"]))
         pool = sorted(cand.values(), key=sort_key, reverse=True)[:rr_pool_n]
         t1 = time.perf_counter()
         scores: list[float] | None = None
@@ -415,8 +496,12 @@ class SearchEngine:
                     if reranker is None:
                         self.load_models()
                         reranker = self.reranker
+                    texts = [s["node"]["text"] for s in pool]
                     with self._infer:
-                        scores = reranker.score(query, [s["node"]["text"] for s in pool])
+                        if getattr(reranker, "sees_pictures", False):     # a photograph is judged by its picture too
+                            scores = reranker.score(query, texts, images=[_picture_of(gen, s) for s in pool])
+                        else:
+                            scores = reranker.score(query, texts)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("rerank failed, using prior order: %s", exc)
                     timing["rerank_error"] = str(exc)
@@ -450,6 +535,8 @@ class SearchEngine:
                 "bm25_rank": c["bm25_rank"],
                 "dense_score": None if c["dense_score"] is None else round(c["dense_score"], 4),
                 "dense_rank": c["dense_rank"],
+                **({"picture_score": None if c["picture_score"] is None else round(c["picture_score"], 4),
+                    "picture_rank": c["picture_rank"]} if use_pics else {}),
                 "rerank_score": None if rerank_score is None else round(rerank_score, 4),
                 "collection": coll,
                 "file": m.get("file_name", ""),
@@ -496,6 +583,15 @@ def _mask(data: IndexData, only: "set[str] | None") -> "np.ndarray | None":
     return np.fromiter((n["metadata"].get("src_path", "") in only for n in data.nodes), dtype=bool, count=len(data.nodes))
 
 
+def _picture_of(gen: Generation, slot: dict[str, Any]) -> str | None:
+    """The photograph file of a candidate whose passage has a picture vector (None for any other passage)."""
+    data = gen.indexes.get(slot["coll"])
+    if data is None or slot.get("i") not in data.pic_of:
+        return None
+    src = slot["node"]["metadata"].get("src_path", "")
+    return src if src and os.path.exists(src) else None
+
+
 def _people(people_of: Any, m: dict[str, Any]) -> dict[str, Any]:
     if people_of is None:
         return {}
@@ -520,13 +616,18 @@ def _stage_stats(timing: dict[str, Any], candidates: "list[dict[str, Any]] | Any
     candidates = list(candidates)
     bm25_vals = [c["bm25_score"] for c in candidates if c["bm25_score"] is not None]
     dense_vals = [c["dense_score"] for c in candidates if c["dense_score"] is not None]
+    pic_vals = [c["picture_score"] for c in candidates if c.get("picture_score") is not None]
+    if pic_vals:
+        timing["picture_candidates"] = len(pic_vals)
+        timing["picture_only_count"] = sum(1 for c in candidates if c.get("picture_score") is not None
+                                           and c["bm25_score"] is None and c["dense_score"] is None)
     both = sum(1 for c in candidates if c["bm25_score"] is not None and c["dense_score"] is not None)
     timing["bm25_candidates"] = len(bm25_vals)
     timing["dense_candidates"] = len(dense_vals)
     timing["overlap_count"] = both
     timing["bm25_only_count"] = len(bm25_vals) - both
     timing["dense_only_count"] = len(dense_vals) - both
-    for label, vals in (("bm25", bm25_vals), ("dense", dense_vals)):
+    for label, vals in (("bm25", bm25_vals), ("dense", dense_vals), ("picture", pic_vals)):
         if not vals:
             continue
         top1, top2 = _top1_top2(vals)

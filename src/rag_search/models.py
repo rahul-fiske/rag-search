@@ -46,6 +46,8 @@ HF_IGNORE = ["*.onnx", "*.onnx_data", "onnx/*", "openvino/*", "*.msgpack", "*.h5
 ST_EMBEDDER = "sentence-transformers"     # bi-encoder loaded with SentenceTransformer
 CROSS_ENCODER = "cross-encoder"           # reranker loaded with sentence_transformers.CrossEncoder
 QWEN3_RERANKER = "qwen3-reranker"         # causal LM that answers "yes"/"no" (Qwen3-Reranker)
+QWEN3_VL_RERANKER = "qwen3-vl-reranker"   # multimodal cross-encoder: reads a photograph's picture with its text
+SIGLIP = "siglip"                         # picture model: an image and a text encoder in one space (5.2, S3b)
 
 QWEN3_QUERY_PREFIX = ("Instruct: Given a web search query, retrieve relevant passages that "
                       "answer the query\nQuery:")
@@ -117,7 +119,30 @@ CATALOG: tuple[ModelSpec, ...] = (
     ModelSpec("Qwen/Qwen3-Reranker-4B", RERANKER, "Qwen3-Reranker 4B", 4020, 8.05, "Apache-2.0",
               "100+ languages", "Higher quality; roughly ten times slower per query than 0.6B.",
               backend=QWEN3_RERANKER, tier="quality", requires=(("transformers", "4.51"),)),
+    ModelSpec("Qwen/Qwen3-VL-Reranker-2B", RERANKER, "Qwen3-VL-Reranker 2B", 2130, 4.3, "Apache-2.0",
+              "multilingual",
+              "Multimodal: a photograph is judged by its picture (256 px) and its details together, a passage by its "
+              "text, all on one scale. Needed for picture vectors to count (with a text-only reranker they are undone). "
+              "About 3-5 s per query against about 1 s for bge-reranker-v2-m3.",
+              backend=QWEN3_VL_RERANKER, tier="quality",
+              requires=(("transformers", "4.57"), ("sentence-transformers", "5.1"))),
 )
+
+# ── picture models (5.2 Picture vectors, S3b): one vector per photograph, from its pixels ──
+# Not part of KINDS: switching one embeds only the photographs again (``core/pictures.py`` keeps its own key).
+PICTURE = "picture"
+PICTURE_ENV = "RAG_SEARCH_PICTURE_MODEL"
+PICTURE_CATALOG: tuple[ModelSpec, ...] = (
+    ModelSpec("google/siglip2-base-patch16-224", PICTURE, "SigLIP 2 base", 375, 0.75, "Apache-2.0", "multilingual",
+              "The default. 768 numbers per photograph; about 6 ms per photograph on the Apple GPU (opening the file "
+              "takes longer). In the test on 300 photographs it found what the descriptions missed (landmarks, "
+              "screenshots, whiteboards).", dim=768, backend=SIGLIP, tier="default"),
+    ModelSpec("google/siglip2-so400m-patch14-384", PICTURE, "SigLIP 2 so400m", 1136, 2.3, "Apache-2.0",
+              "multilingual",
+              "Three times larger and about 12 times slower per photograph; no better than the base model in the "
+              "test once the multimodal reranker was used. 1152 numbers.", dim=1152, backend=SIGLIP, tier="quality"),
+)
+PICTURE_DEFAULT = PICTURE_CATALOG[0].id
 
 # name -> (embedding, reranker)
 PRESETS: dict[str, tuple[str, str]] = {
@@ -282,6 +307,45 @@ def vlm_selection(kind: str) -> tuple[str, str]:
     if cfg:
         return cfg, "config"
     return VLM_DEFAULTS[kind], "default"
+
+
+def picture_find(model_id: str) -> ModelSpec | None:
+    return next((m for m in PICTURE_CATALOG if m.id == model_id), None)
+
+
+def picture_selection() -> tuple[str, str]:
+    """(model id, environment | config | default) of the picture model; "off" in config.json turns 5.2 off."""
+    env = os.environ.get(PICTURE_ENV)
+    if env:
+        return env, "environment"
+    cfg = configured_model(PICTURE)
+    if cfg:
+        return cfg, "config"
+    return PICTURE_DEFAULT, "default"
+
+
+def set_picture_selection(paths: Paths, model_id: str) -> None:
+    from .config import update_config
+
+    if model_id != "off" and not picture_find(model_id):
+        raise ModelError(f"choose one of {', '.join(m.id for m in PICTURE_CATALOG)}, or off")
+    update_config(paths, "models", {PICTURE: model_id})
+
+
+def picture_state(paths: Paths) -> dict[str, Any]:
+    """The Models tab's *picture model* card: the choice, the catalogue with download state, and whether the reranker
+    can look at pictures (without that, a photograph found by its picture is pushed back down by the reranker)."""
+    sel, source = picture_selection()
+    rows = []
+    for m in PICTURE_CATALOG:
+        cs = cache_state(m.id)
+        row = {k: getattr(m, k) for k in _PUBLIC}
+        row.update(active=m.id == sel, cached=cs["cached"], partial=cs["partial"], downloaded_bytes=cs["bytes"],
+                   why_not=cs.get("why", ""), state=_selected_state(m.id == sel, cs["cached"], cs["partial"]))
+        rows.append(row)
+    rer = find(selection(RERANKER)[0])
+    return {"active": sel, "source": source, "models": rows, "off": sel == "off",
+            "reranker_sees_pictures": bool(rer and rer.backend == QWEN3_VL_RERANKER)}
 
 
 def describe_selection() -> tuple[str, str]:
@@ -835,6 +899,7 @@ def state(paths: Paths) -> dict[str, Any]:
         rows = [_row(m, sel[kind][0], serving, other, machine, budget, chunks) for m in listed]
         out[kind] = {"active": sel[kind][0], "source": sel[kind][1], "models": rows}
     out["vlm"] = vlm_state(paths)
+    out["picture"] = picture_state(paths)
     active_emb = sel[EMBEDDING][0]
     out["reindex"] = {"needed": bool(serving and serving != active_emb) or
                       any(m != active_emb for m in ws["by_model"]),

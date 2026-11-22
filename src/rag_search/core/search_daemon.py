@@ -86,6 +86,7 @@ class SearchDaemon(DaemonBase):
             try:
                 t_models = time.monotonic()
                 self.engine.load_models()
+                self.engine.load_pictures()            # S3b: the picture model, when the published index has pictures
                 self.warmup["models_s"] = round(time.monotonic() - t_models, 1)
                 break
             except Exception as exc:  # noqa: BLE001

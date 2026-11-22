@@ -53,6 +53,47 @@ class FakeEmbedder:
         return arr
 
 
+class FakePictureEmbedder:
+    """Picture vectors from the words of a photograph's file name (``beach_sunset.jpg``), and a query from its words:
+    a query finds the photographs named for what it asks.  A file that does not exist gets a row of zeros."""
+
+    calls = 0
+
+    def load(self):
+        return self
+
+    def encode_images(self, paths, progress=None):
+        type(self).calls += 1
+        return np.stack([FakeEmbedder()._vec(Path(p).stem.replace("_", " ")) if Path(p).exists()
+                         else np.zeros(DIM, np.float32) for p in paths]) if paths else np.zeros((0, DIM), np.float32)
+
+    def encode_query(self, query):
+        return FakeEmbedder()._vec(query)
+
+
+class FakePictureReranker:
+    """A reranker that looks at pictures: a candidate shown with a picture whose file name shares a word with the query
+    scores 1, any other by its words (as FakeReranker).  ``seen`` records what it was shown."""
+
+    sees_pictures = True
+
+    def __init__(self):
+        self.seen: list[list] = []
+
+    def load(self):
+        return self
+
+    def score(self, query, texts, images=None):
+        self.seen.append(list(images or []))
+        q = set(re.findall(r"\w+", query.lower()))
+        out = []
+        for i, t in enumerate(texts):
+            img = (images or [None] * len(texts))[i]
+            name = set(re.findall(r"\w+", Path(img).stem.replace("_", " ").lower())) if img else set()
+            out.append(1.0 if q & name else 0.5 * len(q & set(re.findall(r"\w+", t.lower()))) / (len(q) or 1))
+        return out
+
+
 class FakeVlmBackend:
     """A document-reader backend (``vlm_worker``) that needs no model.  It "reads" a page image and
     answers with text derived from the image, so a test can tell pages apart.  Behaviour is steered
@@ -199,13 +240,14 @@ class TempHome(unittest.TestCase):
                 "TEST_EMBED_SLEEP", "RAG_SEARCH_RERANK_MODEL", "RAG_SEARCH_RERANK",
                 "RAG_SEARCH_DTYPE", "RAG_SEARCH_DEVICE", "HF_HOME", "HF_HUB_CACHE",
                 "HUGGINGFACE_HUB_CACHE", "RAG_SEARCH_DOCLING_BATCH", "RAG_TEST_FAKE_PAGES", "RAG_TEST_VLM_PLAN", "RAG_SEARCH_VLM", "RAG_SEARCH_VLM_BACKEND", "RAG_SEARCH_VLM_FREE_GB", "RAG_SEARCH_VLM_PAGE_TIMEOUT", "RAG_SEARCH_VLM_MODEL", "RAG_SEARCH_REPAIR_MODEL", "RAG_SEARCH_REPAIR", "RAG_SEARCH_REPAIR_SECOND", "RAG_TEST_SECOND_PLAN", "RAG_SEARCH_DESCRIBE_AUTO", "RAG_SEARCH_DESCRIBE_MODEL",
-                "PYTHONPATH")
+                "RAG_SEARCH_PICTURE_MODEL", "RAG_SEARCH_PICTURE_EMBEDDER", "PYTHONPATH")
 
     def setUp(self):
         self._saved = {k: os.environ.pop(k, None) for k in self.ENV_KEYS}
         self.tmp = Path(tempfile.mkdtemp(prefix="ragtest-")).resolve()
         os.environ["RAG_SEARCH_HOME"] = str(self.tmp / "home")
         os.environ["RAG_SEARCH_DESCRIBE_AUTO"] = "off"       # a test never loads the real vision model (describe tests opt in)
+        os.environ["RAG_SEARCH_PICTURE_MODEL"] = "off"       # nor the real picture model (picture tests use FakePictureEmbedder)
         self.paths: Paths = get_paths()
         ensure_dirs(self.paths)
         self.sdir = self.tmp / "sources"      # where the tests' source folders live; each is registered

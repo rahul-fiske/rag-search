@@ -192,6 +192,7 @@ const CV = (function () {
     const TL = kinds[TIMELINE] || { n: 0, found: {} };
     const nPageDocs = Object.entries(kinds).filter(([k]) => k !== PHOTO && k !== TIMELINE).reduce((a, [, v]) => a + v.n, 0);
     const dsrc = S('describe').sources || {}, fs = S('faces'), fhow = fs.how || {}, fscope = fs.scope || {};
+    const pv = S('pictures'), pvhow = pv.how || {}, pvscope = pv.scope || {};
     const rw = t.runways || {}, total = sumOf(rw), out = t.outcomes || {}, read = sumOf(out), okPages = (out.pass || 0) + (out.repaired || 0);
     const pp = (kinds[PHOTOGRAPHED] || {}).n || 0;
     return h('div', { class: 'cv-flow' },
@@ -219,7 +220,10 @@ const CV = (function () {
             fs.n ? `found now ${num(fhow.found || 0)} · known already ${num(fhow.known || 0)}` + (fhow.failed ? ` · could not be read ${num(fhow.failed)}` : '') + (fscope['indexed earlier'] ? ` · of which indexed earlier ${num(fscope['indexed earlier'])}` : '') : (nP ? 'no photograph has been looked at in this run: either the face models are not downloaded (Models tab) or the run started before this step existed (the next run has it)' : null)),
           tnode('3.10', 'Describe', 'gpu', nP ? `described ${num(pf.description || 0)} of ${num(nP)}` : '', nP ? pctOf(pf.description || 0, nP) : null,
             'A vision model writes a short description before the photograph is chunked; cached by photograph, model and prompt, so a map refresh or a rebuild never repeats it. A description is a fact like the others: one that could not be made now is missing, and a later run fills it in.',
-            sumOf(dsrc) ? `by the model ${num(dsrc.model || 0)} · from the cache ${num(dsrc.cache || 0)}` + (dsrc.none ? ` · missing ${num(dsrc.none)} (a later run fills them in)` : '') : null)]),
+            sumOf(dsrc) ? `by the model ${num(dsrc.model || 0)} · from the cache ${num(dsrc.cache || 0)}` + (dsrc.none ? ` · missing ${num(dsrc.none)} (a later run fills them in)` : '') : null),
+          tnode('5.2', 'Picture vectors', 'gpu', pv.n ? `${num(pvhow.made || 0)} photograph${pvhow.made === 1 ? '' : 's'} embedded by their picture` : '', null,
+            'After the text vectors, each photograph gets one vector from its pixels (SigLIP 2), so a query finds what a photograph shows even when its description does not say it. Kept with a key of its own: a new picture model, or the first run after picture vectors exist, embeds only the photographs.',
+            pv.n ? (pvscope['indexed earlier'] ? `of which indexed earlier ${num(pvscope['indexed earlier'])}` : 'all from this run') + (pvhow['could not be opened'] ? ` · could not be opened ${num(pvhow['could not be opened'])}` : '') : (nP ? 'none yet: the step runs after the text vectors, once the picture model is downloaded (Models tab)' : null))]),
         track('timeline', num(TL.n || ro.timeline || 0), [
           tnode('3.8', 'Timeline', 'cpu', TL.n ? `${num(TL.visits || 0)} visits in ${num(TL.n)} file${TL.n === 1 ? '' : 's'}` : '', null, 'One line per visit and journey, with times and geo: positions'),
           tnode('3.7', 'Locate', 'cpu', TL.n ? `places in ${num((TL.found || {}).place || 0)} of ${num(TL.n)} files` : '', TL.n ? pctOf((TL.found || {}).place || 0, TL.n) : null,

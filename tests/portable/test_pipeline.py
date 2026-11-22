@@ -305,7 +305,7 @@ class SearchDebugTests(TempHome):
     def test_hybrid_default_carries_every_stage_score(self):
         eng = self.engine()
         r = eng.search("public key authentication")
-        self.assertEqual(r["timing"]["stages"], ["bm25", "dense", "rerank"])
+        self.assertEqual(r["timing"]["stages"], ["bm25", "dense", "pictures", "rerank"])
         hit = r["results"][0]
         self.assertIsNotNone(hit["bm25_score"])
         self.assertIsNotNone(hit["bm25_rank"])

@@ -277,7 +277,7 @@ def _format_of(file: str) -> str:
     return f".{ext} file" if ext else "other document"
 
 
-STEP_KEYS = ("sniff", "photo", "locate", "timeline", "faces", "describe")
+STEP_KEYS = ("sniff", "photo", "locate", "timeline", "faces", "describe", "pictures")
 
 
 def _feed_step(st: dict[str, Any], ev: dict[str, Any]) -> None:
@@ -306,6 +306,9 @@ def _feed_step(st: dict[str, Any], ev: dict[str, Any]) -> None:
         bump("how", str(ev.get("how") or "found"))
         bump("scope", "indexed earlier" if ev.get("earlier") else "in this run")
         sp["faces"] = sp.get("faces", 0) + int(ev.get("faces") or 0)
+    elif key == "pictures":
+        bump("how", "made" if ev.get("made") else "could not be opened")
+        bump("scope", "indexed earlier" if ev.get("earlier") else "in this run")
     elif key == "describe":
         src = str(ev.get("source") or "none")
         bump("sources", src)

@@ -37,7 +37,8 @@ TOKENIZER_VERSION = "v1"  # bump when BM25 tokenisation changes
 # constant than the formulas below compute, but never past these ceilings -- they exist so a
 # careless value typed into the dashboard can never make one search stall the cross-encoder or
 # scan an unreasonable number of candidates.
-STAGES = ("bm25", "dense", "rerank")
+STAGES = ("bm25", "dense", "pictures", "rerank")
+RETRIEVERS = ("bm25", "dense", "pictures")
 RETRIEVAL_POOL_MAX = 300   # hard ceiling for an overridden retrieval_pool
 RERANK_POOL_MAX = 100      # hard ceiling for an overridden rerank_pool (above the default cap)
 RRF_K_MIN, RRF_K_MAX = 1, 500
@@ -85,8 +86,8 @@ def parse_stages(value: "str | list[str] | None") -> tuple[str, ...]:
             out.append(name)
     if not out:
         return STAGES
-    if "bm25" not in out and "dense" not in out:
-        raise ValueError("at least one of 'bm25' or 'dense' must stay on")
+    if not any(r in out for r in RETRIEVERS):
+        raise ValueError("at least one of 'bm25', 'dense' or 'pictures' must stay on")
     return tuple(out)
 
 
@@ -155,12 +156,12 @@ TUNABLES: tuple[Tunable, ...] = (
             "values flatten the fusion so lower ranks still contribute meaningfully.",
             IMMEDIATE, "--rrf-k", default_label=f"{RRF_K}"),
     Tunable("search", "stages", "stages", "", "Stages",
-            "Which retrieval stages run: any comma-separated combination of bm25, dense, rerank. "
-            "Blank = all three (today's default).",
-            "Turning off rerank is much faster but ranking quality drops; at least one of bm25/dense "
+            "Which retrieval stages run: any comma-separated combination of bm25, dense, pictures, rerank. "
+            "Blank = all four (the default; pictures only where photographs have picture vectors).",
+            "Turning off rerank is much faster but ranking quality drops; at least one of bm25/dense/pictures "
             "must always stay on. This is the production default -- any client can still ask for a "
             "different combination on a single search.",
-            IMMEDIATE, "--stages", default_label="bm25, dense, rerank (all three)"),
+            IMMEDIATE, "--stages", default_label="bm25, dense, pictures, rerank (all four)"),
     Tunable("search", "top_k", "int", 0, "Default results (top_k)",
             "How many passages a search returns when the caller does not ask for a specific "
             f"number. 0 = the built-in default ({DEFAULT_TOP_K}).",
