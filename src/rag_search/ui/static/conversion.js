@@ -18,9 +18,10 @@ const CV = (function () {
     cached: ['cached', 'page result reused from the page cache'],
     photo: ['photo', 'a photograph: indexed from its details (time, GPS, place, faces), not read by the document reader (steps 3.6, 3.7)'],
     timeline: ['timeline', 'a Google Maps Timeline: one line per visit and journey, with the places around it (steps 3.8, 3.7)'],
+    video: ['video', 'a video: indexed from its details (time, GPS, place, camera, duration), not its frames or sound (steps 3.11, 3.7)'],
     unknown: ['unprofiled', 'not profiled (the profiling time limit was reached)'],
   };
-  const LETTERS = { c: 'copy', o: 'office', d: 'digital', r: 'raster', i: 'image', e: 'embedded', f: 'fallback', k: 'cached', p: 'photo', t: 'timeline', '?': 'unknown' };
+  const LETTERS = { c: 'copy', o: 'office', d: 'digital', r: 'raster', i: 'image', e: 'embedded', f: 'fallback', k: 'cached', p: 'photo', t: 'timeline', v: 'video', '?': 'unknown' };
   const OUTCOMES = {
     pass: 'passed the quality checks', repaired: 'passed after repair', low: 'low confidence: kept, but flagged',
     no_text: 'no text on the page', error: 'could not be read',
@@ -47,9 +48,9 @@ const CV = (function () {
         h('i', { class: 'cv-sw ' + cls, 'aria-hidden': 'true' }), text, n != null ? h('b', null, num(n)) : null)));
   }
   /* the three kinds of file 3.0 Sniff tells apart, and the grade every document ends with (core/understanding.py) */
-  const KINDS = { pages: ['Documents of pages', 'PDF, Office, text and pictures of pages'], photograph: ['Photographs', 'images with camera data and little text'], timeline: ['Google Maps Timelines', '.json exports, recognised by their content'] };
-  const KIND_ORDER = ['pages', 'photograph', 'timeline'];
-  const trackOf = kind => kind === 'photograph' ? 'photograph' : kind === 'Google Maps Timeline' ? 'timeline' : 'pages';
+  const KINDS = { pages: ['Documents of pages', 'PDF, Office, text and pictures of pages'], photograph: ['Photographs', 'images with camera data and little text'], video: ['Videos', '.mov, .mp4, .m4v, .3gp and .avi files'], timeline: ['Google Maps Timelines', '.json exports, recognised by their content'] };
+  const KIND_ORDER = ['pages', 'photograph', 'video', 'timeline'];
+  const trackOf = kind => kind === 'photograph' ? 'photograph' : kind === 'video' ? 'video' : kind === 'Google Maps Timeline' ? 'timeline' : 'pages';
   const GRADES = [['complete', 'q-good', 'complete'], ['partial', 'q-part', 'partly understood'], ['no_text', 'q-none', 'no text'], ['error', 'q-bad', 'failed']];
   const gradeCls = g => (GRADES.find(x => x[0] === g) || [g, 'q-good'])[1];
   const gradeName = g => (GRADES.find(x => x[0] === g) || [g, '', g])[2];
@@ -78,7 +79,7 @@ const CV = (function () {
 
   /* Pages per branch (what each page is) as one proportional bar, with its key. */
   function bands(branches) {
-    const keys = sortedBranches(branches).filter(k => k !== 'photo' && k !== 'timeline'); const total = keys.reduce((a, k) => a + branches[k], 0);
+    const keys = sortedBranches(branches).filter(k => k !== 'photo' && k !== 'timeline' && k !== 'video'); const total = keys.reduce((a, k) => a + branches[k], 0);
     if (!total) return null;
     return h('div', null,
       h('div', { class: 'cv-bands' }, keys.map(k => h('i', { class: 'cvb-' + k, title: `${label(k)}: ${num(branches[k])} pages (${Math.round(100 * branches[k] / total)}%)`, style: { flexGrow: String(branches[k]) } }))),
@@ -141,11 +142,11 @@ const CV = (function () {
   }
 
   /* ---------- How documents travel, and what was understood of them ----------
-     One track per kind of file 3.0 Sniff tells apart (documents of pages, photographs, Google Maps Timelines); each
+     One track per kind of file 3.0 Sniff tells apart (documents of pages, photographs, videos, Google Maps Timelines); each
      step shows the one figure that says how it went for the documents on its track, with a bar of that share.  The
      table under it counts documents by what they turned out to be, how completely each was understood and which facts
      are missing (from the "understood" record of each document, see core/understanding.py). */
-  const PHOTO = 'photograph', PHOTOGRAPHED = 'photographed page', TIMELINE = 'Google Maps Timeline';
+  const PHOTO = 'photograph', PHOTOGRAPHED = 'photographed page', TIMELINE = 'Google Maps Timeline', VIDEO = 'video';
   const pctOf = (a, b) => b ? Math.round(100 * a / b) : 0;
   function tnode(id, name, kind, figure, share, tip, note) {
     return h('div', { class: 'cv-tn' + (figure ? ' on' : ''), title: tip || '' },
@@ -190,15 +191,16 @@ const CV = (function () {
     const S = k => steps[k] || {}, ro = S('sniff').routes || {}, sniffed = S('sniff').n || 0;
     const P = kinds[PHOTO] || { n: 0, found: {} }, pf = P.found || {}, nP = P.n, pos = pf.position || 0;
     const TL = kinds[TIMELINE] || { n: 0, found: {} };
-    const nPageDocs = Object.entries(kinds).filter(([k]) => k !== PHOTO && k !== TIMELINE).reduce((a, [, v]) => a + v.n, 0);
+    const V = kinds[VIDEO] || { n: 0, found: {} }, vf = V.found || {}, nV = V.n, vpos = vf.position || 0;
+    const nPageDocs = Object.entries(kinds).filter(([k]) => k !== PHOTO && k !== TIMELINE && k !== VIDEO).reduce((a, [, v]) => a + v.n, 0);
     const dsrc = S('describe').sources || {}, fs = S('faces'), fhow = fs.how || {}, fscope = fs.scope || {};
     const pv = S('pictures'), pvhow = pv.how || {}, pvscope = pv.scope || {};
     const rw = t.runways || {}, total = sumOf(rw), out = t.outcomes || {}, read = sumOf(out), okPages = (out.pass || 0) + (out.repaired || 0);
     const pp = (kinds[PHOTOGRAPHED] || {}).n || 0;
     return h('div', { class: 'cv-flow' },
       h('div', { class: 'cv-sniff' }, tnode('3.0', 'Sniff', 'cpu', sniffed ? `${num(sniffed)} files sorted` : '', null,
-        'Decides from the file itself, before any page is looked at: a Google Maps Timeline .json by its content; an image with camera data gets a quick text check (Apple Vision): fewer than 200 letters and digits = a photograph, more = a photographed page. Everything else is a document of pages.',
-        sniffed ? `pages ${num(ro.pages || 0)} · photographs ${num(ro.photograph || 0)} · Timeline ${num(ro.timeline || 0)}` : 'what kind of file is it?')),
+        'Decides from the file itself, before any page is looked at: a video by its extension; a Google Maps Timeline .json by its content; an image with camera data gets a quick text check (Apple Vision): fewer than 200 letters and digits = a photograph, more = a photographed page. Everything else is a document of pages.',
+        sniffed ? `pages ${num(ro.pages || 0)} · photographs ${num(ro.photograph || 0)} · videos ${num(ro.video || 0)} · Timeline ${num(ro.timeline || 0)}` : 'what kind of file is it?')),
       h('div', { class: 'cv-tracks' },
         track('pages', num(nPageDocs || ro.pages || 0), [
           tnode('3.1', 'Profile', 'cpu', t.pages ? `${num(t.pages)} pages looked at` : '', null, 'What is on each page: a text layer, a scan, pictures, resolution, script'),
@@ -224,6 +226,13 @@ const CV = (function () {
           tnode('5.2', 'Picture vectors', 'gpu', pv.n ? `${num(pvhow.made || 0)} photograph${pvhow.made === 1 ? '' : 's'} embedded by their picture` : '', null,
             'After the text vectors, each photograph gets one vector from its pixels (SigLIP 2), so a query finds what a photograph shows even when its description does not say it. Kept with a key of its own: a new picture model, or the first run after picture vectors exist, embeds only the photographs.',
             pv.n ? (pvscope['indexed earlier'] ? `of which indexed earlier ${num(pvscope['indexed earlier'])}` : 'all from this run') + (pvhow['could not be opened'] ? ` · could not be opened ${num(pvhow['could not be opened'])}` : '') : (nP ? 'none yet: the step runs after the text vectors, once the picture model is downloaded (Models tab)' : null))]),
+        track('video', num(nV || ro.video || 0), [
+          tnode('3.11', 'Video details', 'cpu', nV ? `a time for ${num(vf.time || 0)} of ${num(nV)}` : '', nV ? pctOf(vf.time || 0, nV) : null,
+            'Time, GPS position, camera, size and duration, read from the QuickTime / MP4 header (an .avi: size and duration only); the frames and the sound are not read. The bar: the share with a time.',
+            nV ? `GPS position in ${num(vpos)} · camera in ${num(vf.camera || 0)}` : null),
+          tnode('3.7', 'Locate', 'cpu', vpos ? `a place for ${num(vf.place || 0)} of ${num(vpos)} positions` : '', vpos ? pctOf(vf.place || 0, vpos) : null,
+            'The same Locate step as for photographs (3.7): area, town and places nearby for each video with a GPS position, from the installed map data',
+            vpos ? `places nearby for ${num(vf.nearby || 0)}` : null)]),
         track('timeline', num(TL.n || ro.timeline || 0), [
           tnode('3.8', 'Timeline', 'cpu', TL.n ? `${num(TL.visits || 0)} visits in ${num(TL.n)} file${TL.n === 1 ? '' : 's'}` : '', null, 'One line per visit and journey, with times and geo: positions'),
           tnode('3.7', 'Locate', 'cpu', TL.n ? `places in ${num((TL.found || {}).place || 0)} of ${num(TL.n)} files` : '', TL.n ? pctOf((TL.found || {}).place || 0, TL.n) : null,
@@ -232,7 +241,7 @@ const CV = (function () {
         legend([['q-good', 'the share of the documents on the track that have it']], 'Bar under a step:')));
   }
 
-  const FACT_NAMES = { time: 'time taken', position: 'GPS position', place: 'place (area, town)', nearby: 'places nearby', faces: 'faces (one or more)', description: 'description', visits: 'visits', journeys: 'journeys' };
+  const FACT_NAMES = { time: 'time taken', position: 'GPS position', place: 'place (area, town)', nearby: 'places nearby', faces: 'faces (one or more)', description: 'description', visits: 'visits', journeys: 'journeys', camera: 'camera', duration: 'duration' };
   const gapName = f => FACT_NAMES[f] ? 'no ' + FACT_NAMES[f] : 'with ' + f;
   function understood(kinds) {
     const rows = Object.entries(kinds || {}).sort((a, b) => b[1].n - a[1].n);

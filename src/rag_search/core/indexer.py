@@ -43,6 +43,7 @@ from ..paths import (
     META_FILE,
     NODES_FILE,
     IMAGE_EXTENSIONS,
+    VIDEO_EXTENSIONS,
     PASSTHROUGH_EXTENSIONS,
     IndexBusyError,  # noqa: F401 - re-exported: callers catch indexer.IndexBusyError
     Paths,
@@ -61,7 +62,7 @@ from ..paths import (
     sha256_file,
     write_json_atomic,
 )
-from . import chunker, describe, faces, photo, pictures, sniffcache, stallwatch, timeline, understanding
+from . import chunker, describe, faces, photo, pictures, sniffcache, stallwatch, timeline, understanding, video
 from .bm25 import TOKENIZER_VERSION
 from .conversion import (
     applevision,
@@ -553,9 +554,11 @@ def _text_seen(src: Path, sha: str, cache: Path | None) -> str | None:
 def _sniff(src: Path, kind: str, reused_md: bool, old: dict[str, Any],
            reuse_trace: bool, sha: str = "", cache: Path | None = None) -> tuple[str, dict[str, Any], str | None]:
     """3.0 Sniff: what kind of file is this?  ``(route, exif, text seen)``.  Decided from the file itself, before any page is
-    looked at: a Google Timeline .json -> "timeline"; an image with camera data and little text -> "photograph"; everything
-    else, a photographed page too -> "pages" (3.1-3.5).  A document whose Markdown and trace are current keeps the route its
-    trace records."""
+    looked at: a video -> "video" (3.11, by its extension); a Google Timeline .json -> "timeline"; an image with camera data
+    and little text -> "photograph"; everything else, a photographed page too -> "pages" (3.1-3.5).  A document whose
+    Markdown and trace are current keeps the route its trace records."""
+    if kind == "video":
+        return "video", video.read_meta(src), None
     meta = photo.read_exif(src) if kind == "image" else {}
     known = {trace.page_kind(p) for p in old.get("pages", [])} if reuse_trace else set()
     if known == {"photo"}:
@@ -753,7 +756,7 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         # processes), so a photograph is known to be one before it is queued; otherwise here
         if task.get("route"):
             route, seen = str(task["route"]), task.get("seen")
-            meta = photo.read_exif(src) if kind == "image" else {}
+            meta = photo.read_exif(src) if kind == "image" else video.read_meta(src) if kind == "video" else {}
             if not task.get("sniffed"):            # a file with nothing to sniff (not an image, not a .json): a document of pages
                 stage_event(slog, rel_name, "sniff", "done", seconds=0.0, route=route)
         else:
@@ -811,6 +814,15 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
             if "- Area:" in photo_section or "- Town:" in photo_section:
                 stage_event(slog, rel_name, "locate", "done", seconds=round(loc_s, 3),
                             nearby="- Nearby:" in photo_section)
+        video_section = ""
+        if route == "video":                           # 3.11 Video details (3.7 Locate is part of it); always made again: a few reads
+            video_section = video.block(src, get_paths(), meta)
+            loc_s = float(photo.LAST.get("locate_s") or 0.0) if "lat" in meta else 0.0
+            stage_event(slog, rel_name, "video", "done", seconds=round(max(0.0, time.perf_counter() - t_ph - loc_s), 3),
+                        position="lat" in meta, time="when" in meta)
+            if "- Area:" in video_section or "- Town:" in video_section:
+                stage_event(slog, rel_name, "locate", "done", seconds=round(loc_s, 3),
+                            nearby="- Nearby:" in video_section)
         if photograph:                                 # 3.9 Faces: after Locate; its count is a line of the details
             n_faces, f_how, f_s = _faces_step(task, src, sha, slog, rel_name)
             if n_faces is not None:
@@ -832,6 +844,14 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
                     f"{sha}\n{convert_profile(task.get('ocr'))}\n", encoding="utf-8")
                 how, info = "photo details", {}
                 route_note = route_note or "a photograph: indexed from its photo details"
+            elif route == "video":         # a video's own way: its details, never docling
+                if not video_section:
+                    raise NoTextError("a video whose file could not be read (no QuickTime or MP4 header, no frames)")
+                photo.only(md_path, video_section)
+                md_path.with_name(md_path.name + ".sha256").write_text(
+                    f"{sha}\n{convert_profile(task.get('ocr'))}\n", encoding="utf-8")
+                how, info = "video details", {}
+                route_note = route_note or "a video: indexed from its video details"
             elif not reused_md and profile is not None and _wants_routing(kind, profile, task.get("ocr")):
                 try:
                     how = convert_source_routed(
@@ -884,7 +904,7 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         stage_event(slog, rel_name, "convert", "done", seconds=convert_s, how=how,
                     profile_s=prof_s)
         text = md_path.read_text(encoding="utf-8", errors="replace")
-        if "geo:" in text and (not reused_md or photo_section):    # described with the map data installed now
+        if "geo:" in text and (not reused_md or photo_section or video_section):    # described with the map data installed now
             maps.write_stamp(get_paths(), md_path, text)
         t_chunk = time.perf_counter()
         raw_nodes = chunker.markdown_to_nodes(text, cs, co)
@@ -934,9 +954,11 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
                 note = ("" if how == "converted" else
                         "Markdown made by an earlier run: no per-page read facts")
                 note = route_note or note
-                if timeline_done or photograph:
+                if timeline_done or photograph or route == "video":
                     branch, why = (("timeline", "a Google Maps Timeline export: a day-by-day log written by 3.8, places by 3.7")
                                    if timeline_done else
+                                   ("video", "a video: indexed from its details (3.11, 3.7), not its frames or sound")
+                                   if route == "video" else
                                    ("photo", "a photograph: indexed from its details (3.6, 3.7), not read by the document reader"))
                     pages = [trace.page_record(1, branch, why, reader={"tool": branch}, outcome="pass",
                                                out={"chars": len(text)}, note=route_note)]
@@ -1720,9 +1742,12 @@ def run_index(
     model = model if model is not None else model_name()
     ocr = None    # OCR, table and pipeline settings come from RAG_SEARCH_* (see docling_convert)
 
-    unsupported = list(unsupported or [])
+    live_photo = [u for u in unsupported or [] if u.get("companion")]   # the video of a Live Photo: its photograph is indexed
+    unsupported = [u for u in unsupported or [] if not u.get("companion")]
     for u in unsupported:
         doc_event(Path(u["src"]), "unsupported", extension=u["extension"] or "(none)")
+    for u in live_photo:
+        doc_event(Path(u["src"]), "live_photo", photo=u["companion"])
 
     orphans_removed: list[str] = []
     errors: list[dict[str, str]] = []
@@ -1884,8 +1909,8 @@ def run_index(
                                                            or Path(t["src"]).suffix.lower() == ".json")]
             first = [t for t in tasks if t not in sniffable]
             for t in first:
-                if jobs > 1:
-                    t["route"] = "pages"
+                if jobs > 1:               # known from the extension: a video, else a document of pages
+                    t["route"] = "video" if Path(t["src"]).suffix.lower() in VIDEO_EXTENSIONS else "pages"
             early = threading.Thread(target=_pool_part, args=(first,), name="rag-pool", daemon=True) \
                 if sniffable and first else None
             if early is not None:
@@ -2041,6 +2066,7 @@ def run_index(
         "indexed": indexed, "skipped_fresh": skipped, "errors": errors, "wiped": wiped,
         "no_text": no_text,
         "unsupported_extension": unsupported,
+        "live_photo": live_photo,
         "collections": [m for m in merged if not m.get("error")],
         "elapsed_s": round(time.perf_counter() - t_start, 1),
         "phase_s": phase_s,

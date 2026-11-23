@@ -39,6 +39,7 @@ from typing import Any
 
 from .paths import (
     SUPPORTED_EXTENSIONS,
+    VIDEO_EXTENSIONS,
     CachedFile,
     Paths,
     SourceRoots,
@@ -233,11 +234,14 @@ def scan_tree(scan_root: Path, exclude: Iterable[Path] = (),
 
     -> (supported files, unsupported files) -- the second list is every file this walk saw and
     passed over only because its extension isn't one indexing reads, as ``{"src", "extension"}``
-    (``extension`` is ``""`` for a file with none at all).  A file skipped for any other reason
+    (``extension`` is ``""`` for a file with none at all), and the video of every Live Photo,
+    with ``"companion"``: the picture it belongs to, which is indexed (``video.companion_of``).  A file skipped for any other reason
     (hidden, a lock file, inside *exclude*) is in neither list -- it was never really "seen".
 
     Folders that could not be listed (permissions, a cloud or network folder timing out) are
     appended to *errors*: what is inside them is unknown, not absent."""
+    from .core.video import companion_of
+
     ex = [Path(e).resolve() for e in exclude]
     found: list[Path] = []
     unsupported: list[dict[str, str]] = []
@@ -263,7 +267,10 @@ def scan_tree(scan_root: Path, exclude: Iterable[Path] = (),
             if not p.is_file():
                 continue
             ext = p.suffix.lower()
-            if ext in SUPPORTED_EXTENSIONS:
+            pair = companion_of(p, filenames) if ext in VIDEO_EXTENSIONS else ""
+            if pair:
+                unsupported.append({"src": str(p), "extension": ext, "companion": pair})
+            elif ext in SUPPORTED_EXTENSIONS:
                 found.append(p)
             else:
                 unsupported.append({"src": str(p), "extension": ext})
@@ -412,7 +419,13 @@ def plan_scan(paths: Paths, raw: str = "") -> ScanPlan:
 
     target, coll = resolve_target(paths, raw)
     if target is not None and target.is_file():
-        if target.suffix.lower() in SUPPORTED_EXTENSIONS:
+        from .core.video import companion_of
+
+        pair = companion_of(target, os.listdir(target.parent)) \
+            if target.suffix.lower() in VIDEO_EXTENSIONS else ""
+        if pair:
+            plan.unsupported = [{"src": str(target), "extension": target.suffix.lower(), "companion": pair}]
+        elif target.suffix.lower() in SUPPORTED_EXTENSIONS:
             plan.sources = [target]
         else:
             plan.unsupported = [{"src": str(target), "extension": target.suffix.lower()}]

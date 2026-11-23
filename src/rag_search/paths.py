@@ -50,9 +50,11 @@ SUPPORTED_EXTENSIONS = frozenset({
     ".md", ".txt", ".json", ".jsonl", ".ndjson",
     ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp",
     ".heic", ".heif",                       # read by the document reader (needs pillow-heif)
+    ".mov", ".mp4", ".m4v", ".3gp", ".avi",  # videos: indexed from their details (core/video.py)
 })
 PASSTHROUGH_EXTENSIONS = frozenset({".md", ".txt"})
 IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp", ".heic", ".heif"})
+VIDEO_EXTENSIONS = frozenset({".mov", ".mp4", ".m4v", ".3gp", ".avi"})
 
 PAGE_MARKER = "<!-- page {page} -->"
 META_FILE = "index.meta.json"

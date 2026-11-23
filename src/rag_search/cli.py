@@ -205,6 +205,8 @@ def _fmt_doc(d: dict[str, Any]) -> str:
         return f"[skip] {name}  no text to index"
     if st == "unsupported":
         return f"[skip] {name}  unsupported format ({d.get('extension') or 'no extension'})"
+    if st == "live_photo":
+        return f"[skip] {name}  the video of a Live Photo ({d.get('photo') or 'its photograph'} is indexed)"
     if st == "known":
         return f"[same] {name}  not tried again: {d.get('message', '')}"
     if st == "removed":
@@ -221,8 +223,9 @@ def _fmt_docs(docs: dict[str, Any] | None) -> str:
     unsup = f", unsupported format {by['unsupported']}" if by.get("unsupported") else ""
     gone = f", removed {by['removed']}" if by.get("removed") else ""
     same = f", not tried again {by['known']}" if by.get("known") else ""
+    live = f", Live Photo videos {by['live_photo']}" if by.get("live_photo") else ""
     head = (f"documents: {docs['total']} handled (indexed {by.get('indexed', 0)}{waiting}, unchanged "
-            f"{by.get('skipped', 0)}{empty}{unsup}{gone}{same}, failed {by.get('error', 0)})")
+            f"{by.get('skipped', 0)}{empty}{unsup}{live}{gone}{same}, failed {by.get('error', 0)})")
     if docs.get("by_branch"):
         head += "\n  documents with pages of each branch: " + _fmt_branches(docs["by_branch"])
     if docs.get("by_outcome"):
@@ -257,6 +260,8 @@ def _fmt_job(job: dict[str, Any] | None) -> str:
                  f"no text {summ.get('no_text_count', 0)}, errors {summ.get('error_count', 0)}")
         if summ.get("unsupported_count"):
             line += f", unsupported format {summ['unsupported_count']}"
+        if summ.get("live_photo_count"):
+            line += f", Live Photo videos {summ['live_photo_count']} (their photographs are indexed)"
         if summ.get("not_retried"):
             line += (f"\n  not tried again: {summ['not_retried']} unchanged file(s) that could not be indexed before "
                      "(protected, damaged, without text, or the name of another file); a complete run tries them")
@@ -910,6 +915,8 @@ def _cmd_index_foreground(a: argparse.Namespace) -> int:
               f"no text {len(summary.get('no_text', []))}, "
               f"errors {len(summary['errors'])}"
               + (f", unsupported format {len(uns)}" if uns else "")
+              + (f", Live Photo videos {len(summary['live_photo'])} (their photographs are indexed)"
+                 if summary.get("live_photo") else "")
               + (f", not tried again {len(summary['known'])}" if summary.get("known") else "")
               + (f", removed {len(summary['removed'])} (source deleted)"
                  if summary.get("removed") else "")
@@ -1437,6 +1444,8 @@ def _fmt_info(i: dict[str, Any]) -> str:
         docs += f" of {src['files']} in the source folder"
     if src.get("unsupported"):
         docs += f" (+{src['unsupported']} in formats that are not indexed)"
+    if src.get("live_photo"):
+        docs += f" (+{src['live_photo']} Live Photo videos, indexed with their photographs)"
     lines.append(f"  documents: {docs}; chunks {b.get('chunks', 0) if b else 0}; "
                  f"on disk {_bytes(i['disk']['total_bytes'])} (Markdown "
                  f"{_bytes(ws['markdown_bytes'])} + index {_bytes(ws['index_bytes'])})"
@@ -2731,7 +2740,7 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--docs", type=int, default=20,
                    help="show the timings of the last N documents of the run (default 20, 0 = none)")
     q.add_argument("--doc-status", default="", dest="doc_status",
-                   help="only documents with this status (error, indexed, no_text, skipped = unchanged, known = not tried again, unsupported, or skipped_all for the last three)")
+                   help="only documents with this status (error, indexed, no_text, skipped = unchanged, known = not tried again, unsupported, live_photo = the video of a Live Photo, or skipped_all for the last four)")
     q.add_argument("--doc-collection", default="", dest="doc_collection",
                    help="only documents in this collection")
     q.add_argument("--doc-find", default="", dest="doc_q", help="only documents whose filename contains this text")

@@ -753,9 +753,13 @@ with the model that built it, until a re-embedded index is complete.
 
 ## Supported files
 
-`.pdf .docx .docm .rtf .pptx .xlsx .html .htm .csv .adoc .md .txt .json .jsonl .ndjson .png .jpg .jpeg .tif .tiff .bmp .webp .heic .heif`.
+`.pdf .docx .docm .rtf .pptx .xlsx .html .htm .csv .adoc .md .txt .json .jsonl .ndjson .png .jpg .jpeg .tif .tiff .bmp .webp .heic .heif .mov .mp4 .m4v .3gp .avi`.
 `.json` is read by rag-search itself too: an array becomes one section per item and an object one per top-level key, `.jsonl`/`.ndjson` one section per line, and every value is a `key.path: value` line, so a passage still says what it is (text that is not valid JSON is indexed as plain text). `.rtf` is read by rag-search itself (paragraphs and tables; fonts, colours and pictures are dropped) and `.docm`
 (macro-enabled Word) as a `.docx`; neither needs LibreOffice or any other tool, and macros are never read or run.
+**Videos.** A video is indexed from what its file records, read from the QuickTime / MP4 header without decoding a frame:
+a "Video details" section with the same labels as a photograph's (when it was taken, the GPS position with its area, town and
+places nearby, the camera, size) and its duration. Its pictures and its sound are not read. The video of a Live Photo (an
+iPhone's `IMG_1234.MOV` beside `IMG_1234.HEIC`) is left out and counted apart: its photograph is indexed.
 **Photographs.** An image that carries camera metadata (EXIF) gets a short "Photo details" section at the top of its
 Markdown: when it was taken (an ISO date and time with the camera's time zone, so `rag-search grep 2024-03-14` finds a
 day), the GPS position (also written `geo:LAT,LON`), the camera and the size, and what the installed map data (below)

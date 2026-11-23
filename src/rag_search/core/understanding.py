@@ -6,7 +6,8 @@ document (the ``work`` event that closes its conversion), so this is worked out 
     kind     what the document turned out to be: a photograph, a photographed page, a Google Maps Timeline, a PDF with
              a text layer, a scanned PDF, ... (a file that failed is named by its format)
     grade    complete | partial | no_text | error
-    found    the facts that were found (for a photograph: time, position, place, places nearby, faces, description)
+    found    the facts that were found (for a photograph: time, position, place, places nearby, faces, description; for a
+             video: time, position, place, places nearby, camera, duration)
     missing  the expected facts that were not, in the order they matter (a photograph without a position cannot have
              a place either: only "position" is missing then)
 
@@ -19,11 +20,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from . import describe, faces
+from . import describe, faces, video
 
 PHOTOGRAPH = "photograph"
 PHOTOGRAPHED_PAGE = "photographed page"
 TIMELINE = "Google Maps Timeline"
+VIDEO = "video"
 
 # a photograph: label in its Photo details section -> fact
 _PHOTO_FACTS = (("time", "- Taken:"), ("position", "- Position:"), ("place", ("- Area:", "- Town:")),
@@ -31,18 +33,25 @@ _PHOTO_FACTS = (("time", "- Taken:"), ("position", "- Position:"), ("place", ("-
 # what a complete photograph has; "faces" and "nearby" are reported but not expected (a landscape has no face, a
 # position in a field has no place within 100 m)
 PHOTO_EXPECTED = ("time", "position", "place", "description")
+# a video: label in its Video details section -> fact; what a complete one has (an .avi or a messaging app's .mp4 records
+# no time or place: it is partial, and says so)
+_VIDEO_FACTS = (("time", "- Taken:"), ("position", "- Position:"), ("place", ("- Area:", "- Town:")),
+                ("nearby", "- Nearby:"), ("camera", "- Camera:"), ("duration", f"- {video.DURATION}"))
+VIDEO_EXPECTED = ("time", "position", "place")
 _TIMELINE_HEAD = re.compile(r"(\d+) visits and (\d+) journeys")
 
-FORMAT_NAMES = {"pdf": "PDF", "image": "image", "office": "Office or HTML document", "text": "text or Markdown file"}
+FORMAT_NAMES = {"pdf": "PDF", "image": "image", "office": "Office or HTML document", "text": "text or Markdown file",
+                "video": VIDEO}
 
 
 _FACES = re.compile(rf"^- {re.escape(faces.LINE)} ([1-9]\d*)", re.M)
 
 
-def photo_facts(text: str) -> list[str]:
-    """The facts of a photograph found in its Photo details ("faces" only when at least one face was counted)."""
+def photo_facts(text: str, facts: tuple = _PHOTO_FACTS) -> list[str]:
+    """The facts of a photograph found in its Photo details ("faces" only when at least one face was counted); of a video
+    in its Video details with *facts* ``_VIDEO_FACTS``."""
     out = []
-    for name, label in _PHOTO_FACTS:
+    for name, label in facts:
         labels = label if isinstance(label, tuple) else (label,)
         if name == "faces" and not _FACES.search(text):
             continue
@@ -51,8 +60,8 @@ def photo_facts(text: str) -> list[str]:
     return out
 
 
-def _missing_photo(found: list[str]) -> list[str]:
-    miss = [x for x in PHOTO_EXPECTED if x not in found]
+def _missing_photo(found: list[str], expected: tuple[str, ...] = PHOTO_EXPECTED) -> list[str]:
+    miss = [x for x in expected if x not in found]
     if "position" in miss:                      # no position: no place to look up either
         miss = [x for x in miss if x != "place"]
     return miss
@@ -71,18 +80,18 @@ def _page_kind(fmt: str, suffix: str, branches: dict[str, int]) -> str:
     return "PDF, scanned" if scanned else "PDF with a text layer"
 
 
-TRACKS = ("pages", "photograph", "timeline")       # the three ways through a run, one per kind of file 3.0 Sniff tells apart
+TRACKS = ("pages", "photograph", "video", "timeline")   # the ways through a run, one per kind of file 3.0 Sniff tells apart
 GRADES = ("complete", "partial", "no_text", "error")
 
 
 def track_of(kind: str) -> str:
-    """The track a kind of document travels: ``photograph``, ``timeline`` or ``pages`` (every document of pages)."""
-    return "photograph" if kind == PHOTOGRAPH else "timeline" if kind == TIMELINE else "pages"
+    """The track a kind of document travels: ``photograph``, ``video``, ``timeline`` or ``pages`` (every document of pages)."""
+    return {PHOTOGRAPH: "photograph", VIDEO: "video", TIMELINE: "timeline"}.get(kind, "pages")
 
 
 def of_document(**kw: Any) -> dict[str, Any]:
     """``{"kind", "track", "grade", "found", "missing", ...}`` for one document.  *fmt* is the profiler's kind of file (pdf |
-    image | office | text), *status* the conversion's (prepared | no_text | error | stalled), *text* the Markdown,
+    image | office | text | video), *status* the conversion's (prepared | no_text | error | stalled), *text* the Markdown,
     *route* what 3.0 Sniff decided, *branches* / *outcomes* the page counts of its conversion summary.  The same record
     for every kind: the steps differ, the result does not."""
     out = _of_document(**kw)
@@ -94,7 +103,7 @@ def _of_document(*, fmt: str, suffix: str, status: str, text: str = "", route: s
                  branches: dict[str, int] | None = None, outcomes: dict[str, int] | None = None) -> dict[str, Any]:
     branches, outcomes = branches or {}, outcomes or {}
     if status not in ("prepared",):
-        kind = (PHOTOGRAPH if route == "photograph" else TIMELINE if route == "timeline"
+        kind = (PHOTOGRAPH if route == "photograph" else TIMELINE if route == "timeline" else VIDEO if route == "video"
                 else _page_kind(fmt, suffix, branches) if branches else FORMAT_NAMES.get(fmt, "other document"))
         return {"kind": kind, "grade": "no_text" if status == "no_text" else "error", "found": [], "missing": []}
     if route == "timeline" or branches.get("timeline"):
@@ -106,6 +115,10 @@ def _of_document(*, fmt: str, suffix: str, status: str, text: str = "", route: s
         missing = [] if "place" in found or not visits else ["place"]
         return {"kind": TIMELINE, "grade": "partial" if missing or not visits else "complete", "found": found,
                 "missing": missing if visits else ["visits"], "visits": visits, "journeys": journeys}
+    if route == "video" or branches.get("video"):
+        found = photo_facts(text, _VIDEO_FACTS)
+        missing = _missing_photo(found, VIDEO_EXPECTED)
+        return {"kind": VIDEO, "grade": "partial" if missing else "complete", "found": found, "missing": missing}
     if route == "photograph" or branches.get("photo"):
         found = photo_facts(text)
         missing = _missing_photo(found)

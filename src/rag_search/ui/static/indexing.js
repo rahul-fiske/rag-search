@@ -16,8 +16,8 @@
     ['skipped_all', 'Skipped'], ['no_text', 'No text'], ['error', 'Failed'],
   ];
   // "Skipped" is everything the run did not convert; each row says which: unchanged since the last run, not tried
-  // again (it could not be indexed before and has not changed), or a format that is not indexed.
-  const SKIPPED_HELP = 'Everything this run did not convert: files unchanged since the last run, files that could not be indexed before and have not changed (not tried again), and files in a format that is not indexed. Each row says which.';
+  // again (it could not be indexed before and has not changed), a format that is not indexed, or the video of a Live Photo.
+  const SKIPPED_HELP = 'Everything this run did not convert: files unchanged since the last run, files that could not be indexed before and have not changed (not tried again), files in a format that is not indexed, and the videos of Live Photos (their photographs are indexed). Each row says which.';
   // Filter/UI state persists across re-renders (the view object itself is a singleton).
   let docFilter = { status: '', collection: '', q: '', kind: '', grade: '' };
   let estimate = { busy: false, data: null, error: '' };
@@ -123,6 +123,15 @@
       h('ul', { class: 'tight', style: { maxHeight: '180px', overflow: 'auto' } }, listed.map(e => h('li', null, h('span', { class: 'mono' }, e.src || ''), ' (', e.extension || 'no extension', ')'))));
   }
 
+  // The video of a Live Photo (IMG_1234.MOV beside IMG_1234.HEIC) is part of its photograph, which is indexed: a quiet note.
+  function livePhotoNotice(sum) {
+    return h('details', { class: 'notice', style: { marginTop: '12px' } },
+      h('summary', { style: { cursor: 'pointer' } }, h('b', null, `${num(sum.live_photo_count)} Live Photo video(s) left out`),
+        h('span', { class: 'small muted' }, '  each is the few seconds of video an iPhone keeps beside a photograph; the photograph is indexed')),
+      h('p', { class: 'small', style: { margin: '6px 0' } }, 'Counted, never changed or deleted. ',
+        h('a', { href: '#/indexing', on: { click: e => { e.preventDefault(); jumpToStatus('skipped_all'); } } }, 'Show them in the Documents list below')));
+  }
+
   // Files that could not be indexed before and have not changed: not this run's failures, so a quiet, collapsed note.
   function knownNotice(sum) {
     const listed = sum.known || [];
@@ -159,11 +168,13 @@
         statCard(dur(job.elapsed_s), running ? 'running for' : 'took'),
         statCard(num(by.indexed || 0), 'documents indexed'), by.converted ? statCard(num(by.converted), 'converted, waiting to embed') : null,
         statCard(num(by.skipped || 0), 'unchanged (skipped)'), by.no_text ? statCard(num(by.no_text), 'no text (skipped)') : null,
-        statCard(num(by.error || 0), 'failed'), by.unsupported ? statCard(num(by.unsupported), 'unsupported format (skipped)') : null),
+        statCard(num(by.error || 0), 'failed'), by.unsupported ? statCard(num(by.unsupported), 'unsupported format (skipped)') : null,
+        by.live_photo ? statCard(num(by.live_photo), 'Live Photo videos (skipped)') : null),
       job.error ? h('div', { class: 'notice bad', style: { marginTop: '12px' } }, job.error) : null,
       sum && sum.error_count ? failedNotice(sum) : null,
       sum && sum.unsupported_count ? unsupportedNotice(sum) : null,
       sum && sum.known_count ? knownNotice(sum) : null,
+      sum && sum.live_photo_count ? livePhotoNotice(sum) : null,
       job.publish ? h('p', { class: 'small muted', style: { marginBottom: 0 } }, 'Published: ' + (job.publish.generation ? `generation ${job.publish.generation}` : (job.publish.changed === false ? 'nothing changed' : JSON.stringify(job.publish)))) : null);
   }
 
@@ -234,8 +245,8 @@
       ['convert', 'chunk', 'embed'].map(k => h('i', { class: k, title: `${PL.label(k)} ${dur(d[k + '_s'])}`, style: { width: (100 * (d[k + '_s'] || 0) / t) + '%' } })))) : null;
     const conv = d.conversion;
     return h('tr', { class: conv && conv.trace ? 'clickable' : '', title: conv && conv.trace ? 'Click for the page-by-page record' : '', on: conv && conv.trace ? { click: () => CV.openSummary(conv) } : {} },
-      h('td', null, d.status === 'indexed' ? chip('indexed', 'ok') : d.status === 'converted' ? chip('converted', 'accent') : d.status === 'skipped' ? chip('skipped · unchanged') : d.status === 'no_text' ? chip('skipped · no text', 'warn') : d.status === 'unsupported' ? chip('skipped · unsupported format', 'warn') : d.status === 'known' ? h('span', { class: 'chip', title: 'It could not be indexed in an earlier run and neither the file nor the conversion settings have changed. A complete run (rebuild) tries it again.' }, 'skipped · not tried again') : chip('failed', 'bad')),
-      h('td', null, h('span', { class: 'muted' }, d.collection + '/'), d.path || d.source, und(d), d.status === 'error' && d.message ? h('div', { class: 'small', style: { color: 'var(--bad)' } }, d.message) : d.status === 'no_text' ? h('div', { class: 'small muted' }, d.message || 'no text to index') : d.status === 'unsupported' ? h('div', { class: 'small muted' }, 'extension: ' + (d.extension || '(none)')) : d.status === 'known' ? h('div', { class: 'small muted' }, d.message || '') : null),
+      h('td', null, d.status === 'indexed' ? chip('indexed', 'ok') : d.status === 'converted' ? chip('converted', 'accent') : d.status === 'skipped' ? chip('skipped · unchanged') : d.status === 'no_text' ? chip('skipped · no text', 'warn') : d.status === 'unsupported' ? chip('skipped · unsupported format', 'warn') : d.status === 'live_photo' ? chip('skipped · Live Photo video') : d.status === 'known' ? h('span', { class: 'chip', title: 'It could not be indexed in an earlier run and neither the file nor the conversion settings have changed. A complete run (rebuild) tries it again.' }, 'skipped · not tried again') : chip('failed', 'bad')),
+      h('td', null, h('span', { class: 'muted' }, d.collection + '/'), d.path || d.source, und(d), d.status === 'error' && d.message ? h('div', { class: 'small', style: { color: 'var(--bad)' } }, d.message) : d.status === 'no_text' ? h('div', { class: 'small muted' }, d.message || 'no text to index') : d.status === 'unsupported' ? h('div', { class: 'small muted' }, 'extension: ' + (d.extension || '(none)')) : d.status === 'live_photo' ? h('div', { class: 'small muted' }, `the video of ${d.photo || 'a photograph'}, which is indexed`) : d.status === 'known' ? h('div', { class: 'small muted' }, d.message || '') : null),
       h('td', { style: { minWidth: '120px' } }, conv && conv.pages && CV.trackOf((d.understood || {}).kind) === 'pages' ? h('div', null, CV.strip(conv), h('div', { class: 'small muted' }, `${num(conv.pages)} p.` + (conv.outcomes && (conv.outcomes.low || conv.outcomes.error) ? ' · ' + [conv.outcomes.low ? conv.outcomes.low + ' low' : '', conv.outcomes.error ? conv.outcomes.error + ' error' : ''].filter(Boolean).join(', ') : ''))) : ''),
       h('td', { class: 'num' }, d.chunks !== undefined ? num(d.chunks) : ''),
       h('td', { style: { minWidth: '160px' } }, seg, d.status === 'indexed' ? h('div', { class: 'small muted' }, `${PL.label('convert')} ${dur(d.convert_s)} · ${PL.label('chunk')} ${dur(d.chunk_s)} · ${PL.label('embed')} ${dur(d.embed_s)}`, conv && CV.costText(conv.cost) ? ' · ' + CV.costText(conv.cost) : '') : d.status === 'converted' ? h('div', { class: 'small muted' }, `${PL.label('convert')} ${dur(d.convert_s)} · ${PL.label('chunk')} ${dur(d.chunk_s)} · waiting for ${PL.label('embed')}`) : null),
@@ -257,6 +268,7 @@
     if (s.no_text) out.push(chip(`${num(s.no_text)} no text`, 'warn'));
     if (s.error) out.push(chip(`${num(s.error)} failed`, 'bad'));
     if (s.unsupported) out.push(chip(`${num(s.unsupported)} unsupported format`, 'warn'));
+    if (s.live_photo) out.push(chip(`${num(s.live_photo)} Live Photo videos`));
     return out;
   }
 
@@ -359,7 +371,7 @@
           h('p', { class: 'small muted', style: { margin: '6px 0 0' } },
             (totals.ok_docs !== undefined ? `${num(totals.ok_docs)} file${totals.ok_docs === 1 ? '' : 's'}, ${num(totals.ok_pages)} pages` : 'The files converted so far')
             + (totals.cached_pages ? `; ${num(totals.cached_pages)} pages reused from the page cache` : '')
-            + '. Pages are counted by what they are, however this run got them: a reused page keeps its kind. Files that failed or held no text are not in these bars; photographs and Timelines have no pages and are counted above, as documents.')) : null,
+            + '. Pages are counted by what they are, however this run got them: a reused page keeps its kind. Files that failed or held no text are not in these bars; photographs, videos and Timelines have no pages and are counted above, as documents.')) : null,
         totals.outcomes && Object.keys(totals.outcomes).length ? h('div', { style: { marginTop: '10px' } }, CV.outcomeChips(totals.outcomes)) : null,
         totals.pages ? h('div', { class: 'grid g4', style: { marginTop: '14px' } }, CV.tiles(totals)) : (running && p.phase === 'convert' ? h('p', { class: 'small muted', style: { marginTop: '12px' } }, 'Page figures appear as the first documents of pages finish.') : null),
         CV.pipe(totals, live.live))];

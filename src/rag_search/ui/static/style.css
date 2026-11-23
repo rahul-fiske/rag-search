@@ -276,25 +276,25 @@ svg.dg { display: block; width: 100%; height: auto; min-width: 820px; font-famil
 
 /* conversion colours: each colour means one thing on the whole page, and every bar has a labelled key beside it (CV.legend).
    Four families that never share a colour:
-   - kind of document (--kd-*): documents of pages, photographs, Google Maps Timelines;
+   - kind of document (--kd-*): documents of pages, photographs, videos, Google Maps Timelines;
    - how well it went (--q-*), the same scale for a document's grade and a page's outcome: good (complete / passed),
      repaired, partly (partly understood / low confidence), no text, failed;
    - what a page is (--cv-*: its branch): text layer, scan, picture file, ...;
    - the lane of 3.2 that read a page (--rw-*): one blue-violet scale from a (cheapest) to d (the document reader). */
 :root { --cv-copy: #8a96a5; --cv-office: #c2558f; --cv-digital: #2a78d6; --cv-raster: #eb6834; --cv-image: #a0522d; --cv-embedded: #f4b183; --cv-fallback: #7f8f2a; --cv-cached: #c5ccd4; --cv-unknown: #e3e7eb;
-  --kd-pages: #4f6d8f; --kd-photograph: #1f9d8f; --kd-timeline: #9b59d0;
+  --kd-pages: #4f6d8f; --kd-photograph: #1f9d8f; --kd-video: #c2457a; --kd-timeline: #9b59d0;
   --q-good: #2e9d4f; --q-fixed: #7cc9a0; --q-part: #e0a020; --q-none: #b9a27a; --q-bad: #d23c3c;
   --rw-a: #c3c9f5; --rw-b: #9aa3ee; --rw-c: #6f78de; --rw-d: #3f46b8;
   --cv-photo: var(--kd-photograph); --cv-timeline: var(--kd-timeline); --cv-repaired: var(--q-fixed); --cv-low: var(--q-bad); }
 :root[data-theme="dark"] { --cv-copy: #8995a4; --cv-office: #e07aae; --cv-digital: #4b95ec; --cv-raster: #f58353; --cv-image: #c8774c; --cv-embedded: #f7c09c; --cv-fallback: #a5b84a; --cv-cached: #6c7785; --cv-unknown: #4a5563;
-  --kd-pages: #7d9cc0; --kd-photograph: #3cc2b3; --kd-timeline: #b98ae6;
+  --kd-pages: #7d9cc0; --kd-photograph: #3cc2b3; --kd-video: #e27aa6; --kd-timeline: #b98ae6;
   --q-good: #45c06a; --q-fixed: #9adbb8; --q-part: #f0b93a; --q-none: #a8946e; --q-bad: #ff6b6b;
   --rw-a: #4a5196; --rw-b: #6870cc; --rw-c: #8f97ee; --rw-d: #c3c8ff; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --cv-copy: #8995a4; --cv-office: #e07aae; --cv-digital: #4b95ec; --cv-raster: #f58353; --cv-image: #c8774c; --cv-embedded: #f7c09c; --cv-fallback: #a5b84a; --cv-cached: #6c7785; --cv-unknown: #4a5563;
-  --kd-pages: #7d9cc0; --kd-photograph: #3cc2b3; --kd-timeline: #b98ae6;
+  --kd-pages: #7d9cc0; --kd-photograph: #3cc2b3; --kd-video: #e27aa6; --kd-timeline: #b98ae6;
   --q-good: #45c06a; --q-fixed: #9adbb8; --q-part: #f0b93a; --q-none: #a8946e; --q-bad: #ff6b6b;
   --rw-a: #4a5196; --rw-b: #6870cc; --rw-c: #8f97ee; --rw-d: #c3c8ff; } }
-.kd-pages { background: var(--kd-pages); } .kd-photograph { background: var(--kd-photograph); } .kd-timeline { background: var(--kd-timeline); }
+.kd-pages { background: var(--kd-pages); } .kd-photograph { background: var(--kd-photograph); } .kd-video { background: var(--kd-video); } .kd-timeline { background: var(--kd-timeline); }
 .q-good, .o-ok { background: var(--q-good); } .q-fixed, .o-fix { background: var(--q-fixed); } .q-part, .o-part { background: var(--q-part); }
 .q-none, .o-warn { background: var(--q-none); } .q-bad, .o-bad { background: var(--q-bad); }
 /* the key: a labelled swatch per colour, next to the bar it explains */
@@ -305,7 +305,7 @@ svg.dg { display: block; width: 100%; height: auto; min-width: 820px; font-famil
 .cv-sw { display: inline-block; width: 14px; height: 14px; border-radius: 4px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .18); flex: none; }
 .cv-kinds { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 4px 0 12px; }
 .cv-kind { border: 1px solid var(--line-2); border-left: 6px solid var(--kd-pages); border-radius: 8px; padding: 8px 12px; background: var(--panel-2); font-size: 12px; display: grid; gap: 4px; }
-.cv-kind.k-photograph { border-left-color: var(--kd-photograph); } .cv-kind.k-timeline { border-left-color: var(--kd-timeline); } .cv-kind.k-unchanged { border-left-color: var(--line-2); }
+.cv-kind.k-photograph { border-left-color: var(--kd-photograph); } .cv-kind.k-video { border-left-color: var(--kd-video); } .cv-kind.k-timeline { border-left-color: var(--kd-timeline); } .cv-kind.k-unchanged { border-left-color: var(--line-2); }
 .cv-kind-n { font-size: 20px; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
 .cv-kind-bar { display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: var(--idle-soft); gap: 1px; }
 .cv-kind-bar i { display: block; height: 100%; min-width: 2px; }

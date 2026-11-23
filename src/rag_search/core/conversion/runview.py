@@ -217,20 +217,23 @@ def _feed_understood(st: dict[str, Any], ev: dict[str, Any]) -> None:
         k[n] += int(u.get(n) or 0)
 
 
-TRACK_NAMES = {"pages": "pages", "photograph": "photograph", "timeline": "timeline"}
+TRACK_NAMES = {"pages": "pages", "photograph": "photograph", "video": "video", "timeline": "timeline"}
 
 
 def _feed_track(st: dict[str, Any], ev: dict[str, Any], opened: dict[str, Any], ts: float) -> None:
-    """One finished document into the totals of its track (documents of pages, photographs, Timelines): converted,
+    """One finished document into the totals of its track (documents of pages, photographs, videos, Timelines): converted,
     unchanged, failed, and when the track's work began and last moved (its rate and time left)."""
     out = str(ev.get("outcome") or "")
     if out == "skipped" or ev.get("known"):      # not converted: counted apart, whatever its kind
         st["unchanged_done"] = st.get("unchanged_done", 0) + 1
+        route = str(opened.get("route") or "")   # planned on a track (known by its extension) before it proved unchanged
+        if route in TRACK_NAMES:
+            st.setdefault("track_unchanged", {})[route] = st.get("track_unchanged", {}).get(route, 0) + 1
         return
     u = ev.get("understood") if isinstance(ev.get("understood"), dict) else {}
     track = opened.get("route") or u.get("track") or ""
     if track not in TRACK_NAMES:
-        track = "photograph" if u.get("kind") == "photograph" else "pages"
+        track = u.get("kind") if u.get("kind") in ("photograph", "video") else "pages"
     t = st["tracks"].setdefault(track, {"done": 0, "converted": 0, "grades": {}, "first": 0.0, "last": 0.0})
     t["done"] += 1
     t["converted"] += 1
@@ -251,7 +254,7 @@ def tracks_view(st: dict[str, Any], running: bool, now: float | None = None) -> 
         t = st["tracks"].get(track) or {"done": 0, "converted": 0, "grades": {}, "first": 0.0, "last": 0.0}
         busy = sum(1 for p in st["procs"].values() if running and p.get("open") and p["open"].get("phase") == "convert"
                    and p["open"].get("route") == track)
-        planned = int(plan.get(track) or 0)
+        planned = max(0, int(plan.get(track) or 0) - int(st.get("track_unchanged", {}).get(track) or 0))
         left = max(0, planned - t["converted"] - busy) if planned else 0
         span = (now if running else t["last"]) - t["first"] if t["first"] else 0.0
         rate = 60.0 * t["converted"] / span if span >= 5 and t["converted"] else 0.0
@@ -260,28 +263,32 @@ def tracks_view(st: dict[str, Any], running: bool, now: float | None = None) -> 
         out[track] = {"planned": planned, "done": t["converted"], "running": busy, "left": left, "per_min": round(rate, 1),
                       "eta_s": round(60.0 * left / rate) if rate and left and running else None, "grades": dict(t["grades"])}
     if plan.get("unchanged") or st.get("unchanged_done"):
-        out["unchanged"] = {"planned": int(plan.get("unchanged") or 0), "done": int(st.get("unchanged_done") or 0)}
+        late = sum(int(v) for v in (st.get("track_unchanged") or {}).values())    # found unchanged by their conversion
+        out["unchanged"] = {"planned": int(plan.get("unchanged") or 0) + late, "done": int(st.get("unchanged_done") or 0)}
     return out
 
 
 def _format_of(file: str) -> str:
-    from ...paths import IMAGE_EXTENSIONS
+    from ...paths import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 
     ext = file.rsplit(".", 1)[-1].lower() if "." in file else ""
     if ext == "pdf":
         return "PDF"
     if f".{ext}" in IMAGE_EXTENSIONS:
         return "image"
+    if f".{ext}" in VIDEO_EXTENSIONS:
+        return "video"
     if ext == "json":
         return "JSON data"
     return f".{ext} file" if ext else "other document"
 
 
-STEP_KEYS = ("sniff", "photo", "locate", "timeline", "faces", "describe", "pictures")
+STEP_KEYS = ("sniff", "photo", "locate", "timeline", "faces", "describe", "pictures", "video")
 
 
 def _feed_step(st: dict[str, Any], ev: dict[str, Any]) -> None:
-    """Totals of the steps that are not page lanes (3.0 Sniff, 3.6 Photo details, 3.7 Locate, 3.8 Timeline, 3.9 Faces, 3.10 Describe):
+    """Totals of the steps that are not page lanes (3.0 Sniff, 3.6 Photo details, 3.7 Locate, 3.8 Timeline, 3.9 Faces, 3.10 Describe,
+    3.11 Video details):
     files through each, seconds, and what they decided (route, how faces were found, source of a description, why one was left)."""
     key = str(ev.get("stage") or "")
     if key not in STEP_KEYS or ev.get("status") != "done":
@@ -300,6 +307,9 @@ def _feed_step(st: dict[str, Any], ev: dict[str, Any]) -> None:
         bump("routes", str(ev.get("route") or "pages"))
     elif key == "photo":
         bump("kinds", "photograph" if ev.get("photograph") else "photographed page")
+    elif key == "video":
+        bump("found", "with a time" if ev.get("time") else "no time")
+        bump("found", "with a position" if ev.get("position") else "no position")
     elif key == "locate":
         bump("places", "with places nearby" if ev.get("nearby") else "area and town only")
     elif key == "faces":
@@ -374,8 +384,8 @@ def _active(st: dict[str, Any]) -> dict[str, Any]:
     files = done = pages = unprofiled = 0
     for proc in st["procs"].values():
         op = proc.get("open")
-        if not op or op.get("phase") != "convert" or op.get("route") in ("photograph", "timeline"):
-            continue                             # a photograph or a Timeline has no pages: it is not a file of pages
+        if not op or op.get("phase") != "convert" or op.get("route") in ("photograph", "video", "timeline"):
+            continue                             # a photograph, a video or a Timeline has no pages: it is not a file of pages
         files += 1
         plan = op.get("plan")
         if not plan:

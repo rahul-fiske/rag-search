@@ -25,11 +25,11 @@ TRACE_VERSION = 1
 TRACE_SUFFIX = ".trace.json"
 
 BRANCHES = ("copy", "office", "digital", "raster", "image", "embedded", "fallback", "cached",
-            "photo", "timeline", "unknown")
+            "photo", "timeline", "video", "unknown")
 BRANCH_LETTER = {"copy": "c", "office": "o", "digital": "d", "raster": "r", "image": "i",
-                 "embedded": "e", "fallback": "f", "cached": "k", "photo": "p", "timeline": "t", "unknown": "?"}
+                 "embedded": "e", "fallback": "f", "cached": "k", "photo": "p", "timeline": "t", "video": "v", "unknown": "?"}
 LETTER_BRANCH = {v: k for k, v in BRANCH_LETTER.items()}
-WHOLE_FILES = frozenset(("photo", "timeline"))     # the "branch" of a file that has no pages: counted as a document
+WHOLE_FILES = frozenset(("photo", "timeline", "video"))   # the "branch" of a file that has no pages: counted as a document
 BRANCH_TITLE = {
     "copy": "Markdown / text, used as is",
     "office": "Office / HTML file (docling reads the structure)",
@@ -41,12 +41,13 @@ BRANCH_TITLE = {
     "cached": "page result reused from the page cache",
     "photo": "a photograph: indexed from its details (time, GPS, place, faces), not read by the document VLM (3.6, 3.7)",
     "timeline": "a Google Maps Timeline: one line per visit and journey, with the places around it (3.8, 3.7)",
+    "video": "a video: indexed from its details (time, GPS, place, camera, duration), not its frames or sound (3.11, 3.7)",
     "unknown": "not profiled (the profiling time limit was reached)",
 }
 
 BRANCH_SHORT = {"copy": "text", "office": "office", "digital": "digital", "raster": "scanned",
                 "image": "image", "embedded": "embedded", "fallback": "scanned (OCR)",
-                "cached": "cached", "photo": "photo", "timeline": "timeline", "unknown": "unprofiled"}
+                "cached": "cached", "photo": "photo", "timeline": "timeline", "video": "video", "unknown": "unprofiled"}
 
 OUTCOMES = ("pass", "repaired", "low", "no_text", "error")
 GRADES = ("poor", "fair", "good", "excellent")

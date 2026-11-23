@@ -25,6 +25,7 @@ from . import router
 PDF_EXTENSIONS = {".pdf"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp", ".heic", ".heif"}
 TEXT_EXTENSIONS = {".md", ".txt"}
+VIDEO_EXTENSIONS = {".mov", ".mp4", ".m4v", ".3gp", ".avi"}
 DEFAULT_BUDGET_S = 120.0             # profile time limit per file; the rest is marked "unknown"
 MAX_IMAGE_FRAMES = 2000
 BIG_PICTURE = 0.25                   # a picture covering this share of a page is read by the document VLM
@@ -39,6 +40,8 @@ def kind_of(src: Path) -> str:
         return "image"
     if ext in TEXT_EXTENSIONS:
         return "text"
+    if ext in VIDEO_EXTENSIONS:
+        return "video"
     return "office"
 
 

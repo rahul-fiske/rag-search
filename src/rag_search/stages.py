@@ -10,12 +10,18 @@ Indexing (one run)::
     1  Discover        which files, in which collections          (run)
     2  Fingerprint     unchanged since last time? skip            (document)
     3  Convert         file -> page-marked Markdown               (document)
-         3.0 Sniff       what kind of file? pages, a photograph or a Timeline  CPU
+         3.0 Sniff       what kind of file? pages, a photograph, a video or a Timeline  CPU
          3.1 Profile     what is on each page (pages only)         CPU
          3.2 Read        the reader each page needs                (lanes a: text layer  b: OCR  c: text layer + pictures  d: document reader)
          3.3 Gate        does the result look right
          3.4 Repair      re-read suspect table cells               GPU
          3.5 Reconcile   tables that run on across pages
+         3.6 Photo details  a photograph's facts: time, GPS, camera     CPU
+         3.7 Locate      area, town, places nearby for a position  CPU
+         3.8 Timeline    a Google Maps Timeline -> a day-by-day log CPU
+         3.9 Faces       found and fingerprinted (People store)    CPU
+         3.10 Describe   a photograph described by a vision model  GPU
+         3.11 Video details  a video's facts: time, GPS, camera, duration  CPU
     4  Chunk           Markdown -> passages                       (document)
     5  Embed           passages -> vectors                        (run, model loaded once)
          5.2 Picture vectors  a photograph's pixels -> one vector    GPU
@@ -80,7 +86,7 @@ class Stage:
 INDEXING: tuple[Stage, ...] = (
     Stage("1", "discover", "Discover", RUN, CPU,
           "list the files of every collection (registered folders, imports); formats the "
-          "pipeline cannot read are skipped and counted"),
+          "pipeline cannot read are skipped and counted, and so is the video of a Live Photo (its photograph is indexed)"),
     Stage("2", "fingerprint", "Fingerprint", DOCUMENT, CPU,
           "SHA-256 of the file plus the chunk, model and conversion settings; unchanged documents are skipped "
           "in seconds"),
@@ -90,8 +96,8 @@ INDEXING: tuple[Stage, ...] = (
           "stopped and its document reported, so one stuck document never holds the run",
           settings=("indexer.jobs", "indexer.stall_timeout")),
     Stage("3.0", "sniff", "Sniff", DOCUMENT, CPU,
-          "what kind of file is this? decided from the file itself, before any page is looked at: a Google Maps Timeline "
-          ".json goes to 3.8; an image with camera data gets a quick text check (Apple Vision, else Tesseract) and, with "
+          "what kind of file is this? decided from the file itself, before any page is looked at: a video (.mov, .mp4, .m4v, "
+          ".3gp, .avi) goes to 3.11; a Google Maps Timeline .json goes to 3.8; an image with camera data gets a quick text check (Apple Vision, else Tesseract) and, with "
           "little text, is a photograph and goes to 3.6; everything else, a photographed page too, is a document of pages and "
           "goes to 3.1. A document that is already converted keeps the route its trace records",
           constants=(("letters of text that make a picture a page", 200),)),
@@ -185,6 +191,13 @@ INDEXING: tuple[Stage, ...] = (
           "the pass after a run, and `rag-search photos describe`, catch up",
           settings=("models.describe", "models.describe_auto"), optional=True,
           constants=(("photographs of the test described without a false statement (8B)", "38 of 38"),)),
+    Stage("3.11", "video", "Video details", DOCUMENT, CPU,
+          "a video (3.0 decided, by its extension) is indexed from a section of facts its file records, never from its frames or "
+          "its sound: when it was taken (the phone's own date with its offset, else the movie header's UTC time), the GPS position "
+          "(3.7 Locate gives it a place), camera, size and duration, read from the QuickTime / MP4 header atoms (an .avi: size and "
+          "duration only). The video of a Live Photo (IMG_1234.MOV beside IMG_1234.HEIC) is left out by 1 Discover: its "
+          "photograph is indexed",
+          optional=True, constants=(("milliseconds to read a video's details (the frames are skipped)", "about 1"),)),
     Stage("4", "chunk", "Chunk", DOCUMENT, CPU,
           "split the Markdown into passages that never cross a page; tables and code stay whole where they fit",
           settings=("indexer.chunk_size", "indexer.chunk_overlap")),

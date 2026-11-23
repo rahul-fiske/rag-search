@@ -86,15 +86,16 @@ def _source(paths: Paths, coll: str, kind: str, locs: dict[str, str]) -> dict[st
     """Where the documents are, whether that can be read now, and what is in it."""
     if kind != "location":                 # imported, or indexed earlier with no registered folder
         return {"folder": None, "reachable": None, "files": None, "bytes": None,
-                "unsupported": None, "list": []}
+                "unsupported": None, "live_photo": None, "list": []}
     roots = locations.source_roots(paths)
     folder = Path(locs[coll])
     out: dict[str, Any] = {"folder": str(folder), "reachable": locations.reachable(folder)}
     files: list[Path] = []
-    unsupported = 0
+    unsupported = live = 0
     if out["reachable"]:
         found, unsup = locations.scan_tree(folder, locations.workspace_excludes(paths))
-        files, unsupported = found, len(unsup)
+        live = sum(1 for u in unsup if u.get("companion"))
+        files, unsupported = found, len(unsup) - live
     size = 0
     stats: list[tuple[Path, float]] = []
     for f in files:
@@ -107,6 +108,7 @@ def _source(paths: Paths, coll: str, kind: str, locs: dict[str, str]) -> dict[st
     out.update({"files": len(files) if out["reachable"] else None,
                 "bytes": size if out["reachable"] else None,
                 "unsupported": unsupported if out["reachable"] else None,
+                "live_photo": live if out["reachable"] else None,
                 "list": stats, "roots": roots})
     return out
 

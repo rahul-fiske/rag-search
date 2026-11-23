@@ -175,6 +175,21 @@ class TotalsByKindTests(IndexedPhotoTests):
         self.assertNotIn("timeline", v)
         self.assertEqual(runview._active(st)["files"], 1)  # the photographs are not files of pages
 
+    def test_a_file_planned_on_a_track_that_proves_unchanged_is_not_left(self):
+        st = runview._fresh()
+        feed = lambda **kw: runview._feed(st, json.dumps(kw))
+        feed(event="phase", phase="convert", status="kinds", ts=1, pid=1, kinds={"video": 2, "pages": 1})
+        for i, out in enumerate(("skipped", "prepared")):
+            feed(event="work", phase="convert", status="start", ts=10 + i, pid=1, file=f"c/{i}.mov", route="video")
+            feed(event="work", phase="convert", status="done", ts=12 + i, pid=1, file=f"c/{i}.mov", outcome=out,
+                 **({"understood": {"kind": "video", "track": "video", "grade": "complete"}} if out == "prepared" else {}))
+        feed(event="work", phase="convert", status="start", ts=20, pid=1, file="c/a.pdf", route="pages")
+        feed(event="work", phase="convert", status="done", ts=21, pid=1, file="c/a.pdf", outcome="skipped")
+        v = runview.tracks_view(st, running=False, now=30)
+        self.assertEqual((v["video"]["planned"], v["video"]["done"], v["video"]["left"]), (1, 1, 0))
+        self.assertNotIn("pages", v)                        # its one file was unchanged: nothing to show, nothing left
+        self.assertEqual(v["unchanged"], {"planned": 2, "done": 2})
+
 
 class DocumentsByKindTests(IndexedPhotoTests):
     def test_the_documents_list_filters_by_the_kind_and_grade_of_the_understood_table(self):

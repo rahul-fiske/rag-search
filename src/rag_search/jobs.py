@@ -48,7 +48,8 @@ def all_records(paths: Paths) -> list[dict[str, Any]]:
     return recs
 
 
-SKIPPED = ("skipped", "known", "unsupported")      # what a run did not convert: unchanged, not tried again, unsupported
+SKIPPED = ("skipped", "known", "unsupported", "live_photo")   # what a run did not convert: unchanged, not tried again,
+                                                               # unsupported, the video of a Live Photo
 
 
 def _kind_grade(item: dict[str, Any]) -> tuple[str, str]:
@@ -184,13 +185,15 @@ def view(rec: dict[str, Any]) -> dict[str, Any]:
         uns = summ.get("unsupported_extension") or []
         removed = summ.get("removed") or []
         known = summ.get("known") or []
+        live = summ.get("live_photo") or []
         out["summary"] = {
             **{k: v for k, v in summ.items()
-               if k not in ("errors", "no_text", "unsupported_extension", "removed", "known")},
+               if k not in ("errors", "no_text", "unsupported_extension", "removed", "known", "live_photo")},
             "errors": errs[:20], "error_count": len(errs),
             "no_text": empty[:20], "no_text_count": len(empty),
             "unsupported_extension": uns[:20], "unsupported_count": len(uns),
             "removed": removed[:20], "removed_count": len(removed),
             "known": known[:20], "known_count": len(known),
+            "live_photo": live[:20], "live_photo_count": len(live),
         }
     return out
