@@ -1274,6 +1274,20 @@ standing as BM25 and the text vectors.
   a photograph whose line says another number (or has none and has faces) is made again from what is known, with no model run,
   and embedded in the same run (`indexer._faces_line_differs`, through the path of a missing description).
 
+* **A picture with no camera data and no text is a photograph** (`indexer._sniff`; outcome version 3): a picture saved from a
+  message or a web page has no EXIF, and with no text in it the document reader found nothing, so it was not indexed at all (38
+  in one collection). It now takes the photograph's way (3.9 Faces, 3.10 Describe, 5.2 Picture vector); its Photo details section
+  is made from what those steps found, under a heading and with the picture's size (`photo.headed`), and a picture of which
+  nothing is known is still a genuine "no text". A picture with text, or one the text check cannot look at, is read as a page as
+  before.
+* **Rescanning faces** (`rag-search people rescan [--limit N]`, `faces.rescan`): the photographs the first, one-size finder looked
+  at are looked at again at two sizes and only the faces it missed are added (a box that overlaps a stored face is that face), so
+  every stored face keeps its id, fingerprint and name; the photograph is then marked as looked at by the two-size finder. About a
+  quarter of a second a photograph. The next indexing run brings the face counts in the Markdown up to date.
+* **Coverage covers videos too**: each video should have its details (3.11) and, with a position, its places; the report counts
+  both. Two photographs or videos whose names differ only by extension (`IMG_1204.HEIC` and `IMG_1204.JPEG`) share one index
+  folder: only one is indexed and the other is reported as having the same name (rename one of them).
+
 ### 5.4 Playground (`core/playground.py`)
 
 A playground experiment is a sandbox for trying a different embedding model, reranker, chunk size

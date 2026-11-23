@@ -185,6 +185,46 @@ def face_in_box(paths: Paths, src: Path, x: float, y: float, w: float, h: float)
     return {"x": x, "y": y, "w": w, "h": h, "score": 1.0, "px": int(min(bw, bh)), "vec": vec, "thumb": _thumb(im, bx, by, bw, bh)}
 
 
+def rescan(paths: Paths, *, limit: int = 0, progress: Callable[[int, int], None] = lambda done, total: None) -> dict[str, int]:
+    """Look again, with the two-size finder (``SCALES``), at the photographs the first one-size finder looked at, and add the faces
+    it missed: a box that overlaps a stored face (``MERGE_IOU``) is that face and is left alone, so every stored face keeps its
+    id, its fingerprint and its name; a new one is added like a face you drew.  A photograph is marked as looked at by the new
+    finder when it is done (an interrupted rescan goes on where it stopped).  Faces under ``SURE_SCORE`` are kept for the
+    photograph viewer only.  A photograph whose file is gone from the source folders is left as it is.
+    -> ``{"looked": n, "added": n, "sure_added": n, "missing": n, "failed": n}``."""
+    from .people import source_file
+
+    res = {"looked": 0, "added": 0, "sure_added": 0, "missing": 0, "failed": 0}
+    if available(paths):
+        raise StoreError(available(paths))
+    f = finder(paths)
+    with Store(paths) as st:
+        todo = st.con.execute("SELECT sha, src FROM photos WHERE detector = ? ORDER BY ts", (DETECTOR,)).fetchall()
+        if limit:
+            todo = todo[:limit]
+        for i, (sha, src) in enumerate(todo, 1):
+            real = source_file(paths, src)
+            if real is None:
+                res["missing"] += 1
+                continue
+            try:
+                have = [tuple(r) for r in st.con.execute("SELECT x, y, w, h FROM faces WHERE sha = ?", (sha,))]
+                for found in f.faces(real):
+                    if any(_iou((found["x"], found["y"], found["w"], found["h"]), h) >= MERGE_IOU for h in have):
+                        continue
+                    st.add_face(sha, found)
+                    res["added"] += 1
+                    res["sure_added"] += found["score"] >= SURE_SCORE
+                with st.con:
+                    st.con.execute("UPDATE photos SET detector = ? WHERE sha = ?", (DETECTOR_MS, sha))
+                res["looked"] += 1
+            except Exception:  # noqa: BLE001 - a photograph that cannot be read is left for the next rescan
+                res["failed"] += 1
+            if i % 25 == 0 or i == len(todo):
+                progress(i, len(todo))
+    return res
+
+
 def _iou(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
     """Overlap of two boxes (x, y, w, h) over their union."""
     ix = max(0.0, min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0]))

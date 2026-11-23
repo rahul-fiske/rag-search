@@ -604,6 +604,11 @@ class VlmIndexTests(ConversionBase):
         self.reader = FakeReader()
         p = mock.patch("rag_search.core.conversion.routed.default_reader", lambda: self.reader)
         p.start()
+        # these pictures are scans of pages: the quick text check finds a page of text (a picture with none is a photograph)
+        from rag_search.core import photo
+        pv = mock.patch.object(photo, "visible_text", return_value="a page of text " * 30)
+        pv.start()
+        self.addCleanup(pv.stop)
         self.addCleanup(p.stop)
         self.addCleanup(vlm.close_shared)
         self.pdf = self.sdir / "reports" / "r.pdf"

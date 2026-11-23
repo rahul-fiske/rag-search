@@ -527,11 +527,11 @@
     patch(refs.coverage, coverageCard(r) || '');
   }
   const COVER_STEPS = [['described', '3.10 Describe', 'a description by the current model and prompt'], ['faces', '3.9 Faces', 'looked at for faces'],
-    ['pictures', '5.2 Picture vector', 'a vector from its pixels by the current picture model'], ['places', '3.7 Locate', 'a place for its GPS position (only photographs with a position)']];
-  const OLDER = { faces: 'looked at by the earlier one-size finder (kept; a re-scan is not needed)', pictures: 'made by another picture model', places: 'tagged with map data that has changed since (Refresh places on the Models tab)', described: 'described by another model or prompt' };
+    ['pictures', '5.2 Picture vector', 'a vector from its pixels by the current picture model'], ['places', '3.7 Locate', 'a place for its GPS position (only photographs and videos with a position)'], ['details', '3.11 Video details', 'its time, position, camera, size and duration, read from its header (videos)']];
+  const OLDER = { faces: 'looked at by the earlier one-size finder (`rag-search people rescan` adds the faces it missed; the ones found keep their names)', pictures: 'made by another picture model', places: 'tagged with map data that has changed since (Refresh places on the Models tab)', described: 'described by another model or prompt' };
   function coverageCard(r) {
-    const t = r.total; if (!t.photographs) return null;
-    const rows = COVER_STEPS.map(([k, name, what]) => {
+    const t = r.total; if (!t.photographs && !t.videos) return null;
+    const rows = COVER_STEPS.filter(([k]) => t.steps[k].expected || (r.notes || {})[k]).map(([k, name, what]) => {
       const s = t.steps[k], note = (r.notes || {})[k];
       if (note) return h('tr', null, h('td', null, name), h('td', { colspan: 3, class: 'muted small' }, 'not expected: ' + note));
       const miss = s.expected - s.done, pct = s.expected ? Math.round(100 * s.done / s.expected) : 100;

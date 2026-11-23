@@ -215,3 +215,21 @@ if __name__ == "__main__":
     import unittest
 
     unittest.main()
+
+
+class NoCameraDataTests(IndexedPhotoTests):
+    def test_a_picture_with_no_camera_data_and_no_text_is_a_photograph(self):
+        from PIL import Image
+
+        (self.sdir / "c").mkdir()
+        src = self.sdir / "c" / "b514e3f6.jpg"
+        Image.new("RGB", (32, 24), "grey").save(src)
+        with mock.patch.object(photo, "visible_text", return_value=""):
+            self.assertEqual(indexer._sniff(src, "image", False, {}, False, "x", None)[0::2], ("photograph", ""))
+        with mock.patch.object(photo, "visible_text", return_value="TOTAL 12.50 thank you for shopping"):
+            self.assertEqual(indexer._sniff(src, "image", False, {}, False, "y", None)[0], "pages")      # a receipt is a page
+        with mock.patch.object(photo, "visible_text", return_value=None):
+            self.assertEqual(indexer._sniff(src, "image", False, {}, False, "z", None)[0], "pages")      # no text check here: as before
+        text = photo.headed("\n- Looks like (model-written): a lake\n- Faces detected: 0\n", src)
+        self.assertEqual(text, "## Photo details\n\n- Size: 32 x 24 pixels\n- Looks like (model-written): a lake\n- Faces detected: 0\n")
+        self.assertEqual(photo.headed("", src), "")

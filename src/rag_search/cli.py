@@ -1065,6 +1065,19 @@ def _cmd_people(a: argparse.Namespace) -> int:
             return EXIT_FAIL
         _json(rec.get("result") or {})
         return EXIT_OK
+    if a.action == "rescan":
+        from .core import faces
+
+        try:
+            res = faces.rescan(p, limit=a.limit, progress=lambda d, t: print(f"  {d} of {t} photographs", file=sys.stderr, flush=True))
+        except faces.StoreError as exc:
+            _err(str(exc))
+            return EXIT_FAIL
+        print(f"looked again at {res['looked']} photograph(s): {res['added']} face(s) added ({res['sure_added']} the finder is sure of)"
+              + (f", {res['missing']} not in a source folder any more" if res["missing"] else "")
+              + (f", {res['failed']} could not be read" if res["failed"] else "")
+              + ("; the next indexing run brings their face counts up to date" if res["sure_added"] else ""))
+        return EXIT_OK
     st = people.overview(p)
     if a.json:
         _json(st)
@@ -1158,13 +1171,15 @@ def _cmd_coverage(a: argparse.Namespace) -> int:
         _json(rep)
         return EXIT_OK
     names = {"described": "described (3.10)", "faces": "faces looked for (3.9)", "pictures": "picture vector (5.2)",
-             "places": "places tagged (3.7)"}
+             "places": "places tagged (3.7)", "details": "video details (3.11)"}
     for name, c in rep["collections"].items():
         print(f"{name}: {c['files']} indexed -- {c['photographs']} photographs, {c['videos']} videos, "
               f"{c['timelines']} timelines, {c['documents']} documents of pages")
-        if not c["photographs"]:
+        if not c["photographs"] and not c["videos"]:
             continue
         for k, s in c["steps"].items():
+            if not s["expected"] and k not in rep["notes"]:
+                continue
             if k in rep["notes"]:
                 print(f"  {names[k]:<26} not expected: {rep['notes'][k]}")
                 continue
@@ -3088,8 +3103,10 @@ def build_parser() -> argparse.ArgumentParser:
             "models when they are missing (OpenCV YuNet and SFace, about 38 MB). The faces are found by the indexing run (step "
             "3.9 Faces): in a photograph while it is converted, and in the photographs indexed before without converting them "
             "again. The names, groups and the faces you named are kept in <home>/people.sqlite, never in the photographs or "
-            "the index; a search that names people keeps to their photographs.")
-    p.add_argument("action", nargs="?", choices=["status", "setup"], default="status")
+            "the index; a search that names people keeps to their photographs. rescan: look again, at two sizes, at the photographs "
+            "the first (one-size) finder looked at, and add the faces it missed; faces already found keep their names.")
+    p.add_argument("action", nargs="?", choices=["status", "setup", "rescan"], default="status")
+    p.add_argument("--limit", type=int, default=0, help="rescan: at most this many photographs (a trial)")
 
     p = add("paths", "print data and index folder locations", _cmd_paths)
     p.add_argument("name", nargs="?", default="")

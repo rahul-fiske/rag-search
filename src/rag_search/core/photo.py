@@ -284,6 +284,20 @@ def _carry(old: str, new: str) -> str:
     return head + "\n" + "\n".join(kept) + (sep + tail if sep else "") + "\n"
 
 
+def headed(section: str, src: Path) -> str:
+    """A Photo details section for a picture with no camera data, from the lines the faces and describe steps added: a heading, the
+    picture's size (a fact of the file) and those lines, so the section is a section and not loose lines."""
+    lines = [ln for ln in section.splitlines() if ln.startswith("- ")]
+    if not lines:
+        return ""
+    try:
+        with open_image(src) as im:
+            lines.insert(0, f"- Size: {im.size[0]} x {im.size[1]} pixels")
+    except Exception:  # noqa: BLE001 - the size is a courtesy
+        pass
+    return HEADING + "\n\n" + "\n".join(lines) + "\n"
+
+
 def insert_extra(section: str, extra: Sequence[str]) -> str:
     """*section* with the lines of *extra* just before its Reference data line (at the end without one)."""
     if not extra:

@@ -172,7 +172,10 @@ class IndexedPhotoTests(TempHome):
         self.assertIn("Town: at Nirmal, Telangana, India", text)
         nodes = json.loads(next(self.paths.index.rglob("IMG_1/nodes.json")).read_text())["nodes"]
         self.assertTrue(any("2024-03-14" in n["text"] for n in nodes))
-        self.assertFalse(list(self.paths.markup.rglob("scan.md")))
+        # a picture with no camera data and no text is a photograph all the same, but is indexed only when something is known of it
+        # (a description, faces): then its section has a heading and its size, never loose lines
+        for md in self.paths.markup.rglob("scan.md"):
+            self.assertIn("## Photo details\n\n- Size: 8 x 8 pixels\n", md.read_text(encoding="utf-8"))
 
 
 class PhotographOrPageTests(TempHome):

@@ -491,7 +491,7 @@ class CoverageTests(PeopleCase):
         self.assertEqual((steps["faces"]["done"], steps["faces"]["expected"], steps["faces"]["stale"]), (1, 2, 0))
         self.assertEqual((steps["pictures"]["done"], steps["pictures"]["expected"], steps["pictures"]["stale"]), (1, 2, 1))
         self.assertEqual(steps["faces"]["examples"], ["c/s2"])
-        self.assertEqual(coverage.missing(rep), {"described": 1, "faces": 1, "pictures": 1})
+        self.assertEqual(coverage.missing(rep), {"described": 1, "faces": 1, "pictures": 1, "details": 1})     # and the video has none
         with mock.patch.dict("os.environ", {"RAG_SEARCH_PICTURE_MODEL": "off"}), mock.patch.object(faces, "available", return_value="no models"):
             rep = coverage.report(self.paths)
         self.assertEqual(rep["total"]["steps"]["pictures"]["expected"], 0)           # a step that is off expects nothing
@@ -553,3 +553,32 @@ class BatchTests(PeopleCase):
         self.assertEqual(st, 400)
         st, js, _p, _h = dash.req("POST", "/api/people/batch", {"ops": "nope"})
         self.assertEqual(st, 400)
+
+
+class RescanTests(PeopleCase):
+    def test_a_rescan_adds_only_the_faces_the_first_finder_missed_and_keeps_the_ones_it_found(self):
+        from PIL import Image
+
+        folder = self.source("trip")
+        pic = folder / "IMG_9.jpg"
+        Image.new("RGB", (40, 30)).save(pic)
+        (kept,) = self.photo("s1", A, src=str(pic))
+        with self.st.con:
+            self.st.con.execute("UPDATE photos SET detector = ? WHERE sha = 's1'", (faces.DETECTOR,))     # looked at by the first finder
+        avni = self.st.person_id("Avni", create=True)
+        self.st.label([kept], avni)
+        again = {"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2, "score": 0.93, "px": 120, "vec": B, "thumb": b"t"}      # the same face
+        missed = {"x": 0.6, "y": 0.2, "w": 0.2, "h": 0.2, "score": 0.9, "px": 90, "vec": B, "thumb": b"t"}
+        weak = {"x": 0.3, "y": 0.6, "w": 0.1, "h": 0.1, "score": 0.72, "px": 50, "vec": B, "thumb": b"t"}
+        fake = mock.Mock()
+        fake.faces.return_value = [again, missed, weak]
+        with mock.patch.object(faces, "available", return_value=""), mock.patch.object(faces, "finder", return_value=fake):
+            res = faces.rescan(self.paths)
+            again_res = faces.rescan(self.paths)                       # nothing is left to look at
+        self.assertEqual(res, {"looked": 1, "added": 2, "sure_added": 1, "missing": 0, "failed": 0})
+        self.assertEqual(again_res["looked"], 0)
+        rows = self.st.con.execute("SELECT id, score FROM faces WHERE sha = 's1' ORDER BY id").fetchall()
+        self.assertEqual(rows[0][0], kept)                              # the face that was found keeps its id and its name
+        self.assertEqual(self.st.labels()[0], {kept: avni})
+        self.assertEqual((len(rows), self.st.sure_faces("s1")), (3, 2))
+        self.assertEqual(self.st.con.execute("SELECT detector, faces FROM photos WHERE sha = 's1'").fetchone(), (faces.DETECTOR_MS, 3))

@@ -1,7 +1,7 @@
 """Coverage: what each indexed file has, step by step, against what it should have -- the check that nothing was left behind.
 
 Every step that works on a photograph after it was converted (3.9 Faces, 3.10 Describe, 5.2 Picture vectors, and the places 3.7
-gave its position) keeps its own record, written when the step ran: the People store (``photos``), the describe cache, the
+gave its position -- and for a video its details, 3.11, and its places) keeps its own record, written when the step ran: the People store (``photos``), the describe cache, the
 picture vector's ``pictures.json``, the map stamp beside the Markdown.  Each step also decides for itself whether a photograph
 still needs it, so a step added later, or one whose check is wrong, leaves photographs behind without anything saying so.
 This puts the records side by side: for every collection, how many photographs there are and, per step, how many have it
@@ -22,7 +22,7 @@ from .. import maps, models
 from ..paths import META_FILE, Paths
 from . import describe, faces, pictures
 
-STEPS = ("described", "faces", "pictures", "places")
+STEPS = ("described", "faces", "pictures", "places", "details")
 EXAMPLES = 5
 
 
@@ -85,6 +85,23 @@ def report(paths: Paths, collection: str = "") -> dict[str, Any]:
             branches = set(((meta.get("conversion") or {}).get("branches")) or {})
             if branches == {"video"}:
                 c["videos"] += 1
+                rel = doc.relative_to(root)
+                vmd = paths.markup / rel.parent / (rel.name + ".md")
+                try:
+                    vtext = vmd.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    vtext = ""
+                for key, have, wanted, old in (("details", "## Video details" in vtext and "- Duration:" in vtext, True, False),
+                                               ("places", maps.stamp_path(vmd).exists(), "geo:" in vtext,
+                                                maps.stamp_path(vmd).exists() and not maps.is_current(vmd, vtext, state))):
+                    s = c["steps"][key]
+                    if wanted:
+                        s["expected"] += 1
+                        if have:
+                            s["done"] += 1
+                            s["stale"] += old
+                        elif len(s["examples"]) < EXAMPLES:
+                            s["examples"].append(rel.as_posix())
                 continue
             if branches == {"timeline"}:
                 c["timelines"] += 1

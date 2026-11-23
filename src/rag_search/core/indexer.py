@@ -161,7 +161,8 @@ def is_fresh(idx_dir: Path, src_sha: str, chunk_size: int, chunk_overlap: int,
 # ("not tried again"), outside its errors, so that it ends ``succeeded`` when nothing new failed.
 
 OUTCOME_FILE = "outcome.json"
-OUTCOME_VERSION = 2          # 2: a picture without text but with camera metadata is indexed (photo details)
+OUTCOME_VERSION = 3          # 2: a picture without text but with camera metadata is indexed (photo details)
+                             # 3: ... and one without text and without metadata is a photograph too (description, faces, vector)
 # wordings of a "no text" result that say a reader did not get its turn (routed.no_text_message,
 # docling_convert, prepare_document)
 NOT_EVERY_READER = ("did not read any page", "document reader not used", "Apple Vision not used",
@@ -571,6 +572,12 @@ def _sniff(src: Path, kind: str, reused_md: bool, old: dict[str, Any],
     if meta and not reused_md:
         seen = _text_seen(src, sha, cache)            # a quick text check: a photograph, or a photographed page
         return ("photograph" if photo.is_photograph(seen) else "pages"), meta, seen
+    if kind == "image" and not reused_md and not src.suffix.lower() == ".json":
+        # no camera data either (a picture saved from a message or a web page): with no text in it, it is a photograph all the
+        # same -- the document reader would find nothing and the picture would not be indexed at all
+        seen = _text_seen(src, sha, cache)
+        if seen is not None and sum(ch.isalpha() for ch in seen) < photo.MIN_LETTERS:
+            return "photograph", meta, seen
     return "pages", meta, None
 
 
@@ -890,6 +897,8 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
             t_de = time.perf_counter()
             extra, dinfo = describe.for_indexing(get_paths(), src, sha)
             photo_section = photo.insert_extra(photo_section, extra)
+            if photo_section.strip() and not photo_section.lstrip().startswith(photo.HEADING):
+                photo_section = photo.headed(photo_section, src)        # no camera data: what 3.9 and 3.10 found, under a heading
             stage_event(slog, rel_name, "describe", "done", seconds=round(time.perf_counter() - t_de, 2),
                         source=dinfo["described"] or "none", why=dinfo["why"], model_s=dinfo["seconds"])
             if not dinfo["described"] and dinfo["why"]:
