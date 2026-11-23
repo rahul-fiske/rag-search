@@ -601,6 +601,9 @@ def _wants_picture(task: dict[str, Any], kind: str, md_path: Path, idx_dir: Path
     model = task.get("picture_model") or ""
     if kind != "image" or not model or pictures.is_current(idx_dir, sha, model):
         return False
+    branches = ((read_json(idx_dir / META_FILE) or {}).get("conversion") or {}).get("branches") or {}
+    if branches:                           # the conversion says so (a photograph without camera details has no Photo details)
+        return set(branches) == {"photo"}
     try:
         return describe.is_photograph(md_path.read_text(encoding="utf-8", errors="replace"))
     except OSError:

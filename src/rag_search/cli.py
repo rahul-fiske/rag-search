@@ -2599,7 +2599,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--wait", type=float, default=45.0,
                    help="seconds to wait for a starting daemon (default 45)")
     p.add_argument("--stages", default=None,
-                   help="comma-separated subset of bm25,dense,rerank to run (default: all three) "
+                   help="comma-separated subset of bm25,dense,pictures,rerank to run (default: all four) "
                         "-- troubleshooting: isolate one retriever or drop the reranker")
     p.add_argument("--retrieval-pool", type=int, default=None, dest="retrieval_pool",
                    help="override candidates each retriever contributes (default: a formula on -k)")
@@ -2870,7 +2870,7 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--no-rerank", dest="no_rerank", action="store_true",
                    help="skip reranking for this experiment")
     q.add_argument("--stages", default=None,
-                   help="default comma-separated subset of bm25,dense,rerank for this experiment")
+                   help="default comma-separated subset of bm25,dense,pictures,rerank for this experiment")
     q.add_argument("--retrieval-pool", dest="retrieval_pool", type=int, default=None)
     q.add_argument("--rerank-pool", dest="rerank_pool", type=int, default=None)
     q.add_argument("--rrf-k", dest="rrf_k", type=int, default=None)

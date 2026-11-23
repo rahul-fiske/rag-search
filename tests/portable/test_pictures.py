@@ -80,6 +80,15 @@ class PictureVectorTests(PhotoHome):
         self.assertTrue((self.paths.index / "trip" / "_all" / pictures.FILE).exists())     # and merged again
         self.assertEqual(self.run_index()["pictures"]["done"], 0)                        # then they are current
 
+    def test_a_photograph_without_camera_details_is_caught_up_by_what_its_conversion_says(self):
+        idx, md = self.tmp / "print", self.tmp / "print.md"
+        idx.mkdir()
+        md.write_text("- Looks like (model-written): two people at a counter\n- Faces detected: 2\n")   # no Photo details
+        task = {"picture_model": BASE}
+        for branches, wanted in (({"photo": 1}, True), ({"image": 1}, False), ({"photo": 1, "digital": 1}, False)):
+            (idx / "index.meta.json").write_text(json.dumps({"conversion": {"branches": branches}}))
+            self.assertEqual(indexer._wants_picture(task, "image", md, idx, "s"), wanted, branches)
+
     def test_another_picture_model_embeds_the_photographs_again(self):
         self.run_index()
         os.environ["RAG_SEARCH_PICTURE_MODEL"] = LARGE
