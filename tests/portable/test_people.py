@@ -529,3 +529,27 @@ class GuessesAreGuessesTests(PeopleCase):
         self.assertEqual([(f["how"], f["name"]) for f in shown], [("auto", "Avni")])
         self.assertGreater(shown[0]["similarity"], 0.9)
         self.assertEqual(people.photo_of_face(self.paths, a1)["faces"][0]["similarity"], 1.0)
+
+
+class BatchTests(PeopleCase):
+    def test_many_ticks_and_crosses_are_saved_together(self):
+        from tests.portable.test_ui import Dash
+
+        a1, a2, a3 = self.photo("s1", A, A, A)
+        b1, = self.photo("s2", B)
+        avni = self.st.person_id("Avni", create=True)
+        self.st.label([a3], avni)
+        dash = Dash(self.paths)
+        self.addCleanup(dash.close)
+        ops = [{"op": "confirm", "person": avni, "faces": [a1]}, {"op": "reject", "person": avni, "faces": [b1]},
+               {"op": "unlabel", "faces": [a3]}]
+        st, js, _p, _h = dash.req("POST", "/api/people/batch", {"ops": ops})
+        self.assertEqual((st, js["applied"]), (200, 3))
+        yes, no = self.st.labels()
+        self.assertEqual((yes, no), ({a1: avni}, {(b1, avni)}))
+        st, js, _p, _h = dash.req("POST", "/api/people/batch", {"ops": [{"op": "explode", "faces": [1]}]})
+        self.assertEqual(st, 400)
+        st, js, _p, _h = dash.req("POST", "/api/people/batch", {"ops": [{"op": "confirm", "person": "x", "faces": [1]}]})
+        self.assertEqual(st, 400)
+        st, js, _p, _h = dash.req("POST", "/api/people/batch", {"ops": "nope"})
+        self.assertEqual(st, 400)

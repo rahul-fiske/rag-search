@@ -998,6 +998,29 @@ class Handler(BaseHTTPRequestHandler):
                     person = st.person_id(text("name").strip(), create=True)
                     n = st.label(ints("faces"), person)    # type: ignore[arg-type]
                     return self._json({"ok": True, "person": person, "labelled": n})
+                if action == "batch":                      # many ticks and crosses at once: one store, one recompute afterwards
+                    ops = body.get("ops")
+                    if not isinstance(ops, list) or len(ops) > 5000:
+                        raise faces.StoreError("ops must be a list of at most 5000 changes")
+                    done = 0
+                    for o in ops:
+                        if not isinstance(o, dict) or o.get("op") not in ("confirm", "reject", "unlabel"):
+                            raise faces.StoreError("each change is {op: confirm | reject | unlabel, faces: [...], person}")
+                        try:
+                            fs = [int(x) for x in (o.get("faces") or [])]
+                            person = int(o["person"]) if o["op"] != "unlabel" else 0
+                        except (TypeError, ValueError, KeyError):
+                            raise faces.StoreError("faces and person must be numbers") from None
+                        if o["op"] == "confirm":
+                            st.label(fs, person)
+                        elif o["op"] == "reject":
+                            for f in fs:
+                                st.reject(f, person)
+                        else:
+                            for f in fs:
+                                st.unlabel(f)
+                        done += len(fs)
+                    return self._json({"ok": True, "applied": done})
                 if action == "confirm":
                     return self._json({"ok": True, "labelled": st.label(ints("faces"), one("person"))})
                 if action == "reject":

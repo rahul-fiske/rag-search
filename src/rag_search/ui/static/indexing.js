@@ -523,6 +523,7 @@
     const sig = JSON.stringify([r.total, r.notes]);
     if (sig === cvSig) return;
     cvSig = sig;
+    CV.setCoverage(r);
     patch(refs.coverage, coverageCard(r) || '');
   }
   const COVER_STEPS = [['described', '3.10 Describe', 'a description by the current model and prompt'], ['faces', '3.9 Faces', 'looked at for faces'],

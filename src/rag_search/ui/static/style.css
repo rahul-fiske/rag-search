@@ -353,6 +353,7 @@ svg.dg { display: block; width: 100%; height: auto; min-width: 820px; font-famil
 .cv-tn { flex: 1 1 0; min-width: 128px; border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 9px; background: var(--panel-2); font-size: 12px; display: grid; gap: 3px; align-content: start; }
 .cv-tn.on { background: var(--accent-soft); border-color: var(--accent); }
 .cv-tn-h { display: flex; align-items: center; gap: 6px; } .cv-tn-h b { flex: 1; } .cv-tn-id { color: var(--muted); font-variant-numeric: tabular-nums; }
+.cv-tn > * { min-width: 0; overflow-wrap: anywhere; }
 .cv-tn-fig { font-weight: 600; } .cv-tn:not(.on) .cv-tn-fig { color: var(--faint); font-weight: 400; }
 .cv-tn-note { color: var(--muted); font-size: 11px; }
 .cv-tn-bar { display: block; height: 6px; border-radius: 999px; background: var(--idle-soft); overflow: hidden; min-width: 50px; }
@@ -498,6 +499,12 @@ table.cost tr.total td { border-top: 1px solid var(--line); }
 .pv-tag { position: absolute; left: -2px; top: -20px; padding: 1px 6px; border-radius: 4px; color: #fff; font-size: 11px; line-height: 16px; white-space: nowrap; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
 .pv-side { padding: 10px 14px 14px; }
 .pv-key { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; } .pv-key i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.facebox.q-yes .face { border-color: var(--ok); } .facebox.q-no .face { opacity: .35; border-style: dashed; } .facebox.q-off .face { opacity: .35; border-style: dashed; }
+.facebox.q-yes .facewrap::after, .facebox.q-no .facewrap::after, .facebox.q-off .facewrap::after { position: absolute; left: 4px; top: 4px; width: 20px; height: 20px; border-radius: 50%; color: #fff; font-size: 12px; line-height: 20px; text-align: center; }
+.facebox.q-yes .facewrap::after { content: '\2713'; background: var(--ok); } .facebox.q-no .facewrap::after, .facebox.q-off .facewrap::after { content: '\2715'; background: var(--muted); }
+.face-actions .btn.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.pendbar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 20; display: flex; align-items: center; gap: 10px; padding: 8px 14px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--panel); box-shadow: 0 6px 24px rgba(0,0,0,.25); }
+.pv-pend { display: flex; align-items: center; gap: 10px; padding: 0 14px; } .pv-pend:empty { display: none; }
 .facebox { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .face-actions { display: flex; gap: 2px; }
 .btn.tiny { padding: 0 6px; font-size: 12px; line-height: 18px; }

@@ -1180,6 +1180,11 @@ who      every other face -> the nearest labelled person, when clearly theirs   
   box, and the face is fingerprinted from a crop lined up as if it faced the camera (`faces.face_in_box`, rougher than a
   found face's fingerprint; its score is 1.0) and added to the photograph (`/api/people/face/add`). Only a file that is still
   inside a registered source folder is ever shown.
+* **Ticks and crosses are saved in a batch** (People tab, `people.js`): a tick (yes, this is X), a cross (not X) or taking a name
+  off a face is queued in the page and shown on the face at once (a green tick, a dimmed cross); *Save changes* sends them all in one
+  request (`/api/people/batch`, one transaction) and the matching of every face is worked out again once (it takes a moment with
+  tens of thousands of faces), not after every click. *Discard* drops the queue; leaving the page with changes unsaved asks first.
+  Naming a group of faces under *Who is this?* and renaming people still save at once.
 * **A photograph whose section was split** (fixed in 4.0.0.dev36): an earlier version wrote the description lines after a blank
   line inside the "Photo details" list. The section ended at the blank line, so the photograph looked like a *photographed
   page* and was never looked at for faces (about 4,700 of 20,000 in one collection). `photo._BLOCK_RE` now takes a blank line

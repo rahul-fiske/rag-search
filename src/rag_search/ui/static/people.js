@@ -6,6 +6,49 @@
   const off = new Set();          // faces left out of the next "Name" (clicked in a group of look-alikes)
   const hidden = new Set();       // groups skipped for now (by their first face)
 
+  /* Ticks and crosses are queued here and saved together ("Save changes"): the matching of every face is worked out again after a
+     save, which takes a moment, so it is done once for a whole batch and not after every click. */
+  const pending = new Map();                    // face id -> { op: confirm | reject | unlabel, person }
+  const Q_CLASS = { confirm: 'q-yes', reject: 'q-no', unlabel: 'q-off' };
+  let viewerAt = null;                          // { face, selected } while the photograph viewer is open
+  function queue(op, person, face, tile) {
+    const cur = pending.get(face);
+    if (cur && cur.op === op) pending.delete(face); else pending.set(face, { op, person });
+    const now = pending.get(face);
+    if (tile) {
+      tile.classList.remove('q-yes', 'q-no', 'q-off');
+      if (now) tile.classList.add(Q_CLASS[now.op]);
+      tile.querySelectorAll('.face-actions button').forEach(b => b.classList.toggle('on', !!now && b.dataset.op === now.op));
+    }
+    renderPendBar();
+  }
+  const pendContent = () => pending.size ? [
+    h('span', null, `${num(pending.size)} unsaved change${pending.size === 1 ? '' : 's'}`),
+    h('button', { class: 'btn small primary', disabled: readOnly(), on: { click: savePending } }, 'Save changes'),
+    h('button', { class: 'btn small', on: { click: discardPending } }, 'Discard')] : [];
+  function renderPendBar() {
+    if (refs.pendbar) { fill(refs.pendbar, ...pendContent()); refs.pendbar.classList.toggle('hidden', !pending.size); }
+    const v = viewer && viewer.querySelector('#pv-pend'); if (v) fill(v, ...pendContent());
+  }
+  async function savePending() {
+    const ops = [], by = new Map();
+    for (const [face, { op, person }] of pending) {
+      const k = op + ':' + person;
+      if (!by.has(k)) { const o = { op, person, faces: [] }; by.set(k, o); ops.push(o); }
+      by.get(k).faces.push(face);
+    }
+    const r = await api('people/batch', { ops });
+    if (r.ok === false) { toast(r.error || 'could not save the changes', 'bad'); return; }
+    pending.clear(); toast(`Saved ${num(r.applied)} change(s)`, 'ok');
+    await refreshAll(); renderPendBar();
+    if (viewerAt && viewer && viewer.open) await paintPhoto(viewerAt.face, viewerAt.selected);
+  }
+  async function discardPending() {
+    pending.clear(); renderPerson(); renderPendBar();
+    if (viewerAt && viewer && viewer.open) await paintPhoto(viewerAt.face, viewerAt.selected);
+  }
+  window.addEventListener('beforeunload', e => { if (pending.size) { e.preventDefault(); e.returnValue = ''; } });
+
   const faceImg = (f, extra) => h('img', Object.assign({ class: 'face', src: 'api/people/face?id=' + f, loading: 'lazy', alt: '', width: 72, height: 72 }, extra || {}));
   /* a face with a small "photo" button: opens the whole photograph with every face found in it boxed */
   const faceWithPhoto = (f, extra) => h('span', { class: 'facewrap' }, faceImg(f, extra),
@@ -54,6 +97,7 @@
       h('button', { class: 'btn small', on: { click: () => viewer.close() } }, 'Close'))); return; }
     const faces = r.faces || [], ro = readOnly();
     const sel = faces.find(f => f.id === selected) || faces.find(f => f.id === faceId) || faces[0];
+    viewerAt = { face: faceId, selected: sel.id };
     const pick = id => paintPhoto(faceId, id);
     const boxes = faces.map(f => h('div', { class: 'pv-box' + (f.id === sel.id ? ' sel' : '') + (f.score < 0.8 ? ' weak' : ''), title: (sure(f) ? f.name : f.how === 'suggested' ? 'unnamed (a guess: ' + f.name + ')' : 'unnamed') + ' \u00b7 score ' + f.score + (f.score < 0.8 ? ' (the model is unsure it is a face)' : ''),
       style: { left: (100 * f.x) + '%', top: (100 * f.y) + '%', width: (100 * f.w) + '%', height: (100 * f.h) + '%', borderColor: boxColour(f) },
@@ -67,15 +111,18 @@
     input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); name(); } });
     const unname = async () => { const res = await act('people/unlabel', { faces: [sel.id] }, 'name taken off'); if (res.ok !== false) { await refreshAll(); await paintPhoto(faceId, sel.id); } };
     const how = { you: 'named by you', auto: 'matched automatically' + (sel.similarity ? ` (similarity ${sel.similarity})` : ''), suggested: 'not named', '': 'not named: nobody is matched to it' }[sel.how || ''];
+    const queued = pending.get(sel.id);
     const guess = sel.how === 'suggested' && sel.name ? h('div', { class: 'small', style: { marginTop: '4px' } },
       `Closest guess: ${sel.name} (similarity ${sel.similarity}; 0.36 or more is likely the same person) `,
-      h('button', { class: 'btn tiny', disabled: ro, title: `yes, ${sel.name}`, on: { click: async () => { const res = await act('people/confirm', { person: sel.person, faces: [sel.id] }, `named ${sel.name}`); if (res.ok !== false) { await refreshAll(); await paintPhoto(faceId, sel.id); } } } }, '\u2713 yes'),
-      h('button', { class: 'btn tiny', disabled: ro, title: `not ${sel.name}`, on: { click: async () => { const res = await act('people/reject', { person: sel.person, faces: [sel.id] }); if (res.ok !== false) { await refreshAll(); await paintPhoto(faceId, sel.id); } } } }, '\u2715 no')) : null;
+      h('button', { class: 'btn tiny' + (queued && queued.op === 'confirm' ? ' on' : ''), disabled: ro, title: `yes, ${sel.name}`, on: { click: () => { queue('confirm', sel.person, sel.id); paintPhoto(faceId, sel.id); } } }, '\u2713 yes'),
+      h('button', { class: 'btn tiny' + (queued && queued.op === 'reject' ? ' on' : ''), disabled: ro, title: `not ${sel.name}`, on: { click: () => { queue('reject', sel.person, sel.id); paintPhoto(faceId, sel.id); } } }, '\u2715 no'),
+      queued ? h('span', { class: 'muted' }, ' queued: save to apply') : null) : null;
     fill(viewer,
       h('div', { class: 'pv-head' }, h('b', null, r.name || 'photograph'), h('span', { class: 'muted small' }, `${faces.length} face${faces.length === 1 ? '' : 's'} found`),
         h('button', { class: 'btn small', style: { marginLeft: 'auto' }, on: { click: () => viewer.close() } }, 'Close')),
       r.available === false ? h('div', { class: 'notice warn' }, 'The photograph is not in a source folder any more: only its faces can be shown.') : null,
       r.available === false ? null : h('div', { class: 'pv-stage' }, h('img', { src: 'api/people/photo?face=' + faceId, alt: r.name || 'photograph' }), boxes),
+      h('div', { class: 'pv-pend', id: 'pv-pend' }, ...pendContent()),
       h('div', { class: 'pv-side' },
         h('div', { class: 'row', style: { gap: '8px', alignItems: 'center', flexWrap: 'wrap' } }, faceImg(sel.id, { class: 'face', style: { cursor: 'default' } }),
           h('div', null, h('b', null, sure(sel) ? sel.name : 'unnamed'), h('div', { class: 'small muted' }, `${how} \u00b7 face score ${sel.score} \u00b7 ${sel.px} px` + (sel.px < 40 ? ' (too small to match reliably)' : '')), guess),
@@ -228,9 +275,15 @@
     };
     const section = (title, note, items, actions) => items.length ? h('div', { style: { marginTop: '12px' } },
       h('h3', { style: { margin: '0 0 4px' } }, title), note ? h('p', { class: 'small muted', style: { margin: '0 0 6px' } }, note) : null,
-      h('div', { class: 'faces' }, items.map(it => h('div', { class: 'facebox' }, faceWithPhoto(it.face, { title: it.score !== undefined ? `similarity ${it.score}` : '' }),
-        h('div', { class: 'face-actions' }, actions(it)))))) : null;
-    const btn = (label, title, fn) => h('button', { class: 'btn tiny', title, disabled: ro, on: { click: fn } }, label);
+      h('div', { class: 'faces' }, items.map(it => {
+        const tile = h('div', { class: 'facebox' + (pending.has(it.face) ? ' ' + Q_CLASS[pending.get(it.face).op] : '') });
+        tile.append(faceWithPhoto(it.face, { title: it.score !== undefined ? `similarity ${it.score}` : '' }), h('div', { class: 'face-actions' }, actions(it, tile)));
+        return tile;
+      }))) : null;
+    const btn = (label, title, fn, op) => h('button', { class: 'btn tiny' + (op && pending.has(op.face) && pending.get(op.face).op === op.op ? ' on' : ''), title, 'data-op': op ? op.op : null, disabled: ro, on: { click: fn } }, label);
+    // a tick or a cross is queued, not saved: the face shows what it will become and "Save changes" applies them all
+    const yes = (it, tile, why) => btn('\u2713', why, () => queue('confirm', p.id, it.face, tile), { op: 'confirm', face: it.face });
+    const no = (it, tile, why) => btn('\u2715', why, () => queue('reject', p.id, it.face, tile), { op: 'reject', face: it.face });
     fill(refs.person,
       h('div', { class: 'card-head' }, h('h2', null, p.name), h('span', { class: 'muted small' }, `${num(p.photos)} photograph(s)`),
         h('div', { class: 'spacer' }, h('button', { class: 'btn small', on: { click: () => loadPerson(null) } }, 'Close'))),
@@ -241,12 +294,12 @@
         h('button', { class: 'btn small danger', disabled: ro, on: { click: del } }, 'Forget')),
       h('p', { class: 'small muted', style: { margin: '6px 0 0' } }, 'A search can use any of these names; give yourself “me” to search “me and Samidha”. Giving the name of another person merges the two.'),
       section('Is this ' + p.name + '?', p.suggested_total ? `${num(p.suggested_total)} face(s) look somewhat like ${p.name}, the closest first.` : '', p.suggested,
-        it => [btn('✓', `yes, ${p.name}`, () => post('confirm', { person: p.id, faces: [it.face] })), btn('✕', `not ${p.name}`, () => post('reject', { person: p.id, faces: [it.face] }))]),
-      p.suggested.length > 1 ? h('button', { class: 'btn small', disabled: ro, style: { marginTop: '6px' }, on: { click: () => post('confirm', { person: p.id, faces: p.suggested.map(s => s.face) }, 'Confirmed') } }, `All ${p.suggested.length} shown are ${p.name}`) : null,
+        (it, tile) => [yes(it, tile, `yes, ${p.name}`), no(it, tile, `not ${p.name}`)]),
+      p.suggested.length > 1 ? h('button', { class: 'btn small', disabled: ro, style: { marginTop: '6px' }, on: { click: () => { p.suggested.forEach(s => { if (!pending.has(s.face) || pending.get(s.face).op !== 'confirm') pending.set(s.face, { op: 'confirm', person: p.id }); }); renderPerson(); renderPendBar(); } } }, `All ${p.suggested.length} shown are ${p.name}`) : null,
       section('Matched automatically', `${num(p.auto_total)} face(s), the least sure first: ✕ the ones that are someone else.`, p.auto,
-        it => [btn('✓', `yes, ${p.name} (named by you from now on)`, () => post('confirm', { person: p.id, faces: [it.face] })), btn('✕', `not ${p.name}`, () => post('reject', { person: p.id, faces: [it.face] }))]),
+        (it, tile) => [yes(it, tile, `yes, ${p.name} (named by you from now on)`), no(it, tile, `not ${p.name}`)]),
       section('Named by you', `${num(p.labelled_total)} face(s).`, p.labelled.map(f => ({ face: f })),
-        it => [btn('✕', 'take the name off this face', () => post('unlabel', { faces: [it.face] }))]));
+        (it, tile) => [btn('\u2715', 'take the name off this face', () => queue('unlabel', p.id, it.face, tile), { op: 'unlabel', face: it.face })]));
   }
 
   /* ---- groups ---- */
@@ -279,8 +332,8 @@
       refs.setup = h('div', { class: 'card' }); refs.clusters = h('div', { class: 'card', style: { marginTop: '16px' } });
       refs.person = h('div', { class: 'card hidden', style: { marginTop: '16px' } });
       refs.people = h('div', { class: 'card' }); refs.groups = h('div', { class: 'card' });
-      refs.names = h('datalist', { id: 'people-names' });
-      root.append(h('h2', null, 'People'), refs.names, refs.setup, refs.person, h('div', { class: 'grid g2', style: { marginTop: '16px' } }, refs.people, refs.groups), refs.clusters);
+      refs.names = h('datalist', { id: 'people-names' }); refs.pendbar = h('div', { class: 'pendbar hidden', role: 'status' });
+      root.append(h('h2', null, 'People'), refs.names, refs.pendbar, refs.setup, refs.person, h('div', { class: 'grid g2', style: { marginTop: '16px' } }, refs.people, refs.groups), refs.clusters);
     },
     show() { refreshAll(); },
     tick() { if (taskActive() && ++ticks % 2 === 0) load().then(() => { if (!taskActive()) loadClusters(); }); },

@@ -283,6 +283,18 @@ function updateHeader() {
     readOnly() ? pill('read-only', 'plain') : null);
   const v = RS.state.catalog && RS.state.catalog.version;
   if (v) { $('#ver').textContent = 'v' + v; $('#ver2').textContent = 'v' + v; }
+  // a tab keeps running the scripts and styles it loaded: when the server it talks to has been updated since, say so
+  if (v && !RS.bootVersion) RS.bootVersion = v;
+  if (v && RS.bootVersion && v !== RS.bootVersion) {
+    const b = $('#banner');
+    if (!b.dataset.stale) {
+      b.dataset.stale = '1';
+      const a = h('a', { href: '#', on: { click: e => { e.preventDefault(); location.reload(); } } }, 'Reload this page');
+      b.replaceChildren(`The dashboard was updated (${RS.bootVersion} \u2192 ${v}) and this page is still the old one: some of it may look or behave out of date. `, a);
+      b.classList.remove('hidden');
+    }
+    return;
+  }
   const iv = RS.state.catalog && RS.state.catalog.installed_version;
   if (iv && v && iv !== v && RS.conn === 'live') {
     showBanner(`rag-search ${iv} is installed, but this dashboard is still running ${v}. Restart it: run "rag-search ui" in a terminal (it replaces the old one), then reload this page.`);

@@ -187,6 +187,20 @@ const CV = (function () {
       legend(GRADES.map(([g, c, name]) => [c, name]).concat([['run', 'being converted']]), 'Bars: documents converted, by how completely each was understood;'));
   }
 
+  // What the coverage report (core/coverage.py, loaded by the Indexing tab) says about picture vectors, for a run that made none:
+  // either every photograph has one already, or some do not and why that may be.
+  let coverage = null;
+  const setCoverage = r => { coverage = r; };
+  function pictureNote(nP) {
+    if (!nP) return null;
+    const s = coverage && coverage.total && coverage.total.steps.pictures, why = coverage && (coverage.notes || {}).pictures;
+    if (why) return why;
+    if (!s) return 'none made in this run: a photograph gets its picture vector when it has none for the current picture model';
+    return s.expected > s.done
+      ? `${num(s.expected - s.done)} photograph${s.expected - s.done === 1 ? '' : 's'} still without a picture vector: the step runs after the text vectors (is the picture model downloaded? Models tab)`
+      : `none to make in this run: every photograph already has its picture vector (${num(s.done)} of ${num(s.expected)})`;
+  }
+
   function tracks(t, steps, kinds) {
     const S = k => steps[k] || {}, ro = S('sniff').routes || {}, sniffed = S('sniff').n || 0;
     const P = kinds[PHOTO] || { n: 0, found: {} }, pf = P.found || {}, nP = P.n, pos = pf.position || 0;
@@ -228,7 +242,7 @@ const CV = (function () {
             sumOf(dsrc) ? `by the model ${num(dsrc.model || 0)} · from the cache ${num(dsrc.cache || 0)}` + (dsrc.none ? ` · missing ${num(dsrc.none)} (a later run fills them in)` : '') : null),
           tnode('5.2', 'Picture vectors', 'gpu', pv.n ? `${num(pvhow.made || 0)} photograph${pvhow.made === 1 ? '' : 's'} embedded by their picture` : '', null,
             'After the text vectors, each photograph gets one vector from its pixels (SigLIP 2), so a query finds what a photograph shows even when its description does not say it. Kept with a key of its own: a new picture model, or the first run after picture vectors exist, embeds only the photographs.',
-            pv.n ? (pvscope['indexed earlier'] ? `of which indexed earlier ${num(pvscope['indexed earlier'])}` : 'all from this run') + (pvhow['could not be opened'] ? ` · could not be opened ${num(pvhow['could not be opened'])}` : '') : (nP ? 'none yet: the step runs after the text vectors, once the picture model is downloaded (Models tab)' : null))], caught ? `+ ${num(caught)} indexed earlier, checked for faces and picture vectors` : null),
+            pv.n ? (pvscope['indexed earlier'] ? `of which indexed earlier ${num(pvscope['indexed earlier'])}` : 'all from this run') + (pvhow['could not be opened'] ? ` · could not be opened ${num(pvhow['could not be opened'])}` : '') : pictureNote(nP))], caught ? `+ ${num(caught)} indexed earlier, checked for faces and picture vectors` : null),
         track('video', num(nV || ro.video || 0), [
           tnode('3.11', 'Video details', 'cpu', nV ? `a time for ${num(vf.time || 0)} of ${num(nV)}` : '', nV ? pctOf(vf.time || 0, nV) : null,
             'Time, GPS position, camera, size and duration, read from the QuickTime / MP4 header (an .avi: size and duration only); the frames and the sound are not read. The bar: the share with a time.',
@@ -562,5 +576,5 @@ const CV = (function () {
       e.error_count ? h('div', { class: 'small', style: { color: 'var(--bad)' } }, `${e.error_count} file(s) could not be profiled: ` + (e.errors || []).slice(0, 3).map(x => x.src).join(', ')) : null);
   }
 
-  return { label, branchTitle, strip, branchChips, outcomeChips, bands, runwayBar, RUNWAYS, flow, overview, pipe, kindsSummary, legend, lanes, tiles, costText, hw, open, openSummary, estimateView, sortedBranches, live, understood, BRANCHES, OUTCOMES, KINDS, GRADES, trackOf, gradeCls, gradeName };
+  return { setCoverage, label, branchTitle, strip, branchChips, outcomeChips, bands, runwayBar, RUNWAYS, flow, overview, pipe, kindsSummary, legend, lanes, tiles, costText, hw, open, openSummary, estimateView, sortedBranches, live, understood, BRANCHES, OUTCOMES, KINDS, GRADES, trackOf, gradeCls, gradeName };
 })();
