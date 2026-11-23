@@ -114,7 +114,7 @@
     const envOf = name => { const key = { RAG_SEARCH_LAYER_FILL: 'indexer.layer_fill', RAG_SEARCH_OCR_FIRST: 'indexer.ocr_first', RAG_SEARCH_RESIDUE: 'indexer.residue' }[name]; const r = (stageOf('3.2').settings || []).find(x => x.id === key); return r ? String(r.value || '') : ''; };
     const lane = (k, y, title, l1, l2, hwk) => [
       dbox(420, y, 340, 70, title, [l1, l2], k === 'd' ? 'hl' : (rw[k] ? 'hl' : null)), hwchip(718, y + 6, hwk)];
-    return dsvg('idx', 1180, 1305,
+    return dsvg('idx', 1180, 1325,
       'The indexing pipeline as one numbered list. 1 Discover lists the files of every collection (formats that are not read, and the video of a Live Photo, are counted and left out); 2 Fingerprint skips unchanged documents (an unchanged photograph still gets faces, a picture vector or a description it lacks); 3 Convert turns a file into page-marked Markdown. Documents go page by page through 3.1 Profile looks at every page, 3.2 Read sends each page down one of four lanes (a: docling on the text layer, b: OCR for a clean scan, c: the text layer plus the document reader on pictures, d: the document reader for every other scan and photo; a page a cheaper lane doubts goes on to d), 3.3 Gate checks the result, 3.4 Repair re-reads a suspect table cell of a scanned page, 3.5 Reconcile joins tables that run across pages. 3.0 Sniff decides, from the file itself and before any page is looked at, what kind of file this is: a photograph (an image with camera data and little text) takes 3.6 Photo details, 3.7 Locate, 3.9 Faces and 3.10 Describe and is never read by the document reader, a video takes 3.11 Video details and 3.7 Locate, a Google Maps Timeline .json takes 3.8 Timeline and 3.7 Locate, anything else, a photographed page too, goes to 3.1 Profile and the lanes. 3.7 Locate gives every position its area, town and places nearby from the installed map data; 3.9 Faces finds and fingerprints the faces for the People store; 3.10 Describe, after it and before 4 Chunk, writes a machine-written description of the photograph. Then 4 Chunk, 5 Embed with the model loaded once per run (5.2 Picture vectors: one more vector per photograph, from its pixels), 6 Write, 7 Merge per collection and 8 Publish.',
       dhead(20, 24, 'PER RUN, THEN PER DOCUMENT'),
       dbox(20, 40, 170, 90, '1 · Discover', ['registered folders', 'and imports; a Live', 'Photo video is left out'], 'store'),
@@ -125,14 +125,14 @@
       dbox(880, 40, 280, 90, 'One numbered pipeline', ['the numbers are the same in the Indexing', 'tab, Settings, page traces and logs', 'CPU outlined · GPU dark'], 'store'),
       E('M190,85 H236', 'each file', 213, 79), E('M420,85 H451', null), E('M575,85 H636', 'yes', 605, 79), E('M515,130 V166', 'no', 523, 154, 'start'),
       // 3 · Convert: the container
-      sv('rect', { x: 20, y: 170, width: 1140, height: 862, rx: 14, class: 'grp' }),
+      sv('rect', { x: 20, y: 170, width: 1140, height: 882, rx: 14, class: 'grp' }),
       sv('text', { x: 36, y: 192, class: 'hd' }, '3 · CONVERT · several documents side by side · 3.0 Sniff decides what kind of file this is: pages go lane by lane; photographs, videos and Timelines take their own path'),
       // 3.0 Sniff: decided from the file itself, before any page is looked at
       dbox(40, 204, 430, 92, '3.0 · Sniff', ['what kind of file is this? decided before any page is read:', 'a video · a Timeline .json · an image with camera data + text check', (nPhoto || nTl || nVid) ? `this run: ${num(nPhoto)} photographs · ${num(nVid)} videos · ${num(nTl)} Timelines` : 'a photograph has little text · a page of text is a document'], 'hl'), hwchip(428, 210, 'cpu'),
       E('M115,296 V426', 'pages', 123, 350, 'start'),
       E('M40,250 H30 V722 H60 V732', 'a photograph', 66, 714, 'start'),
       E('M30,722 V848 H60 V858', 'a Timeline .json', 66, 840, 'start'),
-      E('M30,848 V936 H60 V946', 'a video', 66, 928, 'start'),
+      E('M30,848 V956 H60 V966', 'a video', 66, 950, 'start'),
       dhead(150, 322, 'PAGES · documents, scans and photographed pages · 3.1–3.5'),
       sv('g', { transform: 'translate(0,130)' },
       dbox(40, 300, 150, 76, '3.1 · Profile', [t.pages ? `${num(t.pages)} pages this run` : 'text layer? scan? photo?', 'pictures · ink · script'], 'hl'), hwchip(148, 306, 'cpu'),
@@ -166,13 +166,13 @@
       E('M230,744 H249', null),
       dbox(498, 730, 250, 64, 'Map data', ['GeoNames · Overture areas, places', 'downloaded only on request'], 'store'),
       E('M498,754 H479', 'read', 488, 746),
-      dbox(40, 800, 190, 64, '3.11 · Video details', ['time + zone · GPS · camera', nVid ? `${num(nVid)} videos this run` : 'size · duration (not the frames)'], 'hl'), hwchip(188, 806, 'cpu'),
-      E('M230,832 H364 V766', null),
+      dbox(40, 820, 190, 64, '3.11 · Video details', ['time + zone · GPS · camera', nVid ? `${num(nVid)} videos this run` : 'size · duration'], 'hl'), hwchip(188, 826, 'cpu'),
+      E('M230,852 H364 V766', null),
       dbox(944, 586, 206, 148, 'Catch-up pass', ['after a run publishes:', 'photographs left undescribed', 'or described by an older', 'model/prompt are described', 'in the background; then a', 'short run embeds them'], 'dim'),
       E('M944,640 H925', null, null, null, null, true)),
-      sv('text', { x: 126, y: 1054, class: 's' }, 'page-marked Markdown + a trace of every page'), E('M115,1032 V1086', null),
+      sv('text', { x: 126, y: 1074, class: 's' }, 'page-marked Markdown + a trace of every page'), E('M115,1052 V1106', null),
       // 4 .. 8
-      sv('g', { transform: 'translate(0,515)' },
+      sv('g', { transform: 'translate(0,535)' },
       dhead(132, 560, 'THEN: 4 PER DOCUMENT · 5 ONCE PER RUN, MODEL LOADED A SINGLE TIME · 6 PER DOCUMENT · 7–8 PER COLLECTION'),
       dbox(20, 576, 190, 100, '4 · Chunk', [`~${c.size} tokens, ~${c.overlap} overlap`, 'never across a page', 'page + heading kept'], null), hwchip(168, 582, 'cpu'),
       dbox(257, 576, 190, 100, '5 · Embed', [shortName(e.name), `${e.dim || 1024}-d vectors, batch ${e.batch}`, `≤ ${e.max_seq} tokens per chunk`], 'hl'), hwchip(405, 582, 'gpu'),
