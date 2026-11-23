@@ -1274,12 +1274,13 @@ standing as BM25 and the text vectors.
   a photograph whose line says another number (or has none and has faces) is made again from what is known, with no model run,
   and embedded in the same run (`indexer._faces_line_differs`, through the path of a missing description).
 
-* **A picture with no camera data and no text is a photograph** (`indexer._sniff`; outcome version 3): a picture saved from a
-  message or a web page has no EXIF, and with no text in it the document reader found nothing, so it was not indexed at all (38
-  in one collection). It now takes the photograph's way (3.9 Faces, 3.10 Describe, 5.2 Picture vector); its Photo details section
-  is made from what those steps found, under a heading and with the picture's size (`photo.headed`), and a picture of which
-  nothing is known is still a genuine "no text". A picture with text, or one the text check cannot look at, is read as a page as
-  before.
+* **A picture with no camera data and little text is a photograph** (`indexer._sniff`; outcome version 4): a picture saved from a
+  message or a web page has no EXIF, and with little or no text in it the document reader found nothing, so it was not indexed at
+  all (38 in one collection). It now takes the photograph's way (3.9 Faces, 3.10 Describe, 5.2 Picture vector) when the quick
+  text check finds under a page of text (200 letters and digits, as for a picture with camera data); its Photo details section is
+  made from what those steps found and the little text it has, under a heading and with the picture's size (`photo.headed`), and
+  a picture of which nothing is known is still a genuine "no text". A picture with a page of text, or one the text check cannot
+  look at, is read as a page as before.
 * **Rescanning faces** (`rag-search people rescan [--limit N]`, `faces.rescan`): the photographs the first, one-size finder looked
   at are looked at again at two sizes and only the faces it missed are added (a box that overlaps a stored face is that face), so
   every stored face keeps its id, fingerprint and name; the photograph is then marked as looked at by the two-size finder. About a

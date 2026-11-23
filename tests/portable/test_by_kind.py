@@ -226,10 +226,14 @@ class NoCameraDataTests(IndexedPhotoTests):
         Image.new("RGB", (32, 24), "grey").save(src)
         with mock.patch.object(photo, "visible_text", return_value=""):
             self.assertEqual(indexer._sniff(src, "image", False, {}, False, "x", None)[0::2], ("photograph", ""))
-        with mock.patch.object(photo, "visible_text", return_value="TOTAL 12.50 thank you for shopping"):
-            self.assertEqual(indexer._sniff(src, "image", False, {}, False, "y", None)[0], "pages")      # a receipt is a page
+        with mock.patch.object(photo, "visible_text", return_value="a line of writing " * 20):
+            self.assertEqual(indexer._sniff(src, "image", False, {}, False, "y", None)[0], "pages")      # a page of text is a page
+        with mock.patch.object(photo, "visible_text", return_value="SALE 50 percent off"):
+            self.assertEqual(indexer._sniff(src, "image", False, {}, False, "w", None)[0], "photograph")  # a little writing is not
         with mock.patch.object(photo, "visible_text", return_value=None):
             self.assertEqual(indexer._sniff(src, "image", False, {}, False, "z", None)[0], "pages")      # no text check here: as before
         text = photo.headed("\n- Looks like (model-written): a lake\n- Faces detected: 0\n", src)
         self.assertEqual(text, "## Photo details\n\n- Size: 32 x 24 pixels\n- Looks like (model-written): a lake\n- Faces detected: 0\n")
         self.assertEqual(photo.headed("", src), "")
+        self.assertEqual(photo.headed("", src, "SALE  50 percent off"),
+                         "## Photo details\n\n- Size: 32 x 24 pixels\n- Text in the picture: SALE 50 percent off\n")

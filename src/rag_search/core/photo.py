@@ -284,10 +284,14 @@ def _carry(old: str, new: str) -> str:
     return head + "\n" + "\n".join(kept) + (sep + tail if sep else "") + "\n"
 
 
-def headed(section: str, src: Path) -> str:
-    """A Photo details section for a picture with no camera data, from the lines the faces and describe steps added: a heading, the
-    picture's size (a fact of the file) and those lines, so the section is a section and not loose lines."""
+def headed(section: str, src: Path, text: str = "") -> str:
+    """A Photo details section for a picture with no camera data, from the lines the faces and describe steps added and the little
+    text found in the picture: a heading, the picture's size (a fact of the file) and those lines, so the section is a section and
+    not loose lines."""
     lines = [ln for ln in section.splitlines() if ln.startswith("- ")]
+    text = " ".join(text.split())
+    if sum(ch.isalpha() for ch in text) >= MIN_LETTERS:            # the little text the picture has, as a photograph's section keeps it
+        lines.insert(0, f"- {_SEEN} " + (text if len(text) <= TEXT_LINE_CHARS else text[:TEXT_LINE_CHARS].rstrip() + " ..."))
     if not lines:
         return ""
     try:
