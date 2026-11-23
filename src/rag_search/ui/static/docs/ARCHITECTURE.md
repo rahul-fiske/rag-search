@@ -1167,6 +1167,25 @@ who      every other face -> the nearest labelled person, when clearly theirs   
   photograph (`people`), the reply says what was understood (`people: {people, groups, photos, searched_for}`), and
   `rag_read_document` adds `people` to a photograph.
 
+* **Two sizes, and what is kept** (`faces.Finder.faces`): a photograph is looked at at 1600 and at 2400 px (a profile face, or one in
+  the dark, is often found at one size and missed at the other) and the boxes of one face are merged (`MERGE_IOU`, the surest
+  box wins). A box is kept from a YuNet score of 0.7 (`FIND_SCORE`), but only a face from 0.8 (`SURE_SCORE`, 0.85 for naming
+  and asking, `people.MIN_SCORE`) is ever matched, suggested or asked about: the unsure ones, about half of them real
+  (profile views, partly hidden faces) and half toys, feet and ears, appear only in the photograph viewer, drawn dashed, to be
+  named by hand. A photograph looked at by the first, one-size finder keeps its faces (`photos.detector` says which finder);
+  new and not-yet-looked-at photographs get the two-size one.
+* **The photograph viewer** (People tab, the search button on every face; `/api/people/photo`, `/api/people/photo/faces`,
+  `people.photo_of_face`): the whole photograph upright, a box on every face found in it (named, matched, weak match, nobody;
+  dashed when unsure), a face picked by clicking its box and named or unnamed there, and *Add a face the model missed*: drag a
+  box, and the face is fingerprinted from a crop lined up as if it faced the camera (`faces.face_in_box`, rougher than a
+  found face's fingerprint; its score is 1.0) and added to the photograph (`/api/people/face/add`). Only a file that is still
+  inside a registered source folder is ever shown.
+* **A photograph whose section was split** (fixed in 4.0.0.dev36): an earlier version wrote the description lines after a blank
+  line inside the "Photo details" list. The section ended at the blank line, so the photograph looked like a *photographed
+  page* and was never looked at for faces (about 4,700 of 20,000 in one collection). `photo._BLOCK_RE` now takes a blank line
+  before one of the labels written by the describe and faces steps (`_KEEP`) as part of the section, and the next run looks at
+  those photographs for faces without converting them again.
+
 ### 5.3d Picture vectors (`core/pictures.py`, steps 5.2 and S3b)
 
 A photograph's description says what the describing model chose to say; a query can ask for what it left out (the

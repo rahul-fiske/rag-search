@@ -118,7 +118,7 @@ def work_out(store: faces.Store) -> Who:
             s2 = float(best[i, order[i, 1]]) if len(people) > 1 else -1.0
             if s1 >= MATCH and s1 - s2 >= MARGIN and good[i]:
                 who.person[f] = (people[k1], "auto", round(s1, 3))
-            elif s1 >= SUGGEST:
+            elif s1 >= SUGGEST and score[i] >= faces.SURE_SCORE:     # a box the finder is unsure of is only ever named by hand
                 who.suggest[f] = (people[k1], round(s1, 3))
     who.unknown = [int(f) for i, f in enumerate(ids) if good[i] and int(f) not in who.person]
     return who

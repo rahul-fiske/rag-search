@@ -24,6 +24,27 @@
     if (!viewer.open) viewer.showModal();
     await paintPhoto(faceId, faceId);
   }
+  // drag a box over a face the model did not find; it becomes a face of the photograph that you can name
+  function drawBox(btn, faceId, r) {
+    const stage = viewer.querySelector('.pv-stage'), hint = viewer.querySelector('#pv-hint');
+    if (!stage) return;
+    btn.disabled = true; hint.textContent = 'Drag a box around the face on the photograph.'; stage.classList.add('drawing');
+    let start = null, rect = null;
+    const at = e => { const b = stage.getBoundingClientRect(); return [Math.min(1, Math.max(0, (e.clientX - b.left) / b.width)), Math.min(1, Math.max(0, (e.clientY - b.top) / b.height))]; };
+    const down = e => { e.preventDefault(); start = at(e); rect = h('div', { class: 'pv-box sel pv-new' }); stage.append(rect); };
+    const move = e => { if (!start) return; const p = at(e), x = Math.min(start[0], p[0]), y = Math.min(start[1], p[1]);
+      Object.assign(rect.style, { left: 100 * x + '%', top: 100 * y + '%', width: 100 * Math.abs(p[0] - start[0]) + '%', height: 100 * Math.abs(p[1] - start[1]) + '%' }); };
+    const done = async e => {
+      stage.removeEventListener('mousedown', down); window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', done); stage.classList.remove('drawing');
+      if (!start) { await paintPhoto(faceId, faceId); return; }
+      const p = at(e), x = Math.min(start[0], p[0]), y = Math.min(start[1], p[1]), w = Math.abs(p[0] - start[0]), hh = Math.abs(p[1] - start[1]);
+      if (w < 0.02 || hh < 0.02) { toast('That box is too small: drag around the whole face', 'bad'); await paintPhoto(faceId, faceId); return; }
+      const res = await api('people/face/add', { face: faceId, x, y, w, h: hh });
+      if (res.ok === false) { toast(res.error || 'could not add the face', 'bad'); await paintPhoto(faceId, faceId); return; }
+      await refreshAll(); await paintPhoto(faceId, res.face);
+    };
+    stage.addEventListener('mousedown', down); window.addEventListener('mousemove', move); window.addEventListener('mouseup', done);
+  }
   const boxColour = f => f.how === 'you' ? 'var(--ok)' : f.how === 'auto' ? 'var(--accent)' : f.how === 'suggested' ? 'var(--warn)' : 'var(--muted)';
   async function paintPhoto(faceId, selected) {
     const r = await api('people/photo/faces?face=' + faceId);
@@ -32,7 +53,7 @@
     const faces = r.faces || [], ro = readOnly();
     const sel = faces.find(f => f.id === selected) || faces.find(f => f.id === faceId) || faces[0];
     const pick = id => paintPhoto(faceId, id);
-    const boxes = faces.map(f => h('div', { class: 'pv-box' + (f.id === sel.id ? ' sel' : ''), title: (f.name ? f.name : 'unnamed') + ' \u00b7 score ' + f.score,
+    const boxes = faces.map(f => h('div', { class: 'pv-box' + (f.id === sel.id ? ' sel' : '') + (f.score < 0.8 ? ' weak' : ''), title: (f.name ? f.name : 'unnamed') + ' \u00b7 score ' + f.score + (f.score < 0.8 ? ' (the model is unsure it is a face)' : ''),
       style: { left: (100 * f.x) + '%', top: (100 * f.y) + '%', width: (100 * f.w) + '%', height: (100 * f.h) + '%', borderColor: boxColour(f) },
       on: { click: () => pick(f.id) } }, h('span', { class: 'pv-tag', style: { background: boxColour(f) } }, f.name || '?')));
     const input = h('input', { type: 'text', list: 'people-names', placeholder: 'Name (new or existing)', disabled: ro, style: { width: '200px' } });
@@ -54,7 +75,11 @@
           h('div', null, h('b', null, sel.name || 'unnamed'), h('div', { class: 'small muted' }, `${how} \u00b7 face score ${sel.score} \u00b7 ${sel.px} px`)),
           input, h('button', { class: 'btn small primary', disabled: ro, on: { click: name } }, sel.how === 'you' ? 'Rename face' : 'Name'),
           sel.how === 'you' ? h('button', { class: 'btn small', disabled: ro, on: { click: unname } }, 'Take the name off') : null),
-        h('div', { class: 'small muted', style: { marginTop: '6px' } }, 'Click a box to pick that face. A face the model did not find has no box.',
+        h('div', { class: 'row', style: { gap: '8px', marginTop: '8px', alignItems: 'center' } },
+          h('button', { class: 'btn small', disabled: ro || r.available === false, id: 'pv-draw',
+            title: 'then drag a box around the face on the photograph', on: { click: e => drawBox(e.currentTarget, faceId, r) } }, 'Add a face the model missed'),
+          h('span', { class: 'small muted', id: 'pv-hint' }, 'Dashed boxes: the model is unsure it is a face.')),
+        h('div', { class: 'small muted', style: { marginTop: '6px' } }, 'Click a box to pick that face.',
           '  ', h('span', { class: 'pv-key' }, h('i', { style: { background: 'var(--ok)' } }), 'named by you'), h('span', { class: 'pv-key' }, h('i', { style: { background: 'var(--accent)' } }), 'matched'),
           h('span', { class: 'pv-key' }, h('i', { style: { background: 'var(--warn)' } }), 'weak match'), h('span', { class: 'pv-key' }, h('i', { style: { background: 'var(--muted)' } }), 'nobody'))));
   }

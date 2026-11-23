@@ -46,8 +46,13 @@ MODEL_FILES = {   # name: (file, url, sha256, bytes)
     RECOGNIZER: ("face_recognition_sface_2021dec.onnx", _ZOO + "face_recognition_sface/face_recognition_sface_2021dec.onnx",
                  "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79", 38696353),
 }
-LONG_SIDE = 1600            # pixels: faces are looked for in the photograph at this size
-FIND_SCORE = 0.8            # YuNet's confidence for a face to be kept
+LONG_SIDE = 1600            # pixels: faces are looked for in the photograph at this size ...
+SCALES = (1600, 2400)       # ... and at these (a profile face, or a face in the dark, is often found at one size and not the other)
+FIND_SCORE = 0.7            # YuNet's confidence for a box to be kept; a face under SURE_SCORE is shown in the photograph
+                            # viewer (to name by hand) but is never matched or asked about (people.py)
+SURE_SCORE = 0.8            # the confidence the first version of the finder kept faces at
+MERGE_IOU = 0.4             # boxes of the same face found at two sizes overlap at least this much
+DETECTOR_MS = DETECTOR + "+ms"   # the finder that looks at two sizes (what a photograph looked at by it is marked with)
 THUMB = 112                 # pixels: the small picture of each face the People tab shows
 DIM = 128
 LINE = "Faces detected:"       # the line of the photograph's details that says how many were found
@@ -131,23 +136,61 @@ class Finder:
         self.recognizer = cv2.FaceRecognizerSF.create(str(d / MODEL_FILES[RECOGNIZER][0]), "")
 
     def faces(self, src: Path) -> list[dict[str, Any]]:
-        """Each face in *src*: its box as a fraction of the upright picture (x, y, w, h), YuNet's score, its size in
-        pixels (the shorter side, in the picture as searched), its fingerprint (unit length) and a small JPEG of it."""
-        im = load_upright(src)
-        rgb = np.asarray(im)
-        bgr = np.ascontiguousarray(rgb[:, :, ::-1])
-        h, w = bgr.shape[:2]
-        self.detector.setInputSize((w, h))
-        _ok, dets = self.detector.detect(bgr)
-        out = []
-        for det in (dets if dets is not None else []):
+        """Each face in *src*, looked for at two sizes (``SCALES``) with the boxes of one face merged: its box as a fraction
+        of the upright picture (x, y, w, h), YuNet's score, its size in pixels (the shorter side, in the picture it was found
+        in), its fingerprint (unit length) and a small JPEG of it."""
+        found: list[tuple[float, float, float, float, float, Any, Any, Any]] = []     # fractions, score, detection, picture, bgr
+        done: set[tuple[int, int]] = set()
+        for side in SCALES:
+            im = load_upright(src, side)
+            if im.size in done:                  # a photograph smaller than the larger size: one look is all there is
+                continue
+            done.add(im.size)
+            bgr = np.ascontiguousarray(np.asarray(im)[:, :, ::-1])
+            h, w = bgr.shape[:2]
+            self.detector.setInputSize((w, h))
+            _ok, dets = self.detector.detect(bgr)
+            for det in (dets if dets is not None else []):
+                found.append((float(det[0]) / w, float(det[1]) / h, float(det[2]) / w, float(det[3]) / h, float(det[-1]), det, im, bgr))
+        out: list[dict[str, Any]] = []
+        kept: list[tuple[float, float, float, float]] = []
+        for fx, fy, fw, fh, score, det, im, bgr in sorted(found, key=lambda f: -f[4]):    # the surest box of each face wins
+            if any(_iou((fx, fy, fw, fh), k) >= MERGE_IOU for k in kept):
+                continue
+            kept.append((fx, fy, fw, fh))
             aligned = self.recognizer.alignCrop(bgr, det)
             vec = np.asarray(self.recognizer.feature(aligned), dtype=np.float32).reshape(-1)
             vec /= float(np.linalg.norm(vec)) or 1.0
-            x, y, fw, fh = (float(v) for v in det[:4])
-            out.append({"x": max(0.0, x / w), "y": max(0.0, y / h), "w": fw / w, "h": fh / h, "score": float(det[-1]),
-                        "px": int(min(fw, fh)), "vec": vec, "thumb": _thumb(im, x, y, fw, fh)})
-        return out
+            x, y, bw, bh = (float(v) for v in det[:4])
+            out.append({"x": max(0.0, fx), "y": max(0.0, fy), "w": fw, "h": fh, "score": score,
+                        "px": int(min(bw, bh)), "vec": vec, "thumb": _thumb(im, x, y, bw, bh)})
+        return sorted(out, key=lambda f: f["x"])
+
+
+def face_in_box(paths: Paths, src: Path, x: float, y: float, w: float, h: float) -> dict[str, Any]:
+    """A face you drew a box around (fractions of the upright picture): fingerprinted from a crop lined up as if it faced the
+    camera -- the finder's five points are not known for a box -- so its fingerprint is rougher than a found face's.  Its score
+    is 1.0: you said it is a face."""
+    f = finder(paths)
+    im = load_upright(src, SCALES[-1])
+    bgr = np.ascontiguousarray(np.asarray(im)[:, :, ::-1])
+    ph, pw = bgr.shape[:2]
+    bx, by, bw, bh = x * pw, y * ph, w * pw, h * ph
+    det = np.array([bx, by, bw, bh, bx + .3 * bw, by + .38 * bh, bx + .7 * bw, by + .38 * bh, bx + .5 * bw, by + .6 * bh,
+                    bx + .35 * bw, by + .8 * bh, bx + .65 * bw, by + .8 * bh, 1.0], dtype=np.float32)
+    with _FINDER_LOCK:
+        aligned = f.recognizer.alignCrop(bgr, det)
+        vec = np.asarray(f.recognizer.feature(aligned), dtype=np.float32).reshape(-1)
+    vec /= float(np.linalg.norm(vec)) or 1.0
+    return {"x": x, "y": y, "w": w, "h": h, "score": 1.0, "px": int(min(bw, bh)), "vec": vec, "thumb": _thumb(im, bx, by, bw, bh)}
+
+
+def _iou(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
+    """Overlap of two boxes (x, y, w, h) over their union."""
+    ix = max(0.0, min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    return inter / (a[2] * a[3] + b[2] * b[3] - inter + 1e-9)
 
 
 def _thumb(im: Any, x: float, y: float, w: float, h: float) -> bytes:
@@ -251,7 +294,7 @@ class Store:
 
     # -- faces (facts) -------------------------------------------------------
     def photo_faces(self, sha: str) -> int | None:
-        row = self.con.execute("SELECT faces FROM photos WHERE sha = ? AND detector = ?", (sha, DETECTOR)).fetchone()
+        row = self.con.execute("SELECT faces FROM photos WHERE sha = ? AND detector IN (?, ?)", (sha, DETECTOR, DETECTOR_MS)).fetchone()
         return None if row is None else int(row[0])
 
     def seen_at(self, sha: str, src: Path) -> None:
@@ -269,7 +312,19 @@ class Store:
                 self.con.execute("INSERT INTO vectors (face, model, vec) VALUES (?,?,?)",
                                  (cur.lastrowid, model, np.asarray(f["vec"], dtype=np.float32).tobytes()))
             self.con.execute("INSERT INTO photos (sha, src, detector, faces, ts) VALUES (?,?,?,?,?)",
-                             (sha, str(src), DETECTOR, len(found), time.time()))
+                             (sha, str(src), DETECTOR_MS, len(found), time.time()))
+
+    def add_face(self, sha: str, found: dict[str, Any], model: str = RECOGNIZER) -> int:
+        """One more face in a photograph that was looked at (one you drew a box around): the id of the new face."""
+        with self.con:
+            if not self.con.execute("SELECT 1 FROM photos WHERE sha = ?", (sha,)).fetchone():
+                raise StoreError("that photograph has not been looked at")
+            cur = self.con.execute("INSERT INTO faces (sha, x, y, w, h, score, px, thumb) VALUES (?,?,?,?,?,?,?,?)",
+                                   (sha, found["x"], found["y"], found["w"], found["h"], found["score"], found["px"], found.get("thumb")))
+            self.con.execute("INSERT INTO vectors (face, model, vec) VALUES (?,?,?)",
+                             (cur.lastrowid, model, np.asarray(found["vec"], dtype=np.float32).tobytes()))
+            self.con.execute("UPDATE photos SET faces = faces + 1 WHERE sha = ?", (sha,))
+            return int(cur.lastrowid)
 
     def thumb(self, face: int) -> bytes | None:
         row = self.con.execute("SELECT thumb FROM faces WHERE id = ?", (face,)).fetchone()

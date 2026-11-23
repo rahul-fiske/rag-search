@@ -962,6 +962,28 @@ class Handler(BaseHTTPRequestHandler):
         def text(key: str) -> str:
             v = body.get(key)
             return v if isinstance(v, str) else ""
+        if action == "face/add":                          # a face the model missed: a box drawn on the photograph
+            from ..core import people
+
+            found = people.photo_of_face(paths, int(body.get("face") or 0))
+            box = [body.get(k) for k in ("x", "y", "w", "h")]
+            if found is None or not all(isinstance(v, (int, float)) for v in box):
+                return self._error(400, "expected a face of the photograph and a box (x, y, w, h)")
+            x, y, w, h = (float(v) for v in box)
+            if not (0 <= x < 1 and 0 <= y < 1 and 0.01 <= w <= 1 and 0.01 <= h <= 1 and x + w <= 1.001 and y + h <= 1.001):
+                return self._error(400, "the box is outside the photograph or too small")
+            src = people.source_file(paths, found["src"])
+            if src is None:
+                return self._error(404, "the photograph is not in a source folder any more")
+            if faces.available(paths):
+                return self._error(409, faces.available(paths))
+            try:
+                one = faces.face_in_box(paths, src, x, y, w, h)
+                with faces.Store(paths) as st:
+                    new = st.add_face(found["sha"], one)
+            except (faces.StoreError, OSError, ValueError) as exc:
+                return self._error(400, str(exc))
+            return self._json({"ok": True, "face": new})
         try:
             with faces.Store(paths) as st:
                 if action == "name":                       # these faces are this person (a new one when the name is new)

@@ -176,7 +176,7 @@ INDEXING: tuple[Stage, ...] = (
           "plain structured text",
           optional=True),
     Stage("3.9", "faces", "Faces", DOCUMENT, CPU,
-          "a photograph's faces are found (OpenCV YuNet, five points on each) and fingerprinted (SFace, 128 numbers) after 3.7 Locate; "
+          "a photograph's faces are found (OpenCV YuNet at two sizes, five points on each) and fingerprinted (SFace, 128 numbers) after 3.7 Locate; "
           "the count is a line of its details and each face goes to the People store (`core/faces.py`, never into the Markdown or "
           "the index), once per photograph checksum. A photograph indexed before its faces were found is looked at without being "
           "converted or embedded again, so the first run after the models are installed catches up everything. Without the "

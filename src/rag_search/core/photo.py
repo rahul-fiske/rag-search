@@ -37,13 +37,16 @@ from ..paths import Paths
 from . import geo
 
 HEADING = "## Photo details"
-_BLOCK_RE = re.compile(r"^## Photo details\n\n(?:- .*\n?)+\n?", re.M)
 _PAGE_ONE = "<!-- page 1 -->"
 _SEEN = "Text in the picture:"
 # lines that something other than the file's own metadata wrote: kept when the section is renewed (a map refresh
 # rewrites the place lines and nothing else); ``describe.py`` writes the model's lines and the face count
 _KEEP = (_SEEN, "Looks like (model-written):", "Things seen (model-written):", "People in the picture (model count):",
          "Faces detected:", "Described by:")
+# The section is a list of "- label: value" lines.  An earlier version wrote the lines of a description after a blank line
+# (about a quarter of the photographs of a collection), which cut the section short here and made the photograph look like a
+# photographed page (no faces, no description catch-up): a blank line before one of these labels belongs to the section too.
+_BLOCK_RE = re.compile(r"^## Photo details\n\n(?:- .*\n?|\n+(?=- (?:" + "|".join(re.escape(k) for k in _KEEP) + r")))+\n?", re.M)
 
 # EXIF tags (base IFD, Exif IFD 0x8769, GPS IFD 0x8825)
 _MAKE, _MODEL, _DATETIME, _ORIENT = 0x010F, 0x0110, 0x0132, 0x0112

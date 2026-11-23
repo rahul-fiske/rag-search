@@ -225,7 +225,7 @@ def restore_lines(paths: Paths, sha: str) -> list[str]:
 
 # ── the photographs ──────────────────────────────────────────────────────────
 
-_SECTION_RE = re.compile(r"^## Photo details\n\n(?:- .*\n?)+\n?", re.M)
+_SECTION_RE = photo._BLOCK_RE         # one definition of where the section ends (see photo.py)
 
 
 def section_of(text: str) -> tuple[str, str]:

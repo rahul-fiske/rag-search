@@ -339,10 +339,10 @@ class PhotoViewerTests(PeopleCase):
         folder = self.source("trip")
         pic = folder / "IMG_1.jpg"
         Image.new("RGB", (400, 300), "white").save(pic)
-        a1, b1 = self.photo("s1", like(A), like(B), src=str(pic))
+        a1, b1 = self.photo("s1", A, B, src=str(pic))
         outside = self.sdir.parent / "elsewhere.jpg"
         Image.new("RGB", (40, 30)).save(outside)
-        (o1,) = self.photo("s2", like(C), src=str(outside))
+        (o1,) = self.photo("s2", C, src=str(outside))
         avni = self.st.person_id("Avni", create=True)
         self.st.label([a1], avni)
         people._CACHE.clear()
@@ -362,3 +362,69 @@ class PhotoViewerTests(PeopleCase):
         self.assertEqual(st, 404)
         st, _b, _p, _h = dash.req("GET", "/api/people/photo/faces?face=99999")
         self.assertEqual(st, 404)
+
+
+    def test_a_face_the_model_missed_can_be_added_by_drawing_a_box(self):
+        from PIL import Image
+
+        from tests.portable.test_ui import Dash
+
+        folder = self.source("trip")
+        pic = folder / "IMG_2.jpg"
+        Image.new("RGB", (400, 300), "white").save(pic)
+        (a1,) = self.photo("s1", A, src=str(pic))
+        dash = Dash(self.paths)
+        self.addCleanup(dash.close)
+        made = {"x": 0.5, "y": 0.2, "w": 0.2, "h": 0.3, "score": 1.0, "px": 80, "vec": B, "thumb": b"jpg"}
+        with mock.patch.object(faces, "available", return_value=""), \
+                mock.patch.object(faces, "face_in_box", return_value=made) as box:
+            st, js, _p, _h = dash.req("POST", "/api/people/face/add", {"face": a1, "x": 0.5, "y": 0.2, "w": 0.2, "h": 0.3})
+            self.assertEqual(st, 200)
+            self.assertEqual(box.call_args[0][1], pic.resolve())
+            st, bad, _p, _h = dash.req("POST", "/api/people/face/add", {"face": a1, "x": 0.9, "y": 0.2, "w": 0.4, "h": 0.3})
+            self.assertEqual(st, 400)                                          # runs off the photograph
+            st, bad, _p, _h = dash.req("POST", "/api/people/face/add", {"face": 99999, "x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2})
+            self.assertEqual(st, 400)
+        st, shown, _p, _h = dash.req("GET", f"/api/people/photo/faces?face={a1}")
+        self.assertEqual([f["id"] for f in shown["faces"]], [a1, js["face"]])
+        self.assertEqual(self.st.photo_faces("s1"), 2)
+        st, _j, _p, _h = dash.req("POST", "/api/people/name", {"name": "Avni", "faces": [js["face"]]})
+        self.assertEqual(st, 200)
+
+
+class FinderRulesTests(PeopleCase):
+    def test_boxes_of_one_face_found_at_two_sizes_overlap_enough_to_merge(self):
+        self.assertGreater(faces._iou((0.1, 0.1, 0.2, 0.2), (0.11, 0.12, 0.2, 0.19)), faces.MERGE_IOU)
+        self.assertEqual(faces._iou((0.1, 0.1, 0.1, 0.1), (0.5, 0.5, 0.1, 0.1)), 0.0)
+
+    def test_a_photograph_looked_at_by_either_finder_is_known(self):
+        self.photo("old", A)                                    # stored with the finder of this version
+        self.st.con.execute("INSERT INTO photos (sha, src, detector, faces, ts) VALUES ('older', '/p/o.jpg', ?, 0, 1)",
+                            (faces.DETECTOR,))                        # one looked at by the first version (one size)
+        self.st.con.execute("INSERT INTO photos (sha, src, detector, faces, ts) VALUES ('other', '/p/x.jpg', 'some-other-model', 0, 1)")
+        self.st.con.commit()
+        self.assertEqual((self.st.photo_faces("old"), self.st.photo_faces("older"), self.st.photo_faces("other")), (1, 0, None))
+
+    def test_a_box_the_finder_is_unsure_of_is_never_suggested_or_asked_about(self):
+        (a1,) = self.photo("s1", A)
+        (weak,) = self.photo("s2", A, score=0.75)
+        self.st.label([a1], self.st.person_id("Avni", create=True))
+        w = people.work_out(self.st)
+        self.assertNotIn(weak, w.suggest)
+        self.assertNotIn(weak, w.person)
+        self.assertNotIn(weak, w.unknown)
+
+
+class SplitSectionTests(TempHome):
+    def test_a_description_written_after_a_blank_line_still_belongs_to_the_photo_details(self):
+        from rag_search.core import describe
+
+        text = ("<!-- page 1 -->\n\n## Photo details\n\n- Taken: 2012-01-31 06:32:06 (Tuesday)\n- Size: 2816 x 2112 pixels\n\n"
+                "- Looks like (model-written): A man holds a child.\n- Described by: Qwen\n- Faces detected: 2\n")
+        section, rest = describe.section_of(text)
+        self.assertIn("Faces detected: 2", section)
+        self.assertEqual(rest.strip(), "")
+        self.assertTrue(describe.is_photograph(text))
+        page = ("<!-- page 1 -->\n\n## Photo details\n\n- Taken: 2020-01-01 10:00:00 (Wednesday)\n\n- a bullet of the page\n\n"
+                + "words of a page " * 40)
+        self.assertFalse(describe.is_photograph(page))            # a list in a photographed page is still the page
