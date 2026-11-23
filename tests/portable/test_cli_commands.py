@@ -29,6 +29,25 @@ class LocalCommandTests(TempHome):
         self.assertNotEqual(rc, 0)
         self.assertIn("unknown name", err)
 
+    def test_every_command_prints_its_help(self):
+        import argparse
+        import contextlib
+        import io
+
+        from rag_search import cli
+
+        def walk(parser, path):
+            yield path
+            for a in parser._actions:
+                if isinstance(a, argparse._SubParsersAction):
+                    for name, sub in a.choices.items():
+                        yield from walk(sub, path + [name])
+
+        for path in walk(cli.build_parser(), []):
+            with self.subTest(path), contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
+                cli.build_parser().parse_args(path + ["--help"])     # a bare % in a help text breaks it
+            self.assertEqual(cm.exception.code, 0, path)
+
     def test_config_path_init_set_and_show(self):
         rc, out, _ = run("config", "path")
         self.assertEqual(out.strip(), str(self.paths.config_file))

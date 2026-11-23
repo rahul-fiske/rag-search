@@ -2882,7 +2882,7 @@ def build_parser() -> argparse.ArgumentParser:
     # experiment, exactly like `rag-search config set`.
     for t in (t for t in spec.TUNABLES_BY_SECTION["indexer"] if t.env):
         kw: dict[str, Any] = {"dest": t.key, "default": None,
-                              "help": f"{t.what}" + (f" ({', '.join(t.choices)})" if t.choices else "")}
+                              "help": (f"{t.what}" + (f" ({', '.join(t.choices)})" if t.choices else "")).replace("%", "%%")}
         if t.kind == "int":
             kw["type"] = int
         q.add_argument(t.cli_flag, **kw)
@@ -2987,8 +2987,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("action", nargs="?", choices=["show", "init", "path", "set"], default="show")
     for t in spec.TUNABLES:
         kw: dict[str, Any] = {"dest": t.key, "default": None,
-                              "help": f"[{t.section}] {t.what}" + (f" ({', '.join(t.choices)})"
-                                                                   if t.choices else "")}
+                              "help": (f"[{t.section}] {t.what}" + (f" ({', '.join(t.choices)})"
+                                                                    if t.choices else "")).replace("%", "%%")}
         if t.kind == "int":
             kw["type"] = int
         p.add_argument(t.cli_flag, **kw)
