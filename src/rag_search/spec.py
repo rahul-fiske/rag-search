@@ -50,8 +50,9 @@ def retrieval_pool(top_k: int) -> int:
 
 
 def rerank_pool(top_k: int) -> int:
-    """Fused candidates handed to the cross-encoder."""
-    return min(max(top_k * 3, 15), RERANK_CAP)
+    """Fused candidates handed to the cross-encoder: twice the results asked for (the photo trial: 20 for the top 10
+    beat 30, 0.950 against 0.947 nDCG, at two thirds of the reranker's time)."""
+    return min(max(top_k * 2, 15), RERANK_CAP)
 
 
 def clamp_retrieval_pool(n: int, top_k: int) -> int:

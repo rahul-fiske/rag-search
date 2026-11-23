@@ -169,6 +169,15 @@ class PictureBitsTests(PhotoHome):
         with self.assertRaises(models.ModelError):
             models.set_picture_selection(self.paths, "someone/else")
 
+    def test_a_photograph_cut_into_two_passages_is_one_candidate_read_whole(self):
+        from rag_search.core.search import IndexData
+
+        node = lambda src, text: {"text": text, "metadata": {"src_path": src}}
+        data = IndexData(nodes=[node("a.pdf", "doc"), node("p.jpg", "details"), node("p.jpg", "looks like"),
+                                node("q.jpg", "other")], emb=np.zeros((4, 2)), bm25=None, pic_rows=np.array([1, 3]))
+        self.assertEqual(data.photo_first, {1: 1, 2: 1, 3: 3})
+        self.assertEqual(data.photo_text(1), "details\n\nlooks like")
+
     def test_merge_keeps_one_picture_model(self):
         a, b, c = (self.tmp / n for n in "abc")
         for d, model in ((a, BASE), (b, BASE), (c, LARGE)):

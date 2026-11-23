@@ -309,7 +309,7 @@ serving/                                  what the search daemon reads
           code('k = ' + f.k), ' keeps a single first place from dominating.'),
         h('div', { class: 'formula' }, `RRF(chunk) = 1/(${f.k} + rank_keyword) + 1/(${f.k} + rank_vector)   (rank starts at 1; a missing list adds 0)`),
         h('h4', { style: { marginTop: '14px' } }, 'Try it: change the ranks'), rrfCalc(),
-        p({ class: 'small muted' }, 'Pool sizes: each retriever keeps max(4 × top_k, 20) chunks per collection; min(max(3 × top_k, 15), ' + m.reranker.cap + ') go to the reranker, which is too slow to read every chunk. The settings of S1–S6 are on the ', h('a', { href: '#/settings' }, 'Settings'), ' tab.'))];
+        p({ class: 'small muted' }, 'Pool sizes: each retriever keeps max(4 × top_k, 20) chunks per collection; min(max(2 × top_k, 15), ' + m.reranker.cap + ') go to the reranker, which is too slow to read every chunk. The settings of S1–S6 are on the ', h('a', { href: '#/settings' }, 'Settings'), ' tab.'))];
   }
 
   /* ---------- 6. daemons ---------- */

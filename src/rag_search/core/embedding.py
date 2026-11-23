@@ -530,6 +530,29 @@ def trimmed_photo_text(text: str) -> str:
     return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(PICTURE_DROP))
 
 
+def _yes_no_head(model: Any) -> None:
+    """The reranker's score is logit("yes") - logit("no") of its language head.  In bf16 those logits are rounded so
+    coarsely that many candidates tie (0.577, 0.577, ...); the head is cut to its two rows and computed in float32."""
+    import torch
+
+    hf, score = getattr(model[0], "model", None), model[1]
+    head = getattr(hf, "lm_head", None)
+    yes, no = getattr(score, "true_token_id", None), getattr(score, "false_token_id", None)
+    if head is None or yes is None or no is None:
+        return
+
+    class YesNo(torch.nn.Module):
+        def __init__(self, rows):
+            super().__init__()
+            self.weight = torch.nn.Parameter(rows.detach().float(), requires_grad=False)
+
+        def forward(self, x):
+            return x.float() @ self.weight.T
+
+    hf.lm_head = YesNo(head.weight[[yes, no]])
+    score.true_token_id, score.false_token_id = 0, 1
+
+
 class Qwen3VLReranker:
     """Qwen3-VL-Reranker through sentence-transformers (``CrossEncoder`` with multimodal inputs): every candidate on one
     scale, a photograph as its picture plus its trimmed details, a passage as its text; scores are sigmoid
@@ -539,7 +562,7 @@ class Qwen3VLReranker:
 
     def __init__(self, name: str | None = None, batch_size: int | None = None):
         self.name = name or rerank_model_name()
-        self.batch_size = batch_size or min(4, env_int("RAG_SEARCH_RERANK_BATCH", RERANK_BATCH))
+        self.batch_size = batch_size or min(4, env_int("RAG_SEARCH_RERANK_BATCH", RERANK_BATCH))   # 8 was slower (padding)
         self._model = None
         self.device = ""
 
@@ -559,6 +582,7 @@ class Qwen3VLReranker:
             # most a chunk long and the picture is 256 px
             model = _load_model(self.name, lambda **kw: CrossEncoder(self.name, device=self.device, **extra, **kw))
             _add_named_template(model, self.name, "reranker")
+            _yes_no_head(model)
             self._model = model
         return self._model
 

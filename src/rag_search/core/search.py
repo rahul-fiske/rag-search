@@ -59,6 +59,30 @@ class IndexData:
             self._pic_of = cached                               # type: ignore[attr-defined]
         return cached
 
+    @property
+    def photo_first(self) -> dict[int, int]:
+        """passage index -> first passage of its photograph, for every passage of a photograph with a picture vector
+        (a photograph is one candidate, however many passages its details and description were cut into)."""
+        cached = getattr(self, "_photo_first", None)
+        if cached is None:
+            cached = {}
+            for first in self.pic_of:
+                src = self.nodes[first]["metadata"].get("src_path")
+                j = first
+                while j < len(self.nodes) and self.nodes[j]["metadata"].get("src_path") == src:
+                    cached[j] = first
+                    j += 1
+            self._photo_first = cached                          # type: ignore[attr-defined]
+        return cached
+
+    def photo_text(self, first: int) -> str:
+        """All the passages of the photograph starting at *first*, as one text (what the reranker reads)."""
+        texts, j, of = [], first, self.photo_first
+        while of.get(j) == first:
+            texts.append(self.nodes[j]["text"])
+            j += 1
+        return "\n\n".join(texts)
+
 
 def _deep_size(obj: Any, seen: set[int] | None = None) -> int:
     """Bytes of a Python object and what it holds (strings, numbers, containers), each object once."""
@@ -425,8 +449,13 @@ class SearchEngine:
         cand: dict[tuple[str, str], dict[str, Any]] = {}
         keyword_s = dense_s = pics_s = 0.0
 
-        def slot_of(coll: str, i: int, node: dict[str, Any]) -> dict[str, Any]:
+        def slot_of(coll: str, i: int, data: IndexData) -> dict[str, Any]:
+            first = data.photo_first.get(i)        # a photograph: all its passages are one candidate, as its first
+            if first is not None:
+                i = first
+            node = data.nodes[i]
             return cand.setdefault((coll, node["id"]), {"rrf": 0.0, "node": node, "coll": coll, "i": i,
+                                   "photo": first is not None,
                                    "bm25_score": None, "bm25_rank": None, "dense_score": None, "dense_rank": None,
                                    "picture_score": None, "picture_rank": None})
 
@@ -464,18 +493,22 @@ class SearchEngine:
                 pn = [(int(data.pic_rows[j]), float(pic_scores[j])) for j in _top(pic_scores, pool_n)
                       if np.isfinite(pic_scores[j])]
                 pics_s += time.perf_counter() - t
+            # each list votes once per candidate, with its best rank (a photograph's second passage adds nothing)
             for r, i in enumerate(kw):
-                slot = slot_of(coll, i, data.nodes[i])
-                slot["rrf"] += 1.0 / (k + r + 1)
-                slot["bm25_score"], slot["bm25_rank"] = float(bm25_scores[i]), r + 1
+                slot = slot_of(coll, i, data)
+                if slot["bm25_rank"] is None:
+                    slot["rrf"] += 1.0 / (k + r + 1)
+                    slot["bm25_score"], slot["bm25_rank"] = float(bm25_scores[i]), r + 1
             for r, i in enumerate(dn):
-                slot = slot_of(coll, i, data.nodes[i])
-                slot["rrf"] += 1.0 / (k + r + 1)
-                slot["dense_score"], slot["dense_rank"] = float(dense_scores[i]), r + 1
+                slot = slot_of(coll, i, data)
+                if slot["dense_rank"] is None:
+                    slot["rrf"] += 1.0 / (k + r + 1)
+                    slot["dense_score"], slot["dense_rank"] = float(dense_scores[i]), r + 1
             for r, (i, score) in enumerate(pn):
-                slot = slot_of(coll, i, data.nodes[i])
-                slot["rrf"] += 1.0 / (k + r + 1)
-                slot["picture_score"], slot["picture_rank"] = score, r + 1
+                slot = slot_of(coll, i, data)
+                if slot["picture_rank"] is None:
+                    slot["rrf"] += 1.0 / (k + r + 1)
+                    slot["picture_score"], slot["picture_rank"] = score, r + 1
         timing["keyword_ms"] = int(keyword_s * 1000)     # BM25 over all collections in scope
         timing["dense_ms"] = int(dense_s * 1000)         # cosine over all collections in scope
         if use_pics:
@@ -496,7 +529,7 @@ class SearchEngine:
                     if reranker is None:
                         self.load_models()
                         reranker = self.reranker
-                    texts = [s["node"]["text"] for s in pool]
+                    texts = [gen.indexes[s["coll"]].photo_text(s["i"]) if s["photo"] else s["node"]["text"] for s in pool]
                     with self._infer:
                         if getattr(reranker, "sees_pictures", False):     # a photograph is judged by its picture too
                             scores = reranker.score(query, texts, images=[_picture_of(gen, s) for s in pool])

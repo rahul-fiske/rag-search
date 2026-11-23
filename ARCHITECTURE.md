@@ -927,7 +927,7 @@ Before any reader is changed, how well a page is read is *measured* on pages wit
       raw score instead -- RRF       keyed by (collection, id), so all collections share one     │
       over one list is just its      pool)                                                       │
       rank order, discarding                        ▼                                            │
-      the score magnitude            keep the top max(3 x top_k, 15) chunks, at most 60 by       │
+      the score magnitude            keep the top max(2 x top_k, 15) chunks, at most 60 by       │
                                       default, or `rerank_pool` (clamped to <= 100)               │
                               ▼                                                                 │
               CROSS-ENCODER RERANK   BAAI/bge-reranker-v2-m3   (skipped if "rerank" not in       │
@@ -1176,12 +1176,16 @@ standing as BM25 and the text vectors.
   "a photo of <query>" (64 tokens, as SigLIP was trained), is compared with every picture vector; the best `pool_n`
   join the fusion (S4) as a third list, restricted to the photographs of the people a query names like the others.
   `stages=pictures` isolates it; results carry `picture_score` and `picture_rank`.
+  A photograph is one candidate however many passages its details and description were cut into: each list votes
+  once for it, with its best rank, and the reranker reads all its passages together (else the same photograph
+  could fill two results and be judged twice).
 * **Rerank (S5).** A text-only reranker undoes picture vectors (a photograph found by its picture, whose text does not
   say it, is pushed back down). `Qwen/Qwen3-VL-Reranker-2B` (`Qwen3VLReranker`) judges every candidate on one scale:
   a photograph as its picture (256 px) plus its details without the Position, Camera and Size lines, any other passage
   as its text. Its `reranker` chat template sits in `additional_chat_templates/`, which transformers finds only by
   listing the repository online, so it is handed to the processor from the local cache. No token cap is set (cutting a
-  pair would cut a picture's tokens).
+  pair would cut a picture's tokens). Its score, logit("yes") - logit("no"), is computed in float32 from a head cut to
+  those two rows: in bf16 the logits were rounded so coarsely that many candidates tied.
 * **Why so.** The trial (300 photographs among 3,010 passages of other collections, 35 labelled photo queries, 6
   document queries): photo nDCG@10 0.778 today; pictures in the merge with bge-reranker 0.788; pictures plus the
   multimodal reranker 0.950, with document queries as clean as before (0.2 photographs in their top 10). A floor on the
