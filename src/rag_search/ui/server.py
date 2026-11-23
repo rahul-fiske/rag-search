@@ -910,6 +910,23 @@ class Handler(BaseHTTPRequestHandler):
             if jpg is None:
                 return self._error(404, "no such face")
             return self._send(200, jpg, "image/jpeg", {"Cache-Control": "private, max-age=86400"})
+        if what in ("photo", "photo/faces"):               # the whole photograph a face was found in, and the boxes on it
+            from ..core import photo
+
+            found = people.photo_of_face(paths, num("face"))
+            if found is None:
+                return self._error(404, "no such face")
+            if what == "photo/faces":
+                return self._json({"ok": True, **{k: v for k, v in found.items() if k != "src"},
+                                   "name": Path(found["src"]).name, "available": people.source_file(paths, found["src"]) is not None})
+            src = people.source_file(paths, found["src"])
+            if src is None:
+                return self._error(404, "the photograph is not in a source folder any more")
+            try:
+                jpg, _size = photo.render_jpeg(src, 1800, 88)
+            except OSError:
+                return self._error(404, "the photograph cannot be read")
+            return self._send(200, jpg, "image/jpeg", {"Cache-Control": "private, max-age=3600"})
         self._error(404, "not found")
 
     def _people_post(self, action: str, body: dict[str, Any]) -> None:

@@ -7,6 +7,58 @@
   const hidden = new Set();       // groups skipped for now (by their first face)
 
   const faceImg = (f, extra) => h('img', Object.assign({ class: 'face', src: 'api/people/face?id=' + f, loading: 'lazy', alt: '', width: 72, height: 72 }, extra || {}));
+  /* a face with a small "photo" button: opens the whole photograph with every face found in it boxed */
+  const faceWithPhoto = (f, extra) => h('span', { class: 'facewrap' }, faceImg(f, extra),
+    h('button', { class: 'facezoom', type: 'button', title: 'see the whole photograph, with every face found in it', 'aria-label': 'see the whole photograph',
+      on: { click: e => { e.stopPropagation(); e.preventDefault(); openPhoto(f); } } }, '\u{1F50D}'));
+
+  /* ---- the whole photograph of a face, with a box on every face found in it ---- */
+  let viewer = null;
+  async function openPhoto(faceId) {
+    if (!viewer) {
+      viewer = h('dialog', { class: 'photo-viewer' });
+      viewer.addEventListener('click', e => { if (e.target === viewer) viewer.close(); });
+      document.body.append(viewer);
+    }
+    fill(viewer, h('p', { class: 'muted', style: { padding: '24px' } }, 'loading\u2026'));
+    if (!viewer.open) viewer.showModal();
+    await paintPhoto(faceId, faceId);
+  }
+  const boxColour = f => f.how === 'you' ? 'var(--ok)' : f.how === 'auto' ? 'var(--accent)' : f.how === 'suggested' ? 'var(--warn)' : 'var(--muted)';
+  async function paintPhoto(faceId, selected) {
+    const r = await api('people/photo/faces?face=' + faceId);
+    if (r.ok === false) { fill(viewer, h('div', { style: { padding: '24px' } }, h('div', { class: 'notice bad' }, r.error || 'cannot show the photograph'),
+      h('button', { class: 'btn small', on: { click: () => viewer.close() } }, 'Close'))); return; }
+    const faces = r.faces || [], ro = readOnly();
+    const sel = faces.find(f => f.id === selected) || faces.find(f => f.id === faceId) || faces[0];
+    const pick = id => paintPhoto(faceId, id);
+    const boxes = faces.map(f => h('div', { class: 'pv-box' + (f.id === sel.id ? ' sel' : ''), title: (f.name ? f.name : 'unnamed') + ' \u00b7 score ' + f.score,
+      style: { left: (100 * f.x) + '%', top: (100 * f.y) + '%', width: (100 * f.w) + '%', height: (100 * f.h) + '%', borderColor: boxColour(f) },
+      on: { click: () => pick(f.id) } }, h('span', { class: 'pv-tag', style: { background: boxColour(f) } }, f.name || '?')));
+    const input = h('input', { type: 'text', list: 'people-names', placeholder: 'Name (new or existing)', disabled: ro, style: { width: '200px' } });
+    const name = async () => {
+      const n = input.value.trim(); if (!n) { input.focus(); return; }
+      const res = await act('people/name', { name: n, faces: [sel.id] }, `named ${n}`);
+      if (res.ok !== false) { await refreshAll(); await paintPhoto(faceId, sel.id); }
+    };
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); name(); } });
+    const unname = async () => { const res = await act('people/unlabel', { faces: [sel.id] }, 'name taken off'); if (res.ok !== false) { await refreshAll(); await paintPhoto(faceId, sel.id); } };
+    const how = { you: 'named by you', auto: 'matched automatically', suggested: 'a weak match: not named', '': 'nobody is matched to it' }[sel.how || ''];
+    fill(viewer,
+      h('div', { class: 'pv-head' }, h('b', null, r.name || 'photograph'), h('span', { class: 'muted small' }, `${faces.length} face${faces.length === 1 ? '' : 's'} found`),
+        h('button', { class: 'btn small', style: { marginLeft: 'auto' }, on: { click: () => viewer.close() } }, 'Close')),
+      r.available === false ? h('div', { class: 'notice warn' }, 'The photograph is not in a source folder any more: only its faces can be shown.') : null,
+      r.available === false ? null : h('div', { class: 'pv-stage' }, h('img', { src: 'api/people/photo?face=' + faceId, alt: r.name || 'photograph' }), boxes),
+      h('div', { class: 'pv-side' },
+        h('div', { class: 'row', style: { gap: '8px', alignItems: 'center', flexWrap: 'wrap' } }, faceImg(sel.id, { class: 'face', style: { cursor: 'default' } }),
+          h('div', null, h('b', null, sel.name || 'unnamed'), h('div', { class: 'small muted' }, `${how} \u00b7 face score ${sel.score} \u00b7 ${sel.px} px`)),
+          input, h('button', { class: 'btn small primary', disabled: ro, on: { click: name } }, sel.how === 'you' ? 'Rename face' : 'Name'),
+          sel.how === 'you' ? h('button', { class: 'btn small', disabled: ro, on: { click: unname } }, 'Take the name off') : null),
+        h('div', { class: 'small muted', style: { marginTop: '6px' } }, 'Click a box to pick that face. A face the model did not find has no box.',
+          '  ', h('span', { class: 'pv-key' }, h('i', { style: { background: 'var(--ok)' } }), 'named by you'), h('span', { class: 'pv-key' }, h('i', { style: { background: 'var(--accent)' } }), 'matched'),
+          h('span', { class: 'pv-key' }, h('i', { style: { background: 'var(--warn)' } }), 'weak match'), h('span', { class: 'pv-key' }, h('i', { style: { background: 'var(--muted)' } }), 'nobody'))));
+  }
+
   const taskActive = () => !!(data && data.task && (data.task.status === 'running' || data.task.status === 'queued'));
 
   async function load() {
@@ -84,7 +136,7 @@
       };
       input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); name(); } });
       return h('div', { class: 'cluster' },
-        h('div', { class: 'faces' }, shownFaces(c).map(f => faceImg(f, { class: 'face' + (off.has(f) ? ' off' : ''), title: off.has(f) ? 'left out: click to put back' : 'click to leave this face out',
+        h('div', { class: 'faces' }, shownFaces(c).map(f => faceWithPhoto(f, { class: 'face' + (off.has(f) ? ' off' : ''), title: off.has(f) ? 'left out: click to put back' : 'click to leave this face out',
           on: { click: e => { off.has(f) ? off.delete(f) : off.add(f); e.target.classList.toggle('off', off.has(f)); } } })),
           c.more && c.more.length && !expanded.has(c.faces[0])
             ? h('button', { class: 'btn small', style: { alignSelf: 'center' }, title: 'show them all, to leave out the ones that are someone else', on: { click: () => { expanded.add(c.faces[0]); renderClusters(); } } }, `Show ${num(c.more.length)} more like these`)
@@ -93,14 +145,20 @@
           h('button', { class: 'btn small primary', disabled: ro, on: { click: name } }, 'Name'),
           h('button', { class: 'btn small', on: { click: () => { hidden.add(c.faces[0]); renderClusters(); } } }, 'Skip')));
     }) : h('p', { class: 'muted' }, clusters.total ? 'Nothing more to ask in this batch.' : 'No unnamed faces to ask about.');
+    // the same Previous / Next 20 above and below the groups; at the bottom they also bring the top of the list back into view
+    const nav = (down, below) => {
+      const go = to => { skip = to; below && refs.clusters.scrollIntoView({ block: 'start' }); loadClusters(); };
+      const prev = skip ? h('button', { class: 'btn small', on: { click: () => go(Math.max(0, skip - 20)) } }, 'Previous 20') : null;
+      const next = clusters.total > skip + 20 ? h('button', { class: 'btn small' + (below ? ' primary' : ''), on: { click: () => go(skip + 20) } }, 'Next 20') : null;
+      return h(down, { class: below ? 'row' : 'spacer', style: below ? { gap: '8px', marginTop: '10px', alignItems: 'center' } : {} },
+        prev, next, below && (prev || next) ? h('span', { class: 'muted small' }, `groups ${num(skip + 1)}\u2013${num(Math.min(clusters.total, skip + 20))} of ${num(clusters.total)}`) : null);
+    };
     fill(refs.clusters,
       h('div', { class: 'card-head' }, h('h2', null, 'Who is this?'),
         h('span', { class: 'muted small' }, clusters.total ? `${num(clusters.total)} group(s) of look-alike faces, ${num(clusters.faces)} faces` : ''),
-        h('div', { class: 'spacer' },
-          skip ? h('button', { class: 'btn small', on: { click: () => { skip = Math.max(0, skip - 20); loadClusters(); } } }, 'Previous') : null,
-          clusters.total > skip + 20 ? h('button', { class: 'btn small', on: { click: () => { skip += 20; loadClusters(); } } }, 'Next 20') : null)),
+        nav('div', false)),
       h('p', { class: 'small muted', style: { margin: '0 0 6px' } }, 'Faces that look alike are shown together. Click a face that is someone else to leave it out (“Show more” lists the rest of a group), then give the name: it applies to the faces you see. Naming one group of a person is enough to start: the rest of their faces are matched from it.'),
-      body);
+      body, nav('div', true));
   }
 
   /* ---- people ---- */
@@ -139,7 +197,7 @@
     };
     const section = (title, note, items, actions) => items.length ? h('div', { style: { marginTop: '12px' } },
       h('h3', { style: { margin: '0 0 4px' } }, title), note ? h('p', { class: 'small muted', style: { margin: '0 0 6px' } }, note) : null,
-      h('div', { class: 'faces' }, items.map(it => h('div', { class: 'facebox' }, faceImg(it.face, { title: it.score !== undefined ? `similarity ${it.score}` : '' }),
+      h('div', { class: 'faces' }, items.map(it => h('div', { class: 'facebox' }, faceWithPhoto(it.face, { title: it.score !== undefined ? `similarity ${it.score}` : '' }),
         h('div', { class: 'face-actions' }, actions(it)))))) : null;
     const btn = (label, title, fn) => h('button', { class: 'btn tiny', title, disabled: ro, on: { click: fn } }, label);
     fill(refs.person,

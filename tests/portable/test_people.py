@@ -328,3 +328,37 @@ if __name__ == "__main__":
     import unittest
 
     unittest.main()
+
+
+class PhotoViewerTests(PeopleCase):
+    def test_a_face_shows_its_whole_photograph_with_every_face_boxed_and_named(self):
+        from PIL import Image
+
+        from tests.portable.test_ui import Dash
+
+        folder = self.source("trip")
+        pic = folder / "IMG_1.jpg"
+        Image.new("RGB", (400, 300), "white").save(pic)
+        a1, b1 = self.photo("s1", like(A), like(B), src=str(pic))
+        outside = self.sdir.parent / "elsewhere.jpg"
+        Image.new("RGB", (40, 30)).save(outside)
+        (o1,) = self.photo("s2", like(C), src=str(outside))
+        avni = self.st.person_id("Avni", create=True)
+        self.st.label([a1], avni)
+        people._CACHE.clear()
+        dash = Dash(self.paths)
+        self.addCleanup(dash.close)
+        st, js, _p, _h = dash.req("GET", f"/api/people/photo/faces?face={b1}")
+        self.assertEqual((st, js["name"], js["available"]), (200, "IMG_1.jpg", True))
+        self.assertEqual([(f["id"], f["name"], f["how"]) for f in js["faces"]], [(a1, "Avni", "you"), (b1, "", "")])
+        self.assertTrue(all(0 <= f["x"] <= 1 and f["w"] > 0 for f in js["faces"]))
+        self.assertNotIn("src", js)                            # the server's paths stay on the server
+        st, _j, raw, _h = dash.req("GET", f"/api/people/photo?face={a1}")
+        self.assertEqual(st, 200)
+        self.assertTrue(raw.startswith(b"\xff\xd8"))
+        st, js, _p, _h = dash.req("GET", f"/api/people/photo/faces?face={o1}")      # not in a registered folder: no picture
+        self.assertEqual((st, js["available"]), (200, False))
+        st, _b, _p, _h = dash.req("GET", f"/api/people/photo?face={o1}")
+        self.assertEqual(st, 404)
+        st, _b, _p, _h = dash.req("GET", "/api/people/photo/faces?face=99999")
+        self.assertEqual(st, 404)

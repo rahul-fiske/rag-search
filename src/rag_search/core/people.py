@@ -325,3 +325,51 @@ def person_view(paths: Paths, person: int, limit: int = 120) -> dict[str, Any]:
             "labelled": you[:limit], "labelled_total": len(you),
             "auto": [{"face": f, "score": s} for f, s in auto[:limit]], "auto_total": len(auto),
             "suggested": [{"face": f, "score": s} for f, s in sugg[:limit]], "suggested_total": len(sugg)}
+
+
+def photo_of_face(paths: Paths, face: int) -> dict[str, Any] | None:
+    """The photograph a face was found in and every face found in it, for the People tab's photo viewer: ``{"face", "sha",
+    "src", "faces": [{"id", "x", "y", "w", "h", "score", "px", "person", "name", "how"}]}`` (boxes are fractions of the upright
+    picture; ``how`` is "you" for a face you named, "auto" for one matched to a person, "suggested" for a weaker match, "" for
+    nobody).  None when there is no such face."""
+    if not faces.store_file(paths).exists():
+        return None
+    with faces.Store(paths) as st:
+        row = st.con.execute("SELECT f.sha, p.src FROM faces f JOIN photos p ON p.sha = f.sha WHERE f.id = ?",
+                             (int(face),)).fetchone()
+        if row is None:
+            return None
+        sha, src = row
+        rows = st.con.execute("SELECT id, x, y, w, h, score, px FROM faces WHERE sha = ? ORDER BY x", (sha,)).fetchall()
+    w = who(paths)
+    out = []
+    for fid, x, y, fw, fh, score, px in rows:
+        person, name, how = None, "", ""
+        if w is not None and fid in w.person:
+            person, how, _s = w.person[fid]
+            name = w.names.get(person, "")
+        elif w is not None and fid in w.suggest:
+            person, _s = w.suggest[fid]
+            name, how = w.names.get(person, ""), "suggested"
+        out.append({"id": fid, "x": x, "y": y, "w": fw, "h": fh, "score": round(score or 0.0, 2), "px": px,
+                    "person": person, "name": name, "how": how})
+    return {"face": int(face), "sha": sha, "src": src, "faces": out}
+
+
+def source_file(paths: Paths, src: str) -> Path | None:
+    """*src* as a file inside a registered source folder, or None (the store remembers where a photograph was; only a file
+    that is still in a folder indexing reads is ever shown)."""
+    from .. import locations
+
+    p = Path(src)
+    try:
+        real = p.resolve()
+    except OSError:
+        return None
+    for _name, root in locations.source_roots(paths).locations:
+        try:
+            if real.is_relative_to(Path(root).resolve()) and real.is_file():
+                return real
+        except OSError:
+            continue
+    return None
