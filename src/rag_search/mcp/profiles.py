@@ -36,6 +36,7 @@ Workflow:
    tables apart, so for exact figures search or grep to locate the file, then read it whole and quote it.
    rag_list_documents lists a collection's documents by folder prefix or pattern; page through long documents
    with offset / next_offset.
+   rag_get_photo shows an indexed photo (any format, HEIC included) as a JPEG when the user wants to see it.
 5. To add documents: put files in a registered source folder, then rag_index_update (a background run in
    the indexer daemon) and poll rag_index_status. New documents become searchable
    automatically when the run finishes. Only one indexing run exists at a time; calling

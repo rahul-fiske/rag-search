@@ -220,12 +220,9 @@ def _profile_pdf(src: Path, budget_s: float) -> dict[str, Any]:
 def _profile_image(src: Path) -> dict[str, Any]:
     from PIL import Image
 
-    try:
-        import pillow_heif                                 # type: ignore
+    from ..photo import register_heif
 
-        pillow_heif.register_heif_opener()
-    except ImportError:
-        pass
+    register_heif()
     pages: list[dict[str, Any]] = []
     with Image.open(src) as im:
         total = int(getattr(im, "n_frames", 1) or 1) if (im.format or "").upper() in MULTI_PAGE_FORMATS else 1

@@ -958,6 +958,11 @@ re-orders the few dozen candidates that survived fusion. `rag_grep` / `rag-searc
 separate path: a regular-expression scan of the converted Markdown (in an isolated child process
 with a timeout), for exact text.
 
+**Seeing a photograph.** `rag_get_photo` / `rag-search photo` (`api.get_photo`) decodes the original source file on the
+host (`core/photo.open_image` registers pillow-heif once, for every reader), turns it upright, shrinks it to `max_px`
+(256-2048) and returns JPEG bytes: MCP clients that cannot open HEIC still see the picture. Errors: `not_an_image`,
+`source_missing`, `decode_failed`.
+
 **Search, then read.** Passages and grep lines cut a table apart, so `rag_read_document` /
 `rag-search read` (`readdoc.py`, no models, no daemon) returns a whole document's converted Markdown from the
 published generation, in slices of at most 40,000 characters (`offset` / `next_offset`; the slices join

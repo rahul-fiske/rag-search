@@ -105,13 +105,11 @@ def download(paths: Paths, log: Callable[[str], None] = lambda m: None) -> list[
 
 def load_upright(src: Path, long_side: int = LONG_SIDE) -> Any:
     """The photograph upright (EXIF orientation applied), in RGB, no larger than *long_side*, as a PIL image."""
-    from PIL import Image, ImageOps
+    from PIL import ImageOps
 
-    with contextlib.suppress(Exception):
-        import pillow_heif
+    from .photo import open_image
 
-        pillow_heif.register_heif_opener()
-    with Image.open(src) as im:
+    with open_image(src) as im:
         im.draft("RGB", (long_side, long_side))               # a JPEG is decoded at a fraction of its size: quicker
         im = ImageOps.exif_transpose(im).convert("RGB")
     im.thumbnail((long_side, long_side))

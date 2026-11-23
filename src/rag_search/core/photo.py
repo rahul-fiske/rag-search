@@ -71,6 +71,52 @@ def _clean(v: Any) -> str:
     return " ".join(str(v).replace("\x00", " ").split()) if v is not None else ""
 
 
+def register_heif() -> bool:
+    """Teach Pillow to open iPhone photos (.heic/.heif) when pillow-heif is installed; says whether it is."""
+    try:
+        import pillow_heif                                    # type: ignore
+
+        pillow_heif.register_heif_opener()
+        return True
+    except Exception:  # noqa: BLE001 - not installed (or unusable): other formats still open
+        return False
+
+
+def open_image(src: Path) -> Any:
+    """The image file opened with Pillow, HEIC included (the caller closes it, or uses ``with``)."""
+    from PIL import Image
+
+    register_heif()
+    return Image.open(src)
+
+
+MIN_PX, MAX_PX = 256, 2048
+MIN_QUALITY, MAX_QUALITY = 50, 95
+
+
+def render_jpeg(src: Path, max_px: int = 1400, quality: int = 85) -> tuple[bytes, tuple[int, int]]:
+    """The photograph as upright JPEG bytes no larger than *max_px* (256-2048) on its long side, and its size.
+    Raises OSError when the file cannot be decoded (pillow-heif missing for a .heic, a damaged file)."""
+    import io
+
+    from PIL import ImageOps
+
+    max_px = min(max(int(max_px), MIN_PX), MAX_PX)
+    quality = min(max(int(quality), MIN_QUALITY), MAX_QUALITY)
+    try:
+        with open_image(src) as im:
+            if im.format == "JPEG":
+                im.draft("RGB", (max_px * 2, max_px * 2))     # decoded at a fraction of the size: quicker
+            im = ImageOps.exif_transpose(im).convert("RGB")
+    except Exception as exc:  # noqa: BLE001 - PIL raises many types for a file it cannot read
+        hint = "" if src.suffix.lower() not in (".heic", ".heif") or register_heif() else " (pillow-heif is not installed)"
+        raise OSError(f"{type(exc).__name__}: {exc}{hint}") from exc
+    im.thumbnail((max_px, max_px))
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=quality, optimize=True)
+    return buf.getvalue(), im.size
+
+
 def read_exif(src: Path) -> dict[str, Any]:
     """The metadata of an image file as a plain dict (empty when there is none or it cannot be read); the file is
     only read."""
@@ -78,12 +124,8 @@ def read_exif(src: Path) -> dict[str, Any]:
         from PIL import Image
     except ImportError:
         return {}
-    with contextlib.suppress(Exception):
-        import pillow_heif
-
-        pillow_heif.register_heif_opener()
     try:
-        with Image.open(src) as im:
+        with open_image(src) as im:
             size = im.size
             exif = im.getexif()
             base = dict(exif)

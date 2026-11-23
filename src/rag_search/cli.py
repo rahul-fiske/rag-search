@@ -419,6 +419,17 @@ def _cmd_read(a: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_photo(a: argparse.Namespace) -> int:
+    r = api.get_photo(get_paths(), a.collection, a.doc, max_px=a.max_px, quality=a.quality, client=a.client)
+    if not r.get("ok"):
+        return _fail(r)
+    res = r["result"]
+    Path(a.output).expanduser().write_bytes(res["jpeg_bytes"])
+    m = res["meta"]
+    print(f"{a.output}: {m['width']} x {m['height']}, {m['bytes']} bytes" + (f", taken {m['taken']}" if m["taken"] else ""))
+    return EXIT_OK
+
+
 def _cmd_docs(a: argparse.Namespace) -> int:
     r = api.list_documents(get_paths(), a.collection, prefix=a.prefix, glob=a.glob, limit=a.limit,
                            offset=a.offset, client=a.client)
@@ -2625,6 +2636,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-chars", type=int, default=20000, help="most characters per slice (at most 40000)")
     p.add_argument("--pages", default="", help="a page range of a paged document: 3, 2-4 or 3-")
     p.add_argument("--all", action="store_true", help="print the whole document, slice after slice")
+
+    p = add("photo", "save an indexed photograph as an upright JPEG (HEIC too)", _cmd_photo)
+    p.add_argument("collection")
+    p.add_argument("doc", help="the photograph's name: `doc` from search/grep, or a name `docs` lists")
+    p.add_argument("--max-px", type=int, default=1400, help="longest side in pixels (256-2048)")
+    p.add_argument("--quality", type=int, default=85, help="JPEG quality (50-95)")
+    p.add_argument("-o", "--output", required=True, help="the .jpg file to write")
 
     p = add("docs", "list the documents of one collection by folder prefix or pattern", _cmd_docs)
     p.add_argument("collection")

@@ -41,10 +41,10 @@ def _error(resp: dict[str, Any], **extra: Any) -> str:
                                  "Retry in about 30 seconds.",
                       "detail": resp.get("error", ""), "state": resp.get("state")})
     return _json({"error": resp.get("error", "request failed"), "code": code, "results": [],
-                  **{k: v for k, v in resp.items() if k in ("log", "supported")}, **extra})
+                  **{k: v for k, v in resp.items() if k in ("log", "supported", "source", "detail")}, **extra})
 
 
-def make_tools(client: str) -> dict[str, Callable[..., Awaitable[str]]]:
+def make_tools(client: str) -> dict[str, Callable[..., Awaitable[Any]]]:
     """The tool functions, bound to *client* (the identity that selects its collections)."""
 
     async def rag_list_collections(documents: bool = False) -> str:
@@ -165,6 +165,33 @@ def make_tools(client: str) -> dict[str, Callable[..., Awaitable[str]]]:
                                     max_chars=max_chars, pages=pages, client=client)
         return _json(r["result"]) if r.get("ok") else _error(r)
 
+    async def rag_get_photo(collection: str, doc: str, max_px: int = 1400, quality: int = 85) -> Any:
+        """Show a photo from an indexed collection as a JPEG, after rag_search/rag_grep found it.
+
+        Converts iPhone HEIC and fixes rotation on the server, so it works for any image format. Returns a short
+        JSON description followed by the image. Use it when the user wants to see a photo, or to check what a
+        caption describes.
+
+        Args:
+            collection: Exact collection name.
+            doc: The photo's name: `doc` from rag_search or rag_grep, e.g. "trips/Ranthambore March 25/IMG_1641"
+                (or a source file name that only one document has).
+            max_px: Longest side in pixels (256-2048, default 1400).
+            quality: JPEG quality (50-95, default 85).
+
+        Returns JSON {collection, doc, source, taken, people, width, height, bytes} and the image.
+        Errors: not_an_image, source_missing, decode_failed (detail says why), or the usual unknown
+        collection / document.
+        """
+        r = await asyncio.to_thread(api.get_photo, get_paths(), collection, doc, max_px=max_px,
+                                    quality=quality, client=client)
+        if not r.get("ok"):
+            return _error(r)
+        from mcp.server.fastmcp import Image
+
+        res = r["result"]
+        return [_json(res["meta"]), Image(data=res["jpeg_bytes"], format="jpeg")]
+
     async def rag_list_documents(collection: str, prefix: str = "", glob: str = "", limit: int = 200,
                                  offset: int = 0) -> str:
         """List the documents of one collection by name -- a folder (prefix) or a pattern (glob) at a time.
@@ -254,7 +281,8 @@ def make_tools(client: str) -> dict[str, Callable[..., Awaitable[str]]]:
         r = await asyncio.to_thread(api.index_cancel, get_paths(), client=client)
         return _json({k: v for k, v in r.items() if k != "ok"}) if r.get("ok") else _error(r)
 
-    fns = [rag_list_collections, rag_describe_collection, rag_search, rag_grep, rag_read_document, rag_list_documents,
+    fns = [rag_list_collections, rag_describe_collection, rag_search, rag_grep, rag_read_document, rag_get_photo,
+           rag_list_documents,
            rag_index_update, rag_index_rebuild, rag_index_status, rag_index_cancel]
     return {f.__name__: f for f in fns}
 

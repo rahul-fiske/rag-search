@@ -182,6 +182,49 @@ def read_document(paths: Paths, collection: str, doc: str, *, offset: int = 0,
         return protocol.error(protocol.BAD_REQUEST, str(exc))
 
 
+def get_photo(paths: Paths, collection: str, doc: str, *, max_px: int = 1400, quality: int = 85,
+              client: str | None = None) -> dict[str, Any]:
+    """A photograph of an indexed collection as upright JPEG bytes: ``{ok, result: {meta, jpeg_bytes}}``.
+    Decodes the original source file here (HEIC too), so a client that cannot open it still sees the picture.
+    Errors carry ``code``: bad_request (collection or document), not_an_image, source_missing, decode_failed."""
+    from pathlib import PurePosixPath
+
+    from . import locations
+    from .core import people, photo
+    from .core.conversion.profiler import IMAGE_EXTENSIONS
+
+    name, docs, err = _one_collection(paths, collection, _client(client))
+    if err:
+        return err
+    try:
+        entry = readdoc.resolve(docs, name, doc)
+    except readdoc.DocError as exc:
+        return protocol.error(protocol.BAD_REQUEST, str(exc))
+    rel = readdoc.source_path(entry)
+    if PurePosixPath(rel).suffix.lower() not in IMAGE_EXTENSIONS:
+        return protocol.error("not_an_image", f"{entry['name']!r} is not an image ({rel})", source=rel)
+    root = locations.source_root(paths, name)
+    src = (root / rel) if root else None
+    if src is not None and not src.resolve().is_relative_to(root.resolve()):
+        src = None
+    if src is None or not src.is_file():
+        return protocol.error("source_missing", f"the original file of {entry['name']!r} is not available here", source=rel)
+    try:
+        data, (w, h) = photo.render_jpeg(src, max_px, quality)
+    except OSError as exc:
+        return protocol.error("decode_failed", f"cannot decode {rel}", source=rel, detail=str(exc))
+    meta: dict[str, Any] = {"collection": name, "doc": entry["name"], "source": rel}
+    when = photo.read_exif(src).get("when")
+    meta["taken"] = when.isoformat(sep=" ") if when else None
+    try:
+        md = readdoc.markup_file(paths.live_markup(), name, entry)
+        meta["people"] = people.people_of_markdown(paths, md)
+    except Exception:  # noqa: BLE001 - the picture is still shown without names
+        meta["people"] = []
+    meta.update(width=w, height=h, bytes=len(data))
+    return {"ok": True, "source": "local", "result": {"meta": meta, "jpeg_bytes": data}}
+
+
 def list_documents(paths: Paths, collection: str, *, prefix: str = "", glob: str = "",
                    limit: int = readdoc.DEFAULT_LIST_LIMIT, offset: int = 0,
                    client: str | None = None) -> dict[str, Any]:

@@ -336,12 +336,9 @@ def render_image_frame(src: Path, frame: int, out: Path, *, long_side: int = REN
     HEIC/HEIF need pillow-heif."""
     from PIL import Image, ImageOps
 
-    try:
-        import pillow_heif                                    # type: ignore
+    from ..photo import register_heif
 
-        pillow_heif.register_heif_opener()
-    except ImportError:
-        pass
+    register_heif()
     with Image.open(src) as im:
         if frame > 1:
             im.seek(frame - 1)

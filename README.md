@@ -292,6 +292,7 @@ sandbox — nothing in production is ever touched.
 | `rag_search(query, collection="", top_k=5)` | Hybrid search + rerank; returns file, `doc` (the name to read it with), page, heading, text (and `"confidence": "low"` for a hit on a page the converter could not fully verify) |
 | `rag_grep(pattern, collection="", context_lines=2, max_matches=20)` | Regex over the converted Markdown, with page numbers |
 | `rag_read_document(collection, doc, offset=0, max_chars=20000, pages="")` | Read one whole document as indexed (a Markdown source verbatim, others as converted Markdown), in slices: `next_offset` says where to continue. Use after search or grep found it, to quote a table's exact figures. Needs no models |
+| `rag_get_photo(collection, doc, max_px=1400, quality=85)` | Show an indexed photo as a JPEG (the server decodes iPhone HEIC and fixes rotation), after search or grep found it; returns a short JSON description (`taken`, `people`, size) and the image. CLI: `rag-search photo COLLECTION DOC -o out.jpg`. |
 | `rag_list_documents(collection, prefix="", glob="", limit=200, offset=0)` | A collection's documents by folder prefix or pattern: `name`, `source`, `chars`, `indexed_at` (lighter than `documents=true`) |
 | `rag_index_update(path="", restart=false, rebuild=false)` | Incremental indexing in the indexer daemon (idempotent while a run is active) |
 | `rag_index_rebuild(path="", confirm=false, restart=false)` | Wipe and rebuild (needs `confirm=true`) |

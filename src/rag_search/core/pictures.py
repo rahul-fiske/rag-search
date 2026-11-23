@@ -87,13 +87,11 @@ def remove(idx_dir: Path) -> None:
 
 def open_image(src: Path, px: int = READ_PX):
     """The photograph as an RGB picture at most *px* on its long side, turned the way the camera held it."""
-    from PIL import Image, ImageOps
+    from PIL import ImageOps
 
-    with contextlib.suppress(Exception):
-        import pillow_heif
+    from .photo import open_image as open_file
 
-        pillow_heif.register_heif_opener()
-    im = Image.open(src)
+    im = open_file(src)
     with contextlib.suppress(Exception):
         im.draft("RGB", (px, px))        # JPEG: decode at a fraction of the size (much faster)
     im = ImageOps.exif_transpose(im).convert("RGB")
