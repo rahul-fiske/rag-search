@@ -186,6 +186,8 @@ def architecture(paths: Paths) -> dict[str, Any]:
                 "max_len": int(val["models.rerank_max_len"]),
                 "cap": spec.RERANK_CAP,
             },
+            "picture": {"name": models.picture_selection()[0],
+                        "enabled": models.picture_selection()[0] not in ("", "off")},
             "conversion": {"tool": "docling", **conv},
         },
         # what the next indexing run uses: config.json's indexer section, else the defaults

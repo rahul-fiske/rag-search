@@ -131,3 +131,31 @@ class IndexedVideoTests(TempHome):
         self.assertEqual(summary["unsupported_extension"], [])
         self.assertFalse(any(e["src"].endswith("IMG_10.MOV") for e in summary["errors"]))   # not "the same name as"
         self.assertEqual(summary["indexed"], 2)                                               # the video and the photo
+
+    def test_an_unchanged_video_keeps_its_kind_and_grade_and_is_counted_by_sniff(self):
+        (self.sdir / "clips").mkdir()
+        quicktime(self.sdir / "clips" / "IMG_11.MOV", keys=IPHONE)
+        found, unsup = locations.scan_tree(self.sdir, indexer.exclude_dirs(self.paths))
+        indexer.run_index(self.paths, found, self.roots(), unsupported=unsup, jobs=1, embedder=FakeEmbedder(),
+                          progress=lambda e: None)
+        events: list[dict] = []
+        log = self.tmp / "stages.jsonl"
+        indexer.run_index(self.paths, found, self.roots(), unsupported=unsup, jobs=1, embedder=FakeEmbedder(),
+                          progress=events.append, stage_log=log)
+        docs = [e["doc"] for e in events if "doc" in e]
+        self.assertEqual([(d["status"], d["understood"]["kind"]) for d in docs], [("skipped", "video")])
+        lines = [json.loads(x) for x in log.read_text().splitlines()]
+        self.assertIn("unchanged", [x.get("route") for x in lines if x.get("stage") == "sniff"])
+
+
+class SummaryTests(TempHome):
+    def test_the_run_view_counts_every_unsupported_file_by_extension(self):
+        from rag_search import jobs
+
+        uns = [{"src": f"/x/{i}.db", "extension": ".db"} for i in range(30)] + [{"src": "/x/a", "extension": ""}]
+        live = [{"src": "/x/IMG_1.MOV", "extension": ".mov", "companion": "IMG_1.HEIC"}]
+        v = jobs.view({"id": "j", "status": "succeeded", "summary": {"unsupported_extension": uns, "live_photo": live}})
+        s = v["summary"]
+        self.assertEqual((s["unsupported_count"], len(s["unsupported_extension"])), (31, 20))
+        self.assertEqual(s["unsupported_by_extension"], {".db": 30, "": 1})
+        self.assertEqual(s["live_photo_count"], 1)

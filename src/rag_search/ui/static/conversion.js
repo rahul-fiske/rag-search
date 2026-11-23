@@ -155,10 +155,10 @@ const CV = (function () {
       share != null ? h('span', { class: 'cv-tn-bar', title: share + '%' }, h('i', { style: { width: share + '%' } })) : null,
       note ? h('div', { class: 'cv-tn-note' }, note) : null);
   }
-  function track(key, count, nodes) {
+  function track(key, count, nodes, more) {
     return h('div', { class: 'cv-track' },
       h('div', { class: 'cv-track-l' }, h('span', { class: 'cv-key' }, h('i', { class: 'cv-sw kd-' + key, 'aria-hidden': 'true' }), h('b', null, KINDS[key][0])),
-        h('div', { class: 'cv-track-n' }, count), h('small', null, KINDS[key][1])),
+        h('div', { class: 'cv-track-n' }, count), more ? h('span', { class: 'cv-track-more' }, more) : null, h('small', null, KINDS[key][1])),
       h('div', { class: 'cv-track-steps' }, nodes.flatMap((n, i) => i ? [h('span', { class: 'cv-arrow', 'aria-hidden': 'true' }, '→'), n] : [n])));
   }
   /* The run's top-level figures: documents by kind -- done, being converted, left, the rate and the time left -- from
@@ -195,12 +195,15 @@ const CV = (function () {
     const nPageDocs = Object.entries(kinds).filter(([k]) => k !== PHOTO && k !== TIMELINE && k !== VIDEO).reduce((a, [, v]) => a + v.n, 0);
     const dsrc = S('describe').sources || {}, fs = S('faces'), fhow = fs.how || {}, fscope = fs.scope || {};
     const pv = S('pictures'), pvhow = pv.how || {}, pvscope = pv.scope || {};
+    // unchanged photographs this run checked for faces and a picture vector without converting them: counted beside
+    // the converted ones, so the track's figure and its steps' figures agree
+    const caught = Math.max(fscope['indexed earlier'] || 0, pvscope['indexed earlier'] || 0);
     const rw = t.runways || {}, total = sumOf(rw), out = t.outcomes || {}, read = sumOf(out), okPages = (out.pass || 0) + (out.repaired || 0);
     const pp = (kinds[PHOTOGRAPHED] || {}).n || 0;
     return h('div', { class: 'cv-flow' },
       h('div', { class: 'cv-sniff' }, tnode('3.0', 'Sniff', 'cpu', sniffed ? `${num(sniffed)} files sorted` : '', null,
         'Decides from the file itself, before any page is looked at: a video by its extension; a Google Maps Timeline .json by its content; an image with camera data gets a quick text check (Apple Vision): fewer than 200 letters and digits = a photograph, more = a photographed page. Everything else is a document of pages.',
-        sniffed ? `pages ${num(ro.pages || 0)} · photographs ${num(ro.photograph || 0)} · videos ${num(ro.video || 0)} · Timeline ${num(ro.timeline || 0)}` : 'what kind of file is it?')),
+        sniffed ? `pages ${num(ro.pages || 0)} · photographs ${num(ro.photograph || 0)} · videos ${num(ro.video || 0)} · Timeline ${num(ro.timeline || 0)}` + (ro.unchanged ? ` · unchanged ${num(ro.unchanged)} (not converted again)` : '') : 'what kind of file is it?')),
       h('div', { class: 'cv-tracks' },
         track('pages', num(nPageDocs || ro.pages || 0), [
           tnode('3.1', 'Profile', 'cpu', t.pages ? `${num(t.pages)} pages looked at` : '', null, 'What is on each page: a text layer, a scan, pictures, resolution, script'),
@@ -210,7 +213,7 @@ const CV = (function () {
             'Is the text trustworthy? Suspect table cells are re-read, tables are joined across pages. The bar: pages that passed (after repair too).',
             [read && (out.low || out.no_text) ? `${num(out.low || 0)} low confidence · ${num(out.no_text || 0)} without text` : '',
               pp ? `${num(pp)} photographed pages also got photo details` : ''].filter(Boolean).join(' · ') || null)]),
-        track('photograph', num(nP || ro.photograph || 0), [
+        track('photograph', num(nP || ro.photograph || 0) + (caught ? ' converted' : ''), [
           tnode('3.6', 'Photo details', 'cpu', nP ? `GPS position in ${num(pos)} of ${num(nP)}` : '', nP ? pctOf(pos, nP) : null,
             'Time, GPS position, camera and size. The bar: the share with a GPS position (without one a photograph cannot be placed).',
             nP ? `time in ${num(pf.time || 0)} · faces seen in ${num(pf.faces || 0)}` : null),
@@ -225,7 +228,7 @@ const CV = (function () {
             sumOf(dsrc) ? `by the model ${num(dsrc.model || 0)} · from the cache ${num(dsrc.cache || 0)}` + (dsrc.none ? ` · missing ${num(dsrc.none)} (a later run fills them in)` : '') : null),
           tnode('5.2', 'Picture vectors', 'gpu', pv.n ? `${num(pvhow.made || 0)} photograph${pvhow.made === 1 ? '' : 's'} embedded by their picture` : '', null,
             'After the text vectors, each photograph gets one vector from its pixels (SigLIP 2), so a query finds what a photograph shows even when its description does not say it. Kept with a key of its own: a new picture model, or the first run after picture vectors exist, embeds only the photographs.',
-            pv.n ? (pvscope['indexed earlier'] ? `of which indexed earlier ${num(pvscope['indexed earlier'])}` : 'all from this run') + (pvhow['could not be opened'] ? ` · could not be opened ${num(pvhow['could not be opened'])}` : '') : (nP ? 'none yet: the step runs after the text vectors, once the picture model is downloaded (Models tab)' : null))]),
+            pv.n ? (pvscope['indexed earlier'] ? `of which indexed earlier ${num(pvscope['indexed earlier'])}` : 'all from this run') + (pvhow['could not be opened'] ? ` · could not be opened ${num(pvhow['could not be opened'])}` : '') : (nP ? 'none yet: the step runs after the text vectors, once the picture model is downloaded (Models tab)' : null))], caught ? `+ ${num(caught)} indexed earlier, checked for faces and picture vectors` : null),
         track('video', num(nV || ro.video || 0), [
           tnode('3.11', 'Video details', 'cpu', nV ? `a time for ${num(vf.time || 0)} of ${num(nV)}` : '', nV ? pctOf(vf.time || 0, nV) : null,
             'Time, GPS position, camera, size and duration, read from the QuickTime / MP4 header (an .avi: size and duration only); the frames and the sound are not read. The bar: the share with a time.',

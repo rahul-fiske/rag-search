@@ -613,6 +613,26 @@ def _wants_picture(task: dict[str, Any], kind: str, md_path: Path, idx_dir: Path
         return False
 
 
+def _understood_unchanged(idx_dir: Path, md_path: Path, src: Path, kind: str) -> dict[str, Any] | None:
+    """What an unchanged document is and how completely it was understood, from what its last conversion recorded
+    (``index.meta.json``) and, for a file without pages, its Markdown: the Documents list then shows the kind and grade of
+    every document, not only of those this run converted.  None when nothing was recorded."""
+    conv = (read_json(idx_dir / META_FILE) or {}).get("conversion") or {}
+    branches, outcomes = conv.get("branches") or {}, conv.get("outcomes") or {}
+    if not branches:
+        return None
+    whole = set(branches) & trace.WHOLE_FILES
+    text = ""
+    if whole:
+        try:
+            text = md_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+    route = {"photo": "photograph", "video": "video", "timeline": "timeline"}.get(next(iter(whole), ""), "pages")
+    return understanding.of_document(fmt=kind, suffix=src.suffix.lower(), status="prepared", text=text, route=route,
+                                     branches=branches, outcomes=outcomes)
+
+
 def _faces_step(task: dict[str, Any], src: Path, sha: str, slog: Any, rel_name: str,
                 earlier: bool = False) -> tuple[int | None, str, float]:
     """3.9 Faces: find and remember the faces of one photograph (``faces.for_photo``), as a step of the run with its own
@@ -640,11 +660,15 @@ def sniff_document(task: dict[str, Any]) -> dict[str, Any]:
         md_path = markup_path_for(src, roots, Path(task["markup_root"]))
         again = not task["rebuild"] and not task["force_md"]
         fill = False
+        unchanged = lambda: stage_event(task.get("stage_log"), mirror_rel(src, roots).as_posix(), "sniff", "done",  # noqa: E731
+                                        seconds=0.0, route="unchanged")
         if again and is_fresh(idx_dir, sha, task["chunk_size"], task["chunk_overlap"], task["model"]):
             fill = _fills_description(task, kind, md_path, sha)
             if not fill:
+                unchanged()
                 return {"src": str(src), "route": ""}
         elif again and known_outcome(idx_dir, sha, task.get("ocr")):
+            unchanged()
             return {"src": str(src), "route": ""}
         t_sn = time.perf_counter()
         reused_md = md_is_current(md_path, sha, force=task["force_md"], ocr=task.get("ocr"))
@@ -729,14 +753,20 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
                 _repoint(idx_dir, src)
                 stage_event(slog, rel_name, "fingerprint", "done", seconds=round(time.perf_counter() - t_fp, 3),
                             unchanged=True)
+                if not task.get("sniffed"):               # 3.0 counts every file it sorted, an unchanged one too
+                    stage_event(slog, rel_name, "sniff", "done", seconds=0.0, route="unchanged")
                 if _wants_faces(task, kind, md_path):          # 3.9 Faces for a photograph indexed before faces were found
                     _faces_step(task, src, sha, slog, rel_name, earlier=True)
+                und = _understood_unchanged(idx_dir, md_path, src, kind)
                 return {"status": "skipped", "src": str(src), "idx_dir": str(idx_dir), "sha": sha,
+                        **({"understood": und} if und else {}),
                         **({"picture": True} if _wants_picture(task, kind, md_path, idx_dir, sha) else {})}
         known = None if task["rebuild"] or task["force_md"] or fill else known_outcome(idx_dir, sha, task.get("ocr"))
         if known:
             stage_event(slog, rel_name, "fingerprint", "done", seconds=round(time.perf_counter() - t_fp, 3),
                         unchanged=True)
+            if not task.get("sniffed"):
+                stage_event(slog, rel_name, "sniff", "done", seconds=0.0, route="unchanged")
             since = str(known.get("at") or "")[:10]
             return {"status": known["status"], "src": str(src), "known": True, "reason": known.get("reason", ""),
                     "message": f"{known.get('message', '')} [unchanged since {since}: not tried again]",
@@ -1837,7 +1867,7 @@ def run_index(
                           profile_s=res.get("profile_s"), **_conv_kw(res.get("conversion")), **_und_kw(res))
             elif res["status"] == "skipped":
                 skipped += 1
-                doc_event(Path(res["src"]), "skipped")
+                doc_event(Path(res["src"]), "skipped", **_und_kw(res))
             elif res["status"] == "no_text":
                 no_text.append({"src": res["src"], "message": res.get("message", "no text")})
                 doc_event(Path(res["src"]), "no_text", message=res.get("message", "no text"),

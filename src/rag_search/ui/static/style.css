@@ -343,14 +343,14 @@ svg.dg { display: block; width: 100%; height: auto; min-width: 820px; font-famil
 .cv-rw-meter i { display: block; height: 100%; background: var(--rw-c); min-width: 2px; }
 .rw-a .cv-rw-meter i { background: var(--rw-a); } .rw-b .cv-rw-meter i { background: var(--rw-b); } .rw-d .cv-rw-meter i { background: var(--rw-d); }
 /* Convert: one track per kind of file (core/understanding.py), then what was understood, by kind */
-.cv-flow { display: grid; grid-template-columns: minmax(170px, 210px) 1fr; gap: 10px 14px; margin-top: 12px; align-items: center; }
+.cv-flow { display: grid; grid-template-columns: minmax(170px, 210px) minmax(0, 1fr); gap: 10px 14px; margin-top: 12px; align-items: center; }
 .cv-sniff .cv-tn { border-width: 2px; }
 .cv-tracks { display: grid; gap: 8px; border-left: 2px solid var(--line-2); padding-left: 14px; }
-.cv-track { display: grid; grid-template-columns: 160px 1fr; gap: 10px; align-items: center; }
-.cv-track-l b { font-size: 13px; } .cv-track-n { font-size: 20px; font-weight: 600; line-height: 1.2; } .cv-track-l small { color: var(--muted); font-size: 11px; }
-.cv-track-steps { display: flex; gap: 6px; align-items: stretch; }
+.cv-track { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 10px; align-items: center; }
+.cv-track-l b { font-size: 13px; } .cv-track-more { display: block; color: var(--muted); font-size: 11px; } .cv-track-n { font-size: 20px; font-weight: 600; line-height: 1.2; } .cv-track-l small { color: var(--muted); font-size: 11px; }
+.cv-track-steps { display: flex; flex-wrap: wrap; gap: 6px; align-items: stretch; }
 .cv-track-steps > .cv-arrow { align-self: center; }
-.cv-tn { flex: 1 1 0; min-width: 0; border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 9px; background: var(--panel-2); font-size: 12px; display: grid; gap: 3px; align-content: start; }
+.cv-tn { flex: 1 1 0; min-width: 128px; border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 9px; background: var(--panel-2); font-size: 12px; display: grid; gap: 3px; align-content: start; }
 .cv-tn.on { background: var(--accent-soft); border-color: var(--accent); }
 .cv-tn-h { display: flex; align-items: center; gap: 6px; } .cv-tn-h b { flex: 1; } .cv-tn-id { color: var(--muted); font-variant-numeric: tabular-nums; }
 .cv-tn-fig { font-weight: 600; } .cv-tn:not(.on) .cv-tn-fig { color: var(--faint); font-weight: 400; }
@@ -371,7 +371,6 @@ svg.dg { display: block; width: 100%; height: auto; min-width: 820px; font-famil
 .cv-rw-eng { padding-left: 4px; }
 .cv-rw-legend { display: grid; gap: 2px; padding: 2px 4px; }
 @media (max-width: 960px) { .cv-pipe { grid-template-columns: 1fr; } .cv-pipe > .cv-arrow { transform: rotate(90deg); } }
-.cv-flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; margin-top: 12px; }
 .cv-arrow { align-self: center; color: var(--faint); }
 .cv-node { flex: 1 1 130px; border: 1px solid var(--line-2); border-radius: 8px; padding: 7px 10px; background: var(--panel-2); font-size: 12px; }
 .cv-node-h { font-weight: 600; display: flex; align-items: center; justify-content: space-between; gap: 4px; }

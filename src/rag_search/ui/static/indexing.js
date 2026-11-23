@@ -112,15 +112,19 @@
   // (they are rows of the Documents list below, filtered) and collapsed so a big folder does not push the page down.
   function unsupportedNotice(sum) {
     const listed = sum.unsupported_extension || [];
-    const byExt = {};
-    for (const e of listed) { const k = e.extension || '(no extension)'; byExt[k] = (byExt[k] || 0) + 1; }
+    const byExt = {};               // every skipped file by extension (a run before this was recorded: the listed ones)
+    if (sum.unsupported_by_extension) for (const [k, n] of Object.entries(sum.unsupported_by_extension)) byExt[k || '(no extension)'] = n;
+    else for (const e of listed) { const k = e.extension || '(no extension)'; byExt[k] = (byExt[k] || 0) + 1; }
     const exts = Object.entries(byExt).sort((a, b) => b[1] - a[1]);
+    const partial = !sum.unsupported_by_extension && sum.unsupported_count > listed.length;
     return h('details', { class: 'notice warn', style: { marginTop: '12px' } },
       h('summary', { style: { cursor: 'pointer' } }, h('b', null, `${num(sum.unsupported_count)} file(s) skipped — format not supported`),
-        h('span', { class: 'small muted' }, exts.length ? '  ' + exts.slice(0, 6).map(([k, n]) => `${k} ×${n}`).join(', ') + (exts.length > 6 ? ', …' : '') + (sum.unsupported_count > listed.length ? ` (of the first ${listed.length} listed)` : '') : '')),
+        h('span', { class: 'small muted' }, exts.length ? '  ' + exts.slice(0, 6).map(([k, n]) => `${k} ×${n}`).join(', ') + (exts.length > 6 ? ', …' : '') + (partial ? ` (of the first ${listed.length} listed)` : '') : '')),
       h('p', { class: 'small', style: { margin: '6px 0' } }, 'Counted, never changed or deleted. Accepted formats are listed under Start. ',
         h('a', { href: '#/indexing', on: { click: e => { e.preventDefault(); jumpToStatus('skipped_all'); } } }, 'Show all of them in the Documents list below')),
-      h('ul', { class: 'tight', style: { maxHeight: '180px', overflow: 'auto' } }, listed.map(e => h('li', null, h('span', { class: 'mono' }, e.src || ''), ' (', e.extension || 'no extension', ')'))));
+      exts.length > 6 ? h('p', { class: 'small muted', style: { margin: '0 0 6px' } }, 'By extension: ' + exts.map(([k, n]) => `${k} ×${num(n)}`).join(', ')) : null,
+      h('ul', { class: 'tight', style: { maxHeight: '180px', overflow: 'auto' } }, listed.map(e => h('li', null, h('span', { class: 'mono' }, e.src || ''), ' (', e.extension || 'no extension', ')'))),
+      sum.unsupported_count > listed.length ? h('p', { class: 'small muted', style: { margin: '4px 0 0' } }, `The first ${num(listed.length)} are listed; the Documents list below has all of them.`) : null);
   }
 
   // The video of a Live Photo (IMG_1234.MOV beside IMG_1234.HEIC) is part of its photograph, which is indexed: a quiet note.
@@ -470,6 +474,42 @@
           h('tbody', null, rows.map(([c, where]) => h('tr', null, h('td', { class: 'mono' }, c), h('td', null, where)))))) : null));
   }
 
+  // ---------- after the run: the 3.10 Describe catch-up (a model task, core/describe.py) ----------
+  // A photograph that could not be described while it was indexed (memory, model, an older model or prompt) is described
+  // by a pass after the run publishes, then a short run embeds it.  Its state comes from /api/photos (slow: once every 20 s).
+  let phAt = 0, phSig = '';
+  async function loadCatchup() {
+    if (Date.now() - phAt < 20000) return;
+    phAt = Date.now();
+    const r = await api('photos');
+    if (!r || !r.ok) return;
+    const sig = JSON.stringify([r.photographs, r.described, r.pending, r.failed, r.described_by_another_model, r.auto, r.task]);
+    if (sig === phSig) return;
+    phSig = sig;
+    patch(refs.catchup, catchupCard(r) || '');
+  }
+  function catchupCard(r) {
+    if (!r.photographs) return null;
+    const t = r.task, active = !!(t && (t.status === 'running' || t.status === 'queued')), p = (t && t.progress) || {};
+    const left = (r.pending || 0) + (r.described_by_another_model || 0);
+    const pct = p.total ? Math.min(100, Math.round(100 * (p.done || 0) / p.total)) : null;
+    const state = active ? `describing now · ${num(p.done || 0)} of ${num(p.total || left)}` + (p.model ? ` · ${p.model}` : '')
+      : !left ? 'nothing left to describe'
+      : !r.auto ? 'waiting: automatic descriptions are off (Models tab), or run “rag-search photos describe”'
+      : r.unavailable ? `waiting: ${r.unavailable}`
+      : 'starts by itself after the next run publishes';
+    return h('div', { class: 'card', style: { marginTop: '16px' } },
+      h('div', { class: 'card-head' }, h('h2', null, 'After the run · 3.10 Describe catch-up'), active ? statusPill('running') : null,
+        h('span', { class: 'muted small' }, 'photographs described after the run that indexed them; a short run then embeds them')),
+      h('div', { class: 'grid g4' },
+        statCard(`${num(r.described || 0)} of ${num(r.photographs)}`, `described by ${r.model_label || 'the current model'}`),
+        statCard(num(r.pending || 0), 'not described yet'),
+        r.described_by_another_model ? statCard(num(r.described_by_another_model), 'described by an older model or prompt') : null,
+        r.failed ? statCard(num(r.failed), 'the model could not describe') : null),
+      active ? h('div', { class: 'bar', style: { marginTop: '10px' } }, h('i', { style: { width: (pct === null ? 8 : pct) + '%' } })) : null,
+      h('p', { class: 'small muted', style: { margin: '8px 0 0' } }, state, ' · ', h('a', { href: '#/models' }, 'Models tab')));
+  }
+
   // ---------- the settings the pipeline runs with (read-only; edit them on the Settings tab) ----------
   let plSig = '';
   async function loadPipeline() {
@@ -497,6 +537,16 @@
     RS.views.indexing.update();
   }
 
+  // What a run converted, by kind: documents of pages (with their pages), photographs, videos, Timelines
+  // (summary.conversion: ``docs`` and ``pages`` count documents of pages, ``whole`` the files that have no pages).
+  function byKind(conv) {
+    if (!conv) return '';
+    const w = conv.whole || {}, s = (n, one, many) => `${num(n)} ${n === 1 ? one : many}`;
+    const parts = [conv.docs ? s(conv.docs, 'document', 'documents') + (conv.pages ? ` (${s(conv.pages, 'page', 'pages')})` : '') : '',
+      w.photo ? s(w.photo, 'photograph', 'photographs') : '', w.video ? s(w.video, 'video', 'videos') : '', w.timeline ? s(w.timeline, 'Timeline', 'Timelines') : ''].filter(Boolean);
+    return parts.length ? parts.join(' · ') + ': ' : '';
+  }
+
   function historyCard() {
     const idx = RS.state.live && RS.state.live.index; const hist = (idx && idx.history) || [];
     return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', null, 'Run history')),
@@ -505,7 +555,7 @@
         h('tbody', null, hist.map(j => h('tr', null, h('td', { class: 'mono' }, j.id), h('td', null, (j.mode || '') + (j.path ? ' · ' + j.path : '')),
           h('td', null, statusPill(j.status)), h('td', { class: 'nowrap muted' }, clock(j.started_at || j.created_at)),
           h('td', { class: 'nowrap' }, j.elapsed_s !== undefined ? dur(j.elapsed_s) : ''),
-          h('td', { class: 'muted' }, j.summary ? `${j.summary.conversion && j.summary.conversion.pages ? num(j.summary.conversion.pages) + ' pages, ' : ''}${j.summary.indexed ?? 0} indexed, ${(j.summary.skipped_fresh ?? j.summary.skipped) ?? 0} unchanged, ${j.summary.no_text_count ? j.summary.no_text_count + ' without text, ' : ''}${j.summary.unsupported_count ? j.summary.unsupported_count + ' unsupported format, ' : ''}${j.summary.error_count || 0} failed` : ''))))))
+          h('td', { class: 'muted' }, j.summary ? `${byKind(j.summary.conversion)}${j.summary.indexed ?? 0} indexed, ${(j.summary.skipped_fresh ?? j.summary.skipped) ?? 0} unchanged, ${j.summary.no_text_count ? j.summary.no_text_count + ' without text, ' : ''}${j.summary.unsupported_count ? j.summary.unsupported_count + ' unsupported format, ' : ''}${j.summary.live_photo_count ? j.summary.live_photo_count + ' Live Photo videos, ' : ''}${j.summary.error_count || 0} failed` : ''))))))
         : empty('No runs yet.'));
   }
 
@@ -523,6 +573,7 @@
       refs.sources = h('div', { style: { marginTop: '10px' } });
       refs.supportedExt = h('span', { class: 'muted small' });
       refs.plcard = h('div', { style: { marginTop: '16px' } });
+      refs.catchup = h('div');
       refs.run = h('div'); refs.conv = h('div'); refs.workers = h('div'); refs.hist = h('div', { style: { marginTop: '16px' } });
 
       refs.docHeadline = h('span', { class: 'muted small' });
@@ -555,7 +606,7 @@
           h('div', { class: 'row', style: { marginTop: '12px' } }, refs.btnStart, refs.btnAll, refs.btnEstimate, refs.btnCancel, refs.btnPublish,
             h('span', { class: 'muted small' }, 'Only one run exists at a time. New documents become searchable automatically when it finishes.')),
           refs.est),
-        h('div', { style: { marginTop: '16px' } }, refs.run), refs.conv, refs.workers, refs.docs, refs.plcard, refs.hist);
+        h('div', { style: { marginTop: '16px' } }, refs.run), refs.catchup, refs.conv, refs.workers, refs.docs, refs.plcard, refs.hist);
     },
     update() {
       const idx = RS.state.live && RS.state.live.index;
@@ -565,6 +616,7 @@
       refs.supportedExt.textContent = supExt && supExt.length
         ? 'accepted formats: ' + supExt.map(e => e.replace(/^\./, '')).join(', ') : '';
       loadPipeline();
+      loadCatchup();
       const names = ((RS.state.catalog && RS.state.catalog.list && RS.state.catalog.list.collections) || []).map(c => c.collection);
       if (refs.list.dataset.sig !== names.join('|')) { refs.list.dataset.sig = names.join('|'); fill(refs.list, names.map(n => h('option', { value: n }))); }
       controls();

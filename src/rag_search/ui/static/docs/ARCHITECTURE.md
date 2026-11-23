@@ -630,13 +630,22 @@ the HTTP API and the dashboard (design: `docs/design/document-conversion-plan.md
   the expected facts *missing*, read from the Markdown it was indexed as (a photograph: time, position, place,
   places nearby, faces, description; complete = time, position, place and description; without a position only
   "position" is missing). `runview` totals them per kind (`kinds`: count, grades, found, missing, a few example files
-  per gap) and the steps beside the lanes (`steps`: files through 3.0, 3.6, 3.7, 3.8, 3.9, 3.10, seconds, the route 3.0
-  chose, how each photograph got its description). The Indexing tab's Convert panel draws one track per kind of file
-  3.0 tells apart (documents of pages, photographs, Timelines), each step with the one figure that says how it went
+  per gap) and the steps beside the lanes (`steps`: files through 3.0, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11, seconds, the route
+  3.0 chose -- `unchanged` for a file it found current, so 3.0 counts every file it sorted --, how each photograph got its
+  description). The Indexing tab's Convert panel draws one track per kind of file 3.0 tells apart (documents of pages,
+  photographs, videos, Timelines; the photograph track also counts the unchanged photographs this run checked for faces
+  or a picture vector, so its figure and its steps' agree, and a file planned on a track by its extension that proves
+  unchanged leaves the track's plan), each step with the one figure that says how it went
   (a GPS position in N of M photographs, a place for N of M positions, described N of M), the table *What this run
   understood, by kind of document*, and, in the pages section, the four lanes of 3.2 in detail on request. The `doc`
-  events carry the same `understood` (kind, grade, missing), so the Documents list filters by kind and grade
+  events carry the same `understood` (kind, grade, missing) -- an unchanged document too, worked out from what its last
+  conversion recorded (`indexer._understood_unchanged`: `index.meta.json`, and the Markdown of a file without pages) --,
+  so the Documents list filters by kind and grade
   (`jobs.documents(kind=, grade=)`, `by_kind` / `by_grade`) in the words of that table: one vocabulary for the run.
+* **Around the run** (Indexing tab): the 3.10 Describe catch-up after it (from `/api/photos`: described, not described yet,
+  described by an older model, the model task's progress), the run history by kind (documents with their pages,
+  photographs, videos, Timelines, from `summary.conversion`), and the files skipped for their format counted by
+  extension in full (`summary.unsupported_by_extension`; the first 20 are listed by name).
 * **Colours** (`style.css`, `CV.legend`): every bar has a key beside it, a labelled swatch per colour. Four families never
   share a colour, in the light and the dark theme: the kind of document (`--kd-*`: pages, photograph, Timeline), how well
   it went (`--q-*`, one scale for a document's grade and a page's outcome: complete / passed, repaired, partly understood /

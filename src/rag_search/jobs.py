@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from collections import Counter
+
 import json
 import re
 import time
@@ -192,6 +194,7 @@ def view(rec: dict[str, Any]) -> dict[str, Any]:
             "errors": errs[:20], "error_count": len(errs),
             "no_text": empty[:20], "no_text_count": len(empty),
             "unsupported_extension": uns[:20], "unsupported_count": len(uns),
+            "unsupported_by_extension": dict(Counter(u.get("extension") or "" for u in uns).most_common()),
             "removed": removed[:20], "removed_count": len(removed),
             "known": known[:20], "known_count": len(known),
             "live_photo": live[:20], "live_photo_count": len(live),

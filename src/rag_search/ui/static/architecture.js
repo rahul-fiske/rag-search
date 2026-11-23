@@ -187,20 +187,22 @@
   function searchDiagram() {
     const m = A.models, f = A.fusion;
     const E = (...a) => dedge('srch', ...a);
-    return dsvg('srch', 1180, 300,
-      'Search pipeline: the query passes an access check, then a keyword (BM25) and a vector (cosine) branch each rank chunks in every allowed collection; reciprocal rank fusion merges the lists into one pool; the reranker re-orders the best candidates and the top k are returned.',
+    const pic = m.picture || { name: '', enabled: false };
+    return dsvg('srch', 1180, 410,
+      'Search pipeline: the query passes an access check, then a keyword (BM25), a vector (cosine) and a picture-vector branch (the query against every photograph\'s picture vector) each rank candidates in every allowed collection; reciprocal rank fusion merges the lists into one pool, a photograph being one candidate; the reranker re-orders the best candidates (a multimodal reranker looks at the picture of each photograph) and the top k are returned.',
       dbox(20, 105, 130, 90, 'Query', ['text + top_k', 'collections'], 'store'),
       dbox(190, 105, 150, 90, 'S1 · Access check', ['forbidden =', 'unknown, like', 'a typo'], 'hl'),
       dbox(390, 30, 220, 100, 'S2 · Keyword · BM25', ['exact terms, IDs, versions', `k1 ${A.keyword.k1} · b ${A.keyword.b}`, 'best pool_n per collection'], null),
       dbox(390, 170, 220, 100, 'S3 · Vectors · cosine', ['meaning, paraphrases', shortName(m.embedding.name), 'best pool_n per collection'], null),
-      dbox(660, 105, 150, 90, 'S4 · Fuse · RRF', [`Σ 1/(${f.k} + rank)`, 'one pool across', 'all collections'], 'hl'),
+      dbox(390, 300, 220, 90, 'S3b · Picture vectors', pic.enabled ? ['photographs by what they show', shortName(pic.name), '"a photo of …" vs each picture'] : ['switched OFF (Models tab):', 'no picture vectors made', 'or searched'], pic.enabled ? null : 'dim'),
+      dbox(660, 105, 150, 90, 'S4 · Fuse · RRF', [`Σ 1/(${f.k} + rank)`, 'one pool, a photo', 'is one candidate'], 'hl'),
       dbox(850, 105, 150, 90, 'S5 · Rerank', [shortName(m.reranker.name), m.reranker.enabled ? 'query + chunk read' : 'switched OFF:', m.reranker.enabled ? 'together, 0 – 1' : 'RRF order used'], m.reranker.enabled ? 'hl' : 'dim'),
       dbox(1040, 105, 120, 90, 'S6 · Top k', ['page, heading,', 'snippet, score'], 'store'),
       E('M150,150 H186', null),
-      E('M340,150 H365 V80 H386', null), E('M340,150 H365 V220 H386', null),
-      E('M610,80 H635 V135 H656', null), E('M610,220 H635 V165 H656', null),
+      E('M340,150 H365 V80 H386', null), E('M340,150 H365 V220 H386', null), E('M365,220 V345 H386', null),
+      E('M610,80 H635 V135 H656', null), E('M610,220 H635 V165 H656', null), E('M610,345 H635 V165', null),
       E('M810,150 H846', `≤ ${m.reranker.cap}`, 828, 144), E('M1000,150 H1036', 'top_k', 1018, 144),
-      sv('text', { x: 20, y: 292, class: 's' }, 'grep is a separate path: a regular-expression scan of the converted Markdown, no models, answers even while they load.'));
+      sv('text', { x: 20, y: 404, class: 's' }, 'grep is a separate path: a regular-expression scan of the converted Markdown, no models, answers even while they load.'));
   }
 
   /* ---------- 1. system overview ---------- */
@@ -308,7 +310,7 @@ serving/                                  what the search daemon reads
     const f = A.fusion, m = A.models, L = A.limits, pools = A.pools;
     return [
       card('One query, step by step', 'every collection the client may use is searched; all share one candidate pool',
-        figure(searchDiagram(), `Keyword search finds exact identifiers, vector search finds paraphrases; fusion needs no score calibration because it uses only ranks. Each branch keeps max(4 × top_k, 20) chunks per collection; at most ${m.reranker.cap} reach the reranker, which reads query and chunk together. Default top_k is ${L.top_k_default}, at most ${L.top_k_max}; snippets are cut to ${L.snippet_chars} characters.`)),
+        figure(searchDiagram(), `Keyword search finds exact identifiers, vector search finds paraphrases, picture vectors find what a photograph shows; fusion needs no score calibration because it uses only ranks. Each branch keeps max(4 × top_k, 20) chunks per collection; at most ${m.reranker.cap} reach the reranker, which reads query and chunk together. Default top_k is ${L.top_k_default}, at most ${L.top_k_max}; snippets are cut to ${L.snippet_chars} characters.`)),
       card('Why fuse ranks instead of scores?', null,
         p('BM25 scores are unbounded and depend on the collection; cosine similarities sit in a narrow band. Adding them needs careful calibration. RRF only uses ', h('i', null, 'positions'), ', so the two lists combine without tuning: a chunk near the top of both lists beats one that is first in only one, and the constant ',
           code('k = ' + f.k), ' keeps a single first place from dominating.'),
