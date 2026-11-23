@@ -32,7 +32,8 @@ from . import faces
 
 MATCH = 0.40                # cosine: a face is this person (OpenCV puts SFace's line for "same person" at 0.363)
 MARGIN = 0.06               # ... and this much closer to them than to anyone else (relatives look alike)
-SUGGEST = 0.30              # a weaker match is only a suggestion
+SUGGEST = 0.363             # a weaker match is only a suggestion; OpenCV's own line for "the same person" (it was 0.30: 3,400 of 27,000
+                            # suggestions sat below it, and most suggestions were faces under 40 px, which SFace cannot tell apart)
 MAX_GROUP = 150             # a group of look-alikes the People tab shows is never larger than this
 CLUSTER = 0.45              # two unnamed faces this close are grouped together
 MIN_PX = 40                 # smaller faces are never named automatically
@@ -118,7 +119,7 @@ def work_out(store: faces.Store) -> Who:
             s2 = float(best[i, order[i, 1]]) if len(people) > 1 else -1.0
             if s1 >= MATCH and s1 - s2 >= MARGIN and good[i]:
                 who.person[f] = (people[k1], "auto", round(s1, 3))
-            elif s1 >= SUGGEST and score[i] >= faces.SURE_SCORE:     # a box the finder is unsure of is only ever named by hand
+            elif s1 >= SUGGEST and px[i] >= MIN_PX and score[i] >= faces.SURE_SCORE:    # a tiny face or an unsure box is never guessed at
                 who.suggest[f] = (people[k1], round(s1, 3))
     who.unknown = [int(f) for i, f in enumerate(ids) if good[i] and int(f) not in who.person]
     return who
@@ -329,7 +330,7 @@ def person_view(paths: Paths, person: int, limit: int = 120) -> dict[str, Any]:
 
 def photo_of_face(paths: Paths, face: int) -> dict[str, Any] | None:
     """The photograph a face was found in and every face found in it, for the People tab's photo viewer: ``{"face", "sha",
-    "src", "faces": [{"id", "x", "y", "w", "h", "score", "px", "person", "name", "how"}]}`` (boxes are fractions of the upright
+    "src", "faces": [{"id", "x", "y", "w", "h", "score", "px", "person", "name", "how", "similarity"}]}`` (boxes are fractions of the upright
     picture; ``how`` is "you" for a face you named, "auto" for one matched to a person, "suggested" for a weaker match, "" for
     nobody).  None when there is no such face."""
     if not faces.store_file(paths).exists():
@@ -345,14 +346,15 @@ def photo_of_face(paths: Paths, face: int) -> dict[str, Any] | None:
     out = []
     for fid, x, y, fw, fh, score, px in rows:
         person, name, how = None, "", ""
+        sim = None
         if w is not None and fid in w.person:
-            person, how, _s = w.person[fid]
+            person, how, sim = w.person[fid]
             name = w.names.get(person, "")
         elif w is not None and fid in w.suggest:
-            person, _s = w.suggest[fid]
-            name, how = w.names.get(person, ""), "suggested"
+            person, sim = w.suggest[fid]
+            name, how = w.names.get(person, ""), "suggested"             # a guess: the viewer shows it as one, never as the name
         out.append({"id": fid, "x": x, "y": y, "w": fw, "h": fh, "score": round(score or 0.0, 2), "px": px,
-                    "person": person, "name": name, "how": how})
+                    "person": person, "name": name, "how": how, "similarity": sim})
     return {"face": int(face), "sha": sha, "src": src, "faces": out}
 
 

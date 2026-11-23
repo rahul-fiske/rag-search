@@ -33,7 +33,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from ..paths import Paths
+from ..paths import META_FILE, Paths, read_json
 from . import geo
 
 HEADING = "## Photo details"
@@ -167,6 +167,16 @@ def read_exif(src: Path) -> dict[str, Any]:
     if meta:                                              # a size alone is not metadata worth a section
         meta["size"] = size
     return meta
+
+
+def recorded_photo(idx_dir: Path) -> bool | None:
+    """Whether the last conversion of a file recorded it as a photograph (its page branches in ``index.meta.json`` are
+    ``photo`` alone): True, False for another kind, None when nothing is recorded (not indexed yet).  The one answer to "is this
+    a photograph?" for every step that works on photographs after the conversion -- faces, descriptions, picture vectors, the
+    coverage report -- so a Markdown that looks odd (an old version wrote the description after a blank line, or without its
+    heading) cannot make a photograph look like a page."""
+    branches = ((read_json(idx_dir / META_FILE) or {}).get("conversion") or {}).get("branches") or {}
+    return set(branches) == {"photo"} if branches else None
 
 
 Annotator = Callable[[dict[str, Any], Paths], "tuple[list[str], str]"]

@@ -219,7 +219,8 @@ def finder(paths: Paths) -> Finder:
 
 
 def for_photo(paths: Paths, src: Path, sha: str, *, store: "Store | None" = None) -> tuple[int | None, str]:
-    """3.9 Faces for one photograph: find and remember its faces unless they are remembered already.  Returns ``(count, how)``
+    """3.9 Faces for one photograph: find and remember its faces unless they are remembered already.  Returns ``(count, how)``,
+    *count* being the faces the finder is sure of (``SURE_SCORE``; the unsure boxes are kept for the photograph viewer only),
     with *how* ``found`` (looked at now), ``known`` (looked at before: nothing is read), ``unavailable`` (no face models on
     this machine) or ``failed`` (the picture could not be read); *count* is None for the last two.  Never fails a photograph."""
     if available(paths):
@@ -230,10 +231,10 @@ def for_photo(paths: Paths, src: Path, sha: str, *, store: "Store | None" = None
         n = st.photo_faces(sha)
         if n is not None:
             st.seen_at(sha, src)
-            return n, "known"
+            return st.sure_faces(sha), "known"
         found = finder(paths).faces(src)
         st.add_photo(sha, src, found)
-        return len(found), "found"
+        return st.sure_faces(sha), "found"
     except Exception:  # noqa: BLE001 - no faces is better than a failed photograph
         return None, "failed"
     finally:
@@ -296,6 +297,10 @@ class Store:
     def photo_faces(self, sha: str) -> int | None:
         row = self.con.execute("SELECT faces FROM photos WHERE sha = ? AND detector IN (?, ?)", (sha, DETECTOR, DETECTOR_MS)).fetchone()
         return None if row is None else int(row[0])
+
+    def sure_faces(self, sha: str) -> int:
+        """The faces of a photograph the finder is sure of (or that you drew): the count its Markdown says."""
+        return int(self.con.execute("SELECT COUNT(*) FROM faces WHERE sha = ? AND score >= ?", (sha, SURE_SCORE)).fetchone()[0])
 
     def seen_at(self, sha: str, src: Path) -> None:
         with self.con:

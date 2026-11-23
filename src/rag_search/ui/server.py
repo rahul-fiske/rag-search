@@ -112,6 +112,8 @@ def _warm(app: Any) -> None:
         stamp = _task_stamp(model_tasks.read_task(app.paths))
         _SLOW.get(("models", stamp), lambda: models.state(app.paths))
         _SLOW.get(("photos", "", stamp), lambda: describe.status(app.paths, ""))
+        from ..core import coverage
+        _SLOW.get(("coverage", "", stamp), lambda: coverage.report(app.paths, ""))
         _SLOW.get(("maps", stamp), lambda: (maps.status(app.paths), maps.plan(app.paths)))
         w = people.who(app.paths)
         if w is not None:
@@ -497,6 +499,12 @@ class Handler(BaseHTTPRequestHandler):
             task = model_tasks.read_task(app.paths)
             return self._json({"ok": True, **_SLOW.get(("models", _task_stamp(task)), lambda: models.state(app.paths)),
                                "task": task})
+        if name == "coverage":                             # what each photograph has, step by step (core/coverage.py)
+            from ..core import coverage
+
+            coll = (q.get("collection") or [""])[0]
+            return self._json({"ok": True, **_SLOW.get(("coverage", coll, _task_stamp(model_tasks.read_task(app.paths))),
+                                                      lambda: coverage.report(app.paths, coll))})
         if name == "photos":
             from ..core import describe
 

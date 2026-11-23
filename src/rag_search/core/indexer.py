@@ -20,6 +20,7 @@ import logging
 import multiprocessing as mp
 import os
 import queue
+import re
 import shutil
 import signal
 import subprocess
@@ -573,7 +574,13 @@ def _sniff(src: Path, kind: str, reused_md: bool, old: dict[str, Any],
     return "pages", meta, None
 
 
-def _fills_description(task: dict[str, Any], kind: str, md_path: Path, sha: str) -> bool:
+def _is_photo_doc(idx_dir: Path | None, text: str) -> bool:
+    """Is this document a photograph?  What its conversion recorded when there is a record, else what its Markdown looks like."""
+    recorded = photo.recorded_photo(idx_dir) if idx_dir is not None else None
+    return recorded if recorded is not None else describe.is_photograph(text)
+
+
+def _fills_description(task: dict[str, Any], kind: str, md_path: Path, sha: str, idx_dir: Path | None = None) -> bool:
     """An unchanged photograph is converted again when its description is missing and can be made now: "description" is
     one of its facts like any other, and a later run fills it in (unless the model failed on this photograph before)."""
     if kind != "image" or not task.get("describe_ready") or task["rebuild"] or task["force_md"]:
@@ -582,18 +589,18 @@ def _fills_description(task: dict[str, Any], kind: str, md_path: Path, sha: str)
         text = md_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
-    if describe.LOOKS in text or not describe.is_photograph(text):
+    if describe.LOOKS in text or not _is_photo_doc(idx_dir, text):
         return False
     return sha not in describe.failures(get_paths(), describe.current_id())
 
 
-def _wants_faces(task: dict[str, Any], kind: str, md_path: Path) -> bool:
+def _wants_faces(task: dict[str, Any], kind: str, md_path: Path, idx_dir: Path | None = None) -> bool:
     """An unchanged photograph is looked at for faces when none were found for it yet and the face models are here: only the
     People store changes (its Markdown and index entry are not touched, so nothing is converted or embedded again)."""
     if kind != "image" or not task.get("faces_ready"):
         return False
     try:
-        return describe.is_photograph(md_path.read_text(encoding="utf-8", errors="replace"))
+        return _is_photo_doc(idx_dir, md_path.read_text(encoding="utf-8", errors="replace"))
     except OSError:
         return False
 
@@ -604,11 +611,8 @@ def _wants_picture(task: dict[str, Any], kind: str, md_path: Path, idx_dir: Path
     model = task.get("picture_model") or ""
     if kind != "image" or not model or pictures.is_current(idx_dir, sha, model):
         return False
-    branches = ((read_json(idx_dir / META_FILE) or {}).get("conversion") or {}).get("branches") or {}
-    if branches:                           # the conversion says so (a photograph without camera details has no Photo details)
-        return set(branches) == {"photo"}
     try:
-        return describe.is_photograph(md_path.read_text(encoding="utf-8", errors="replace"))
+        return _is_photo_doc(idx_dir, md_path.read_text(encoding="utf-8", errors="replace"))
     except OSError:
         return False
 
@@ -631,6 +635,24 @@ def _understood_unchanged(idx_dir: Path, md_path: Path, src: Path, kind: str) ->
     route = {"photo": "photograph", "video": "video", "timeline": "timeline"}.get(next(iter(whole), ""), "pages")
     return understanding.of_document(fmt=kind, suffix=src.suffix.lower(), status="prepared", text=text, route=route,
                                      branches=branches, outcomes=outcomes)
+
+
+_FACES_LINE = re.compile(rf"^- {re.escape(faces.LINE)} (\d+)[ \t]*$", re.M)
+
+
+def _faces_line_differs(md_path: Path, n: int | None) -> bool:
+    """Does a photograph's Markdown say another number of faces than the People store holds (*n*, the faces the finder is
+    sure of)?  Photographs converted before the store existed carry Apple Vision's count under the same label, and a face added
+    by hand changes the count later.  A photograph with no line and no faces is as it should be.  False when the store gave no
+    answer (*n* is None)."""
+    if n is None:
+        return False
+    try:
+        text = md_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    m = _FACES_LINE.search(text)
+    return int(m.group(1)) != n if m else n > 0
 
 
 def _faces_step(task: dict[str, Any], src: Path, sha: str, slog: Any, rel_name: str,
@@ -663,7 +685,7 @@ def sniff_document(task: dict[str, Any]) -> dict[str, Any]:
         unchanged = lambda: stage_event(task.get("stage_log"), mirror_rel(src, roots).as_posix(), "sniff", "done",  # noqa: E731
                                         seconds=0.0, route="unchanged")
         if again and is_fresh(idx_dir, sha, task["chunk_size"], task["chunk_overlap"], task["model"]):
-            fill = _fills_description(task, kind, md_path, sha)
+            fill = _fills_description(task, kind, md_path, sha, idx_dir)
             if not fill:
                 unchanged()
                 return {"src": str(src), "route": ""}
@@ -726,6 +748,7 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
     idx_dir: Path | None = None
     sha = ""
     route = ""
+    faces_seen: int | None = None          # the faces step has run for this photograph already (it was unchanged)
 
     def lasting(status: str, exc: BaseException | None, message: str) -> None:
         """Remember a result that will not change until the file does (see ``lasting_reason``)."""
@@ -748,15 +771,18 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         fill = False                       # an unchanged photograph whose description can be made now
         if (not task["rebuild"] and not task["force_md"]
                 and is_fresh(idx_dir, sha, cs, co, model)):
-            fill = bool(task["fill"]) if "fill" in task else _fills_description(task, kind, md_path, sha)
+            fill = bool(task["fill"]) if "fill" in task else _fills_description(task, kind, md_path, sha, idx_dir)
+            if not fill and _wants_faces(task, kind, md_path, idx_dir):   # 3.9 Faces for a photograph indexed before faces were found
+                faces_seen, _how, _s = _faces_step(task, src, sha, slog, rel_name, earlier=True)
+                # the People store is the truth: a photograph whose Markdown says another count (Apple Vision's, from before the
+                # store, or a face added by hand) is made again from what is known (cheap: no model runs) and embedded in this run
+                fill = _faces_line_differs(md_path, faces_seen)
             if not fill:
                 _repoint(idx_dir, src)
                 stage_event(slog, rel_name, "fingerprint", "done", seconds=round(time.perf_counter() - t_fp, 3),
                             unchanged=True)
                 if not task.get("sniffed"):               # 3.0 counts every file it sorted, an unchanged one too
                     stage_event(slog, rel_name, "sniff", "done", seconds=0.0, route="unchanged")
-                if _wants_faces(task, kind, md_path):          # 3.9 Faces for a photograph indexed before faces were found
-                    _faces_step(task, src, sha, slog, rel_name, earlier=True)
                 und = _understood_unchanged(idx_dir, md_path, src, kind)
                 return {"status": "skipped", "src": str(src), "idx_dir": str(idx_dir), "sha": sha,
                         **({"understood": und} if und else {}),
@@ -854,7 +880,10 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
                 stage_event(slog, rel_name, "locate", "done", seconds=round(loc_s, 3),
                             nearby="- Nearby:" in video_section)
         if photograph:                                 # 3.9 Faces: after Locate; its count is a line of the details
-            n_faces, f_how, f_s = _faces_step(task, src, sha, slog, rel_name)
+            if faces_seen is not None:                 # looked at a moment ago, as an unchanged photograph
+                n_faces = faces_seen
+            else:
+                n_faces, f_how, f_s = _faces_step(task, src, sha, slog, rel_name)
             if n_faces is not None:
                 photo_section = photo.insert_extra(photo_section, [f"{faces.LINE} {n_faces}"])
         if photograph:                                 # 3.10 Describe: after Faces, before Chunk

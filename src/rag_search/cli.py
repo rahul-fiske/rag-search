@@ -1150,6 +1150,36 @@ def _cmd_maps(a: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_coverage(a: argparse.Namespace) -> int:
+    from .core import coverage
+
+    rep = coverage.report(get_paths(), a.collection)
+    if a.json:
+        _json(rep)
+        return EXIT_OK
+    names = {"described": "described (3.10)", "faces": "faces looked for (3.9)", "pictures": "picture vector (5.2)",
+             "places": "places tagged (3.7)"}
+    for name, c in rep["collections"].items():
+        print(f"{name}: {c['files']} indexed -- {c['photographs']} photographs, {c['videos']} videos, "
+              f"{c['timelines']} timelines, {c['documents']} documents of pages")
+        if not c["photographs"]:
+            continue
+        for k, s in c["steps"].items():
+            if k in rep["notes"]:
+                print(f"  {names[k]:<26} not expected: {rep['notes'][k]}")
+                continue
+            line = f"  {names[k]:<26} {s['done']:>7} of {s['expected']:<7}"
+            if s["expected"] > s["done"]:
+                line += f" {s['expected'] - s['done']} missing (e.g. {', '.join(s['examples'][:2])})"
+            if s["stale"]:
+                line += f"  {s['stale']} from an older " + {"faces": "finder (one size)", "pictures": "picture model",
+                                                           "places": "map"}.get(k, "producer")
+            if s.get("gave_up"):
+                line += f"  {s['gave_up']} the model could not describe"
+            print(line)
+    return EXIT_OK
+
+
 def _cmd_photos(a: argparse.Namespace) -> int:
     from . import model_tasks, models
     from .core import describe
@@ -3046,6 +3076,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--collection", default="", help="only this collection")
     p.add_argument("--limit", type=int, default=0, help="describe: at most this many photographs (a trial)")
     p.add_argument("--redo", action="store_true", help="describe: also the ones already described by the current model")
+
+    p = add("coverage", "what each photograph has: descriptions, faces, picture vectors, places -- and what is missing", _cmd_coverage,
+            description="For every collection, how many photographs have each step done (and should), and how many have it from an "
+            "older producer (another description model, an earlier face finder, another picture model, changed map data). It reads "
+            "the records the steps keep, not the files, so a step that left photographs behind shows here. Takes a few seconds.")
+    p.add_argument("collection", nargs="?", default="", help="only this collection")
 
     p = add("people", "faces in photographs, and the names you give them (named on the dashboard's People tab)", _cmd_people,
             description="status: how many photographs were looked at, faces found and people named. setup: download the face "

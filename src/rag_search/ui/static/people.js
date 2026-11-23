@@ -45,6 +45,8 @@
     };
     stage.addEventListener('mousedown', down); window.addEventListener('mousemove', move); window.addEventListener('mouseup', done);
   }
+  // only a face you named, or one matched with good reason, carries a name; a weaker match is a guess, shown as one
+  const sure = f => (f.how === 'you' || f.how === 'auto') && !!f.name;
   const boxColour = f => f.how === 'you' ? 'var(--ok)' : f.how === 'auto' ? 'var(--accent)' : f.how === 'suggested' ? 'var(--warn)' : 'var(--muted)';
   async function paintPhoto(faceId, selected) {
     const r = await api('people/photo/faces?face=' + faceId);
@@ -53,9 +55,9 @@
     const faces = r.faces || [], ro = readOnly();
     const sel = faces.find(f => f.id === selected) || faces.find(f => f.id === faceId) || faces[0];
     const pick = id => paintPhoto(faceId, id);
-    const boxes = faces.map(f => h('div', { class: 'pv-box' + (f.id === sel.id ? ' sel' : '') + (f.score < 0.8 ? ' weak' : ''), title: (f.name ? f.name : 'unnamed') + ' \u00b7 score ' + f.score + (f.score < 0.8 ? ' (the model is unsure it is a face)' : ''),
+    const boxes = faces.map(f => h('div', { class: 'pv-box' + (f.id === sel.id ? ' sel' : '') + (f.score < 0.8 ? ' weak' : ''), title: (sure(f) ? f.name : f.how === 'suggested' ? 'unnamed (a guess: ' + f.name + ')' : 'unnamed') + ' \u00b7 score ' + f.score + (f.score < 0.8 ? ' (the model is unsure it is a face)' : ''),
       style: { left: (100 * f.x) + '%', top: (100 * f.y) + '%', width: (100 * f.w) + '%', height: (100 * f.h) + '%', borderColor: boxColour(f) },
-      on: { click: () => pick(f.id) } }, h('span', { class: 'pv-tag', style: { background: boxColour(f) } }, f.name || '?')));
+      on: { click: () => pick(f.id) } }, h('span', { class: 'pv-tag', style: { background: boxColour(f) } }, sure(f) ? f.name : '?')));
     const input = h('input', { type: 'text', list: 'people-names', placeholder: 'Name (new or existing)', disabled: ro, style: { width: '200px' } });
     const name = async () => {
       const n = input.value.trim(); if (!n) { input.focus(); return; }
@@ -64,7 +66,11 @@
     };
     input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); name(); } });
     const unname = async () => { const res = await act('people/unlabel', { faces: [sel.id] }, 'name taken off'); if (res.ok !== false) { await refreshAll(); await paintPhoto(faceId, sel.id); } };
-    const how = { you: 'named by you', auto: 'matched automatically', suggested: 'a weak match: not named', '': 'nobody is matched to it' }[sel.how || ''];
+    const how = { you: 'named by you', auto: 'matched automatically' + (sel.similarity ? ` (similarity ${sel.similarity})` : ''), suggested: 'not named', '': 'not named: nobody is matched to it' }[sel.how || ''];
+    const guess = sel.how === 'suggested' && sel.name ? h('div', { class: 'small', style: { marginTop: '4px' } },
+      `Closest guess: ${sel.name} (similarity ${sel.similarity}; 0.36 or more is likely the same person) `,
+      h('button', { class: 'btn tiny', disabled: ro, title: `yes, ${sel.name}`, on: { click: async () => { const res = await act('people/confirm', { person: sel.person, faces: [sel.id] }, `named ${sel.name}`); if (res.ok !== false) { await refreshAll(); await paintPhoto(faceId, sel.id); } } } }, '\u2713 yes'),
+      h('button', { class: 'btn tiny', disabled: ro, title: `not ${sel.name}`, on: { click: async () => { const res = await act('people/reject', { person: sel.person, faces: [sel.id] }); if (res.ok !== false) { await refreshAll(); await paintPhoto(faceId, sel.id); } } } }, '\u2715 no')) : null;
     fill(viewer,
       h('div', { class: 'pv-head' }, h('b', null, r.name || 'photograph'), h('span', { class: 'muted small' }, `${faces.length} face${faces.length === 1 ? '' : 's'} found`),
         h('button', { class: 'btn small', style: { marginLeft: 'auto' }, on: { click: () => viewer.close() } }, 'Close')),
@@ -72,7 +78,7 @@
       r.available === false ? null : h('div', { class: 'pv-stage' }, h('img', { src: 'api/people/photo?face=' + faceId, alt: r.name || 'photograph' }), boxes),
       h('div', { class: 'pv-side' },
         h('div', { class: 'row', style: { gap: '8px', alignItems: 'center', flexWrap: 'wrap' } }, faceImg(sel.id, { class: 'face', style: { cursor: 'default' } }),
-          h('div', null, h('b', null, sel.name || 'unnamed'), h('div', { class: 'small muted' }, `${how} \u00b7 face score ${sel.score} \u00b7 ${sel.px} px`)),
+          h('div', null, h('b', null, sure(sel) ? sel.name : 'unnamed'), h('div', { class: 'small muted' }, `${how} \u00b7 face score ${sel.score} \u00b7 ${sel.px} px` + (sel.px < 40 ? ' (too small to match reliably)' : '')), guess),
           input, h('button', { class: 'btn small primary', disabled: ro, on: { click: name } }, sel.how === 'you' ? 'Rename face' : 'Name'),
           sel.how === 'you' ? h('button', { class: 'btn small', disabled: ro, on: { click: unname } }, 'Take the name off') : null),
         h('div', { class: 'row', style: { gap: '8px', marginTop: '8px', alignItems: 'center' } },
@@ -81,7 +87,7 @@
           h('span', { class: 'small muted', id: 'pv-hint' }, 'Dashed boxes: the model is unsure it is a face.')),
         h('div', { class: 'small muted', style: { marginTop: '6px' } }, 'Click a box to pick that face.',
           '  ', h('span', { class: 'pv-key' }, h('i', { style: { background: 'var(--ok)' } }), 'named by you'), h('span', { class: 'pv-key' }, h('i', { style: { background: 'var(--accent)' } }), 'matched'),
-          h('span', { class: 'pv-key' }, h('i', { style: { background: 'var(--warn)' } }), 'weak match'), h('span', { class: 'pv-key' }, h('i', { style: { background: 'var(--muted)' } }), 'nobody'))));
+          h('span', { class: 'pv-key' }, h('i', { style: { background: 'var(--warn)' } }), 'a guess (shown as ?)'), h('span', { class: 'pv-key' }, h('i', { style: { background: 'var(--muted)' } }), 'nobody'))));
   }
 
   const taskActive = () => !!(data && data.task && (data.task.status === 'running' || data.task.status === 'queued'));

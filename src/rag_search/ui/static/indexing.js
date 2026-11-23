@@ -510,6 +510,48 @@
       h('p', { class: 'small muted', style: { margin: '8px 0 0' } }, state, ' · ', h('a', { href: '#/models' }, 'Models tab')));
   }
 
+  // ---------- coverage: what each photograph has, step by step, against what it should have (core/coverage.py) ----------
+  // Each step keeps its own record and decides for itself what it still has to do, so a step that left photographs behind shows
+  // nowhere else.  This is read from those records (slow: kept for a minute) and says what is missing and what is from an older
+  // producer.
+  let cvAt = 0, cvSig = '';
+  async function loadCoverage() {
+    if (Date.now() - cvAt < 30000) return;
+    cvAt = Date.now();
+    const r = await api('coverage');
+    if (!r || !r.ok) return;
+    const sig = JSON.stringify([r.total, r.notes]);
+    if (sig === cvSig) return;
+    cvSig = sig;
+    patch(refs.coverage, coverageCard(r) || '');
+  }
+  const COVER_STEPS = [['described', '3.10 Describe', 'a description by the current model and prompt'], ['faces', '3.9 Faces', 'looked at for faces'],
+    ['pictures', '5.2 Picture vector', 'a vector from its pixels by the current picture model'], ['places', '3.7 Locate', 'a place for its GPS position (only photographs with a position)']];
+  const OLDER = { faces: 'looked at by the earlier one-size finder (kept; a re-scan is not needed)', pictures: 'made by another picture model', places: 'tagged with map data that has changed since (Refresh places on the Models tab)', described: 'described by another model or prompt' };
+  function coverageCard(r) {
+    const t = r.total; if (!t.photographs) return null;
+    const rows = COVER_STEPS.map(([k, name, what]) => {
+      const s = t.steps[k], note = (r.notes || {})[k];
+      if (note) return h('tr', null, h('td', null, name), h('td', { colspan: 3, class: 'muted small' }, 'not expected: ' + note));
+      const miss = s.expected - s.done, pct = s.expected ? Math.round(100 * s.done / s.expected) : 100;
+      return h('tr', { title: 'each photograph should have ' + what },
+        h('td', null, name), h('td', { class: 'num' }, `${num(s.done)} of ${num(s.expected)}`),
+        h('td', { style: { minWidth: '140px' } }, h('div', { class: 'bar' + (miss ? '' : ' ok') }, h('i', { style: { width: pct + '%' } }))),
+        h('td', { class: 'small' }, miss ? h('b', { style: { color: 'var(--warn)' } }, `${num(miss)} missing`) : h('span', { class: 'muted' }, 'complete'),
+          miss && s.examples.length ? h('span', { class: 'muted' }, ' · e.g. ' + s.examples.slice(0, 2).join(', ')) : null,
+          s.stale ? h('div', { class: 'muted' }, `${num(s.stale)} ${OLDER[k] || 'from an older producer'}`) : null,
+          s.gave_up ? h('div', { class: 'muted' }, `${num(s.gave_up)} the model could not describe`) : null));
+    });
+    const gaps = COVER_STEPS.filter(([k]) => !(r.notes || {})[k] && t.steps[k].expected > t.steps[k].done);
+    return h('div', { class: 'card', style: { marginTop: '16px' } },
+      h('div', { class: 'card-head' }, h('h2', null, 'What each photograph has'),
+        h('span', { class: 'muted small' }, `${num(t.photographs)} photographs${t.videos ? ' · ' + num(t.videos) + ' videos' : ''}${t.documents ? ' · ' + num(t.documents) + ' documents of pages' : ''}${t.timelines ? ' · ' + num(t.timelines) + ' Timelines' : ''}`)),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'plain' }, h('tbody', null, rows))),
+      h('p', { class: 'small muted', style: { margin: '8px 0 0' } }, gaps.length
+        ? 'Read from the records each step keeps, not from the files. “Index new & changed” looks for what is missing (faces, descriptions and picture vectors are caught up without converting a photograph again); `rag-search coverage` lists the same in a terminal.'
+        : 'Every step that is switched on has done every photograph. Read from the records each step keeps; `rag-search coverage` lists the same in a terminal.'));
+  }
+
   // ---------- the settings the pipeline runs with (read-only; edit them on the Settings tab) ----------
   let plSig = '';
   async function loadPipeline() {
@@ -573,7 +615,7 @@
       refs.sources = h('div', { style: { marginTop: '10px' } });
       refs.supportedExt = h('span', { class: 'muted small' });
       refs.plcard = h('div', { style: { marginTop: '16px' } });
-      refs.catchup = h('div');
+      refs.catchup = h('div'); refs.coverage = h('div');
       refs.run = h('div'); refs.conv = h('div'); refs.workers = h('div'); refs.hist = h('div', { style: { marginTop: '16px' } });
 
       refs.docHeadline = h('span', { class: 'muted small' });
@@ -606,7 +648,7 @@
           h('div', { class: 'row', style: { marginTop: '12px' } }, refs.btnStart, refs.btnAll, refs.btnEstimate, refs.btnCancel, refs.btnPublish,
             h('span', { class: 'muted small' }, 'Only one run exists at a time. New documents become searchable automatically when it finishes.')),
           refs.est),
-        h('div', { style: { marginTop: '16px' } }, refs.run), refs.catchup, refs.conv, refs.workers, refs.docs, refs.plcard, refs.hist);
+        h('div', { style: { marginTop: '16px' } }, refs.run), refs.coverage, refs.catchup, refs.conv, refs.workers, refs.docs, refs.plcard, refs.hist);
     },
     update() {
       const idx = RS.state.live && RS.state.live.index;
@@ -617,6 +659,7 @@
         ? 'accepted formats: ' + supExt.map(e => e.replace(/^\./, '')).join(', ') : '';
       loadPipeline();
       loadCatchup();
+      loadCoverage();
       const names = ((RS.state.catalog && RS.state.catalog.list && RS.state.catalog.list.collections) || []).map(c => c.collection);
       if (refs.list.dataset.sig !== names.join('|')) { refs.list.dataset.sig = names.join('|'); fill(refs.list, names.map(n => h('option', { value: n }))); }
       controls();

@@ -248,14 +248,19 @@ def is_photograph(text: str) -> bool:
 
 
 def photographs(paths: Paths, collection: str = "") -> list[Path]:
+    """The Markdown of every photograph: by what its last conversion recorded (``photo.recorded_photo``), else by what the
+    Markdown looks like."""
     root = paths.markup / collection if collection else paths.markup
     out = []
     if root.is_dir():
         for md in sorted(root.rglob("*.md")):
             with contextlib.suppress(OSError):
                 if md.stat().st_size < 200_000:
-                    text = md.read_text(encoding="utf-8", errors="replace")
-                    if "## Photo details" in text and is_photograph(text):
+                    recorded = photo.recorded_photo(paths.index / md.relative_to(paths.markup).with_suffix(""))
+                    if recorded is None:
+                        text = md.read_text(encoding="utf-8", errors="replace")
+                        recorded = "## Photo details" in text and is_photograph(text)
+                    if recorded:
                         out.append(md)
     return out
 

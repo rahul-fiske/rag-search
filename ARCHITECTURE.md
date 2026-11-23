@@ -1157,8 +1157,8 @@ who      every other face -> the nearest labelled person, when clearly theirs   
 * **Who each face is** (`people.work_out`, cached per process until the store changes): a face you labelled is that person.
   Any other face takes the person whose closest labelled face is closest (cosine), when that is at least 0.40 (OpenCV's line for
   "same person" is 0.363), at least 0.06 ahead of the next person (relatives look alike), the face is at least 40 px and the
-  finder sure of it (0.85), and you have not said it is not that person. From 0.30 it is a suggestion, asked about under the
-  person. Every labelled face is a reference of its own, not an average, so a child's faces years apart are each matched by the
+  finder sure of it (0.85), and you have not said it is not that person. From 0.363 (and the same size and score) it is a suggestion, asked about under the
+  person; a smaller face or a box the finder is unsure of is never guessed at. Every labelled face is a reference of its own, not an average, so a child's faces years apart are each matched by the
   labels nearest to them. Unnamed faces close to each other (0.45) are grouped so the People tab asks "who is this?" once.
 * **Search** (`people.resolve`, in the search daemon): the names, aliases and groups in a query are taken out of it and become the
   photographs that have every person named and, for each group, at least one more of its members ("me" after "show", "give",
@@ -1244,6 +1244,30 @@ standing as BM25 and the text vectors.
   videos they would only repeat the photograph, and share its index folder name.
 * **Grades**: a video is complete with a time, a position and a place; one from a messaging app or an old camera records
   none of them and is partial, saying which facts are missing.
+
+### 5.3f What is recorded per photograph, and coverage (`core/coverage.py`, `rag-search coverage`)
+
+* **One answer to "is this a photograph?"**: what its conversion recorded (the page branch `photo` alone in `index.meta.json`,
+  `photo.recorded_photo`), used by every step that works on photographs after the conversion (3.9 Faces, 3.10 Describe's catch-up,
+  5.2 Picture vectors, the photograph listing, the coverage report); the look of its Markdown decides only for a document that
+  records nothing (`indexer._is_photo_doc`). Before this, faces and descriptions guessed from the Markdown, and a Markdown an
+  older version had written oddly (a blank line inside the Photo details list, or no heading) made about 5,600 of 20,900
+  photographs look like pages: they never got faces.
+* **Each step keeps its own record**: the file's checksum and the chunk, model and conversion settings in `index.meta.json`
+  (`is_fresh` is the only freshness test of the document itself); the describe cache (checksum, model and prompt, time); the
+  People store (`photos`: checksum, finder, faces, time); `pictures.json` (picture model, checksum); the map stamp beside the
+  Markdown (map cells and their versions). What a step must still do is decided by that step, by comparing *which producer*
+  made its result (model, prompt, finder, map version) with the current one -- not by time.
+* **Coverage** puts the records side by side: per collection, how many photographs there are and, for each of described, faces
+  looked for, picture vector and places (photographs with a position), how many have it (`done`), should have it (`expected`;
+  a step that is switched off or has no models expects nothing and says why) and have it from an older producer (`stale`).
+  `rag-search coverage [collection] [--json]`, `/api/coverage` and the Indexing tab's *What each photograph has* card show it;
+  a step that left photographs behind shows there, with a few example files. It reads the records, not the files (a few
+  seconds for 20,000 photographs; the dashboard keeps the answer for a minute).
+* **The face count follows the store**: the `Faces detected: N` line of a photograph's Markdown is the number of faces the
+  finder is sure of (`faces.SURE_SCORE`) that the People store holds. The line was Apple Vision's count before the store existed;
+  a photograph whose line says another number (or has none and has faces) is made again from what is known, with no model run,
+  and embedded in the same run (`indexer._faces_line_differs`, through the path of a missing description).
 
 ### 5.4 Playground (`core/playground.py`)
 

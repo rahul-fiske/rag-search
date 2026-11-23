@@ -68,9 +68,9 @@ class WhoTests(PeopleCase):
         self.assertNotIn(small, w.unknown)
 
     def test_no_means_not_that_person_and_a_weaker_match_is_only_a_suggestion(self):
-        (a1,) = self.photo("s1", like(A))
+        (a1,) = self.photo("s1", A)
         (a2,) = self.photo("s2", like(A))
-        (half,) = self.photo("s3", unit(A * 0.36 + C * 0.93))  # somewhat like A
+        (half,) = self.photo("s3", unit(0.38 * A + 0.925 * unit(C - (C @ A) * A)))  # 0.38 like A: over OpenCV's 0.363, under a match
         avni = self.st.person_id("Avni", create=True)
         self.st.label([a1], avni)
         self.st.reject(a2, avni)
@@ -229,11 +229,11 @@ class FacesStepTests(TempHome):
                 mock.patch.object(photo, "visible_text", side_effect=AssertionError("not sniffed again")):
             s = self.run_index_()
         fp.assert_called_once()
-        self.assertEqual(s["indexed"], 0)                                       # nothing converted or embedded
-        self.assertEqual(before, (md.read_text(encoding="utf-8"), md.stat().st_mtime_ns,
-                                  next(self.paths.index.rglob("nodes.json")).stat().st_mtime_ns))
+        # the Markdown said no count, the store holds 3: the photograph is made again from what is known and embedded in this run
+        self.assertEqual(s["indexed"], 1)
+        self.assertEqual(md.read_text(encoding="utf-8"), before[0] + f"- {faces.LINE} 3\n")
         self.assertEqual([k for st, k in stage if st == "faces"],
-                         [{"seconds": mock.ANY, "how": "found", "earlier": True, "faces": 3}])
+                         [{"seconds": mock.ANY, "how": "found", "earlier": True, "faces": 3}])      # looked at once, not twice
 
     def test_the_run_view_counts_the_step_like_the_others(self):
         st = runview._fresh()
@@ -428,3 +428,104 @@ class SplitSectionTests(TempHome):
         page = ("<!-- page 1 -->\n\n## Photo details\n\n- Taken: 2020-01-01 10:00:00 (Wednesday)\n\n- a bullet of the page\n\n"
                 + "words of a page " * 40)
         self.assertFalse(describe.is_photograph(page))            # a list in a photographed page is still the page
+
+
+class FacesLineFollowsTheStoreTests(TempHome):
+    def test_a_markdown_that_says_another_count_than_the_store_is_made_again(self):
+        from rag_search.core import indexer
+
+        md = self.tmp / "p.md"
+        head = "<!-- page 1 -->\n\n## Photo details\n\n- Taken: 2020-01-01 10:00:00 (Wednesday)\n"
+        md.write_text(head + "- Faces detected: 2\n- Described by: x\n", encoding="utf-8")
+        self.assertFalse(indexer._faces_line_differs(md, 2))                 # already the store's count
+        self.assertFalse(indexer._faces_line_differs(md, None))              # no answer from the store: nothing to do
+        self.assertTrue(indexer._faces_line_differs(md, 4))                  # Apple Vision said 2, the store holds 4
+        md.write_text(head, encoding="utf-8")
+        self.assertTrue(indexer._faces_line_differs(md, 1))                  # no line yet
+        self.assertFalse(indexer._faces_line_differs(md, 0))                 # no faces and no line: as it should be
+        md.write_text("<!-- page 1 -->\n\n- Looks like (model-written): x\n- Faces detected: 1\n", encoding="utf-8")   # heading lost
+        self.assertTrue(indexer._faces_line_differs(md, 3))
+        self.assertFalse(indexer._faces_line_differs(md, 1))
+
+    def test_a_photograph_is_what_its_conversion_recorded(self):
+        from rag_search.core import describe, indexer, photo
+
+        idx = self.tmp / "i"
+        idx.mkdir()
+        self.assertIsNone(photo.recorded_photo(idx))
+        text = "<!-- page 1 -->\n\n- Looks like (model-written): " + "a long description " * 30 + "\n"      # no heading, a lot of text
+        self.assertFalse(describe.is_photograph(text))                       # what the Markdown alone says
+        (idx / "index.meta.json").write_text('{"conversion": {"branches": {"photo": 1}}}')
+        self.assertTrue(photo.recorded_photo(idx))
+        self.assertTrue(indexer._is_photo_doc(idx, text))                    # the record wins
+        (idx / "index.meta.json").write_text('{"conversion": {"branches": {"digital": 2}}}')
+        self.assertFalse(indexer._is_photo_doc(idx, text))
+
+
+class CoverageTests(PeopleCase):
+    def test_every_step_is_counted_against_what_each_photograph_should_have(self):
+        import json as _json
+
+        from rag_search.core import coverage, describe, pictures
+
+        os_env = {"RAG_SEARCH_PICTURE_MODEL": "google/siglip2-base-patch16-224"}
+        made_by = describe.current_id()
+        rows = {"s1": {"conv": {"branches": {"photo": 1}}, "pic": True, "desc": True, "faces": True},
+                "s2": {"conv": {"branches": {"photo": 1}}, "pic": False, "desc": False, "faces": False},
+                "s3": {"conv": {"branches": {"digital": 3}}}, "s4": {"conv": {"branches": {"video": 1}}}}
+        describe.remember(self.paths, "s1", made_by, {"description": "a", "tags": [], "people": 1})
+        for sha, r in rows.items():
+            d = self.paths.index / "c" / sha
+            d.mkdir(parents=True)
+            (d / "index.meta.json").write_text(_json.dumps({"src_sha256": sha, "conversion": r["conv"]}))
+            if r.get("pic"):
+                (d / pictures.FILE).write_bytes(b"x")
+                (d / pictures.META).write_text(_json.dumps({"model": "an-older-picture-model", "src_sha256": sha}))
+        self.photo("s1", A)
+        with mock.patch.dict("os.environ", os_env), mock.patch.object(faces, "available", return_value=""):
+            rep = coverage.report(self.paths)
+        c = rep["collections"]["c"]
+        self.assertEqual((c["files"], c["photographs"], c["videos"], c["documents"]), (4, 2, 1, 1))
+        steps = c["steps"]
+        self.assertEqual((steps["described"]["done"], steps["described"]["expected"]), (1, 2))
+        self.assertEqual((steps["faces"]["done"], steps["faces"]["expected"], steps["faces"]["stale"]), (1, 2, 0))
+        self.assertEqual((steps["pictures"]["done"], steps["pictures"]["expected"], steps["pictures"]["stale"]), (1, 2, 1))
+        self.assertEqual(steps["faces"]["examples"], ["c/s2"])
+        self.assertEqual(coverage.missing(rep), {"described": 1, "faces": 1, "pictures": 1})
+        with mock.patch.dict("os.environ", {"RAG_SEARCH_PICTURE_MODEL": "off"}), mock.patch.object(faces, "available", return_value="no models"):
+            rep = coverage.report(self.paths)
+        self.assertEqual(rep["total"]["steps"]["pictures"]["expected"], 0)           # a step that is off expects nothing
+        self.assertEqual(rep["total"]["steps"]["faces"]["expected"], 0)
+        self.assertIn("faces", rep["notes"])
+
+
+class GuessesAreGuessesTests(PeopleCase):
+    @staticmethod
+    def at(sim):
+        """A face whose similarity to A is *sim*."""
+        o = B - (B @ A) * A
+        return unit(sim * A + float(np.sqrt(1 - sim * sim)) * unit(o))
+
+    def test_a_tiny_face_or_a_weak_similarity_is_never_suggested(self):
+        (a1,) = self.photo("s1", A)
+        (weak,) = self.photo("s2", self.at(0.30), score=0.82)        # under OpenCV's line for "the same person"
+        (guess,) = self.photo("s3", self.at(0.45), score=0.82)       # over it, but the finder is not sure enough to name it
+        (tiny,) = self.photo("s4", self.at(0.45), px=20, score=0.82)
+        (unsure,) = self.photo("s5", self.at(0.45), score=0.7)
+        self.st.label([a1], self.st.person_id("Avni", create=True))
+        w = people.work_out(self.st)
+        self.assertEqual(sorted(w.suggest), [guess])
+        for f in (weak, tiny, unsure):
+            self.assertNotIn(f, w.suggest)
+        self.assertGreaterEqual(people.SUGGEST, 0.363)
+
+    def test_the_viewer_data_says_how_sure_each_name_is(self):
+        (a1,) = self.photo("s1", A, src="/p/s1.jpg")
+        (a2,) = self.photo("s1b", like(A, 0.1), src="/p/s1b.jpg")
+        avni = self.st.person_id("Avni", create=True)
+        self.st.label([a1], avni)
+        people._CACHE.clear()
+        shown = people.photo_of_face(self.paths, a2)["faces"]
+        self.assertEqual([(f["how"], f["name"]) for f in shown], [("auto", "Avni")])
+        self.assertGreater(shown[0]["similarity"], 0.9)
+        self.assertEqual(people.photo_of_face(self.paths, a1)["faces"][0]["similarity"], 1.0)
