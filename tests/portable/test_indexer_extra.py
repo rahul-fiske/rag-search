@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -148,6 +149,61 @@ class ReplaceSafelyTests(TempHome):
         self.write_doc("c/a.md", "# T\n\n<!-- page 1 -->\n\ntext")
         indexer.run_index(self.paths, self.sources(), self.roots(), jobs=1, embedder=FakeEmbedder())
         self.assertEqual(os.environ.get("RAG_SEARCH_TABLE_MODE"), "fast")
+
+
+class QuickSkipTests(TempHome):
+    """Sources rarely change: an unchanged document is skipped from its index.meta.json and a stat of the file, in the run's
+    own process -- no checksum, no conversion process."""
+
+    def sources(self):
+        return indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
+
+    def run_(self, **kw):
+        docs = []
+        s = indexer.run_index(self.paths, self.sources(), self.roots(), embedder=FakeEmbedder(),
+                              progress=lambda e: docs.append(e["doc"]) if "doc" in e else None, **{"jobs": 2, **kw})
+        return s, docs
+
+    def test_a_second_run_reads_no_file_and_starts_no_process(self):
+        from unittest import mock
+        for i in range(3):
+            self.write_doc(f"c/d{i}.md", f"# T\n\n<!-- page 1 -->\n\ndocument {i}")
+        self.run_()
+        with mock.patch.object(indexer, "sha256_file", side_effect=AssertionError("read")), \
+                mock.patch.object(indexer, "_convert_in_pool", side_effect=AssertionError("pool")):
+            s, docs = self.run_()
+        self.assertEqual((s["indexed"], s["skipped_fresh"]), (0, 3))
+        self.assertEqual({(d["status"], d.get("fast"), d.get("route")) for d in docs}, {("skipped", True, "pages")})
+        self.assertTrue(all(d["understood"]["kind"] for d in docs))
+
+    def test_a_touched_file_is_read_again_and_an_old_record_learns_its_size_and_time(self):
+        from unittest import mock
+        doc = self.write_doc("c/a.md", "# T\n\n<!-- page 1 -->\n\ntext")
+        self.run_()
+        meta_file = next((self.paths.index / "c").rglob("index.meta.json"))
+        meta = json.loads(meta_file.read_text())
+        self.assertEqual(meta["src_stat"][0], doc.stat().st_size)
+        os.utime(doc, (time.time() + 5, time.time() + 5))         # same content, another time: read, still unchanged
+        real = indexer.sha256_file
+        with mock.patch.object(indexer, "sha256_file", side_effect=real) as sha:
+            s, docs = self.run_(jobs=1)
+        self.assertEqual((s["skipped_fresh"], sha.call_count >= 1, docs[0].get("fast")), (1, True, None))
+        for key in ("src_stat", "understood"):                     # a record from an older version: learnt once
+            meta = json.loads(meta_file.read_text())
+            meta.pop(key)
+            meta_file.write_text(json.dumps(meta))
+            self.assertIsNone(self.run_(jobs=1)[1][0].get("fast"))
+            self.assertTrue(self.run_(jobs=1)[1][0].get("fast"))
+
+    def test_settings_a_rebuild_or_a_pending_version_take_the_full_path(self):
+        self.write_doc("c/a.md", "# T\n\n<!-- page 1 -->\n\ntext")
+        self.run_()
+        self.assertIsNone(self.run_(rebuild=True)[1][0].get("fast"))
+        self.assertIsNone(self.run_(chunk_size=300)[1][0].get("fast"))
+        self.run_()
+        d = next((self.paths.index / "c").rglob("index.meta.json")).parent
+        (d / "nodes.json.new").write_text("{}")
+        self.assertIsNone(self.run_()[1][0].get("fast"))
 
 
 class PoolShutdownTests(unittest.TestCase):

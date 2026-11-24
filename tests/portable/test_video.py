@@ -132,7 +132,7 @@ class IndexedVideoTests(TempHome):
         self.assertFalse(any(e["src"].endswith("IMG_10.MOV") for e in summary["errors"]))   # not "the same name as"
         self.assertEqual(summary["indexed"], 2)                                               # the video and the photo
 
-    def test_an_unchanged_video_keeps_its_kind_and_grade_and_is_counted_by_sniff(self):
+    def test_an_unchanged_video_keeps_its_kind_and_grade_and_is_skipped_from_its_record(self):
         (self.sdir / "clips").mkdir()
         quicktime(self.sdir / "clips" / "IMG_11.MOV", keys=IPHONE)
         found, unsup = locations.scan_tree(self.sdir, indexer.exclude_dirs(self.paths))
@@ -144,8 +144,14 @@ class IndexedVideoTests(TempHome):
                           progress=events.append, stage_log=log)
         docs = [e["doc"] for e in events if "doc" in e]
         self.assertEqual([(d["status"], d["understood"]["kind"]) for d in docs], [("skipped", "video")])
-        lines = [json.loads(x) for x in log.read_text().splitlines()]
-        self.assertIn("unchanged", [x.get("route") for x in lines if x.get("stage") == "sniff"])
+        # skipped from its record alone (no file read, no conversion process): its doc event says so, and the run view
+        # counts it as a file 3.0 Sniff sorted as unchanged
+        self.assertEqual((docs[0].get("fast"), docs[0].get("route")), (True, "video"))
+        from rag_search.core.conversion import runview
+        st = runview._fresh()
+        runview._feed(st, json.dumps({"ts": 1.0, "event": "doc", **docs[0]}))
+        self.assertEqual(st["steps"]["sniff"]["routes"], {"unchanged": 1})
+        self.assertEqual(st["unchanged_done"], 1)
 
 
 class SummaryTests(TempHome):

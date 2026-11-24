@@ -68,9 +68,11 @@ class EventWriter:
         current = str(ev.get("current") or "")
         final = ev.get("total") and ev.get("done") == ev.get("total")
         with self._lock:
-            # a change of phase or of the document being worked on is never dropped: only repeats of the same are
-            if (phase == self._last_phase and current == self._last_current and not final
-                    and now - self._last < PROGRESS_MIN_INTERVAL):
+            # a change of phase and the last event of a phase are never dropped, nor a change of document while embedding
+            # (one document can take minutes there: it must show at once); while converting, where an update run finishes
+            # thousands of files a second and the work lines say what each process holds, one event per interval
+            same = current == self._last_current or phase == "convert"
+            if phase == self._last_phase and same and not final and now - self._last < PROGRESS_MIN_INTERVAL:
                 return
             self._last, self._last_phase, self._last_current = now, phase, current
         self.emit("progress", **ev)

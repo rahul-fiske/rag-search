@@ -307,7 +307,7 @@ the document reader for every other scan and image; a page a cheaper lane doubts
 | Stage | Name | Runs on | Once per | What it does | Settings it owns (`section.key`) |
 |---|---|---|---|---|---|
 | 1 | Discover | CPU | run | list the files of every collection (registered folders, imports); formats the pipeline cannot read are skipped and counted, and so is the video of a Live Photo (its photograph is indexed) | – |
-| 2 | Fingerprint | CPU | document | SHA-256 of the file plus the chunk, model and conversion settings; unchanged documents are skipped in seconds | – |
+| 2 | Fingerprint | CPU | document | SHA-256 of the file plus the chunk, model and conversion settings; unchanged documents are skipped in seconds. Sources rarely change, so a file whose size and modification time are those recorded in its `index.meta.json` (`src_stat`) is taken as unchanged without being read: the run's own process decides it from the record alone (`indexer.quick_skip`: no checksum, no conversion process, one `doc` event with `fast`), unless a photograph lacks a fact this run can fill in (a description, its faces). A rebuild or a re-convert reads every file | – |
 | 3 | Convert | CPU+GPU | document | turn the file into page-marked Markdown, page by page, through the steps below; several documents are converted side by side when the machine has the memory for it; a conversion process that goes silent is stopped and its document reported, so one stuck document never holds the run | `indexer.jobs`, `indexer.stall_timeout` |
 | 3.0 | Sniff | CPU | document | what kind of file is this? decided from the file itself, before any page is looked at and before the file is converted (`indexer.sniff_document`, for every image and `.json`, in pool processes beside the conversions; the text check is remembered by checksum): a video (`.mov`, `.mp4`, `.m4v`, `.3gp`, `.avi`, known by its extension) goes to 3.11; a Google Maps Timeline `.json` (recognised by its content) goes to 3.8; an image with camera data gets a quick text check and, with little text, is a photograph and goes to 3.6; everything else, a photographed page too, is a document of pages and goes to 3.1. The kind decides where the file is converted (`indexer.by_kind`): photographs and pictures of pages in the process that holds the vision models, every other document in the pool | – |
 | 3.1 | Profile | CPU | document | look at every page once: text layer, scan or photo, pictures, ink, resolution, script (pages only; a photograph or a Timeline file is not profiled) | – |
@@ -377,6 +377,7 @@ Settings, Architecture and Playground tabs and `rag-search playground settings` 
 │  2  FINGERPRINT: SHA-256 of the source file                                                   │
 │     fresh?  same source SHA + chunk size/overlap + CHUNKER/TOKENIZER version + index format   │
 │     + embedding model + conversion settings, as recorded in index.meta.json ─yes▶ SKIP        │
+│     (first: same size + mtime as recorded (src_stat) ─▶ skipped from the record, not read)    │
 │  3.1 PROFILE pages (core/conversion/profiler.py, pypdfium2 only, 120 s budget): characters,   │
 │     picture cover, script, dpi per page -> a branch + reason per page (5.1.1); skipped when   │
 │     the Markdown and its trace are current                                                    │

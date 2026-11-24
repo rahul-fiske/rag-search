@@ -116,6 +116,20 @@ def _feed_work(st: dict[str, Any], ev: dict[str, Any]) -> None:
         ph["status"] = "running"
 
 
+def _feed_fast_skip(st: dict[str, Any], ev: dict[str, Any]) -> None:
+    """An unchanged document skipped from its record alone: one finished unit of the convert phase, counted with the
+    unchanged ones of its track, and one file 3.0 Sniff sorted as unchanged."""
+    ph = _phase(st, "convert")
+    ph["done"] += 1
+    ph["outcomes"]["skipped"] = ph["outcomes"].get("skipped", 0) + 1
+    st["unchanged_done"] = st.get("unchanged_done", 0) + 1
+    sp = st["steps"].setdefault("sniff", {"n": 0, "seconds": 0.0, "max_s": 0.0, "last": 0.0})
+    sp["n"] += 1
+    sp["last"] = float(ev.get("ts") or 0)
+    routes = sp.setdefault("routes", {})
+    routes["unchanged"] = routes.get("unchanged", 0) + 1
+
+
 def _feed_stage_of_proc(st: dict[str, Any], ev: dict[str, Any]) -> None:
     proc = st["procs"].get(int(ev.get("pid") or 0))
     if proc and proc["open"] and proc["open"]["file"] == str(ev.get("file", "")):
@@ -133,6 +147,10 @@ def _feed(st: dict[str, Any], line: str) -> None:
     kind = ev.get("event")
     if kind == "phase":
         _feed_phase(st, ev)
+        return
+    if kind == "doc":
+        if ev.get("fast"):                       # unchanged, decided in the run's own process: no work line of its own
+            _feed_fast_skip(st, ev)
         return
     if kind == "work":
         _feed_work(st, ev)
@@ -439,7 +457,8 @@ def _read_new(path: Any) -> dict[str, Any]:
                 st["offset"] += end + 1
                 for line in data[:end].decode("utf-8", "replace").split("\n"):
                     if '"stage"' in line or '"event": "page"' in line or '"event": "work"' in line \
-                            or '"event": "phase"' in line or '"event": "plan"' in line or '"event": "step"' in line:
+                            or '"event": "phase"' in line or '"event": "plan"' in line or '"event": "step"' in line \
+                            or ('"event": "doc"' in line and '"fast": true' in line):
                         _feed(st, line)
         return st
 

@@ -83,11 +83,15 @@ class WorkerMainTests(TempHome):
         w.progress({"phase": "embed", "done": 1, "total": 9, "current": "a/y.md"})      # another document: kept at once
         w.progress({"work": {"phase": "embed", "file": "a/y.md", "status": "start"}})
         w.progress({"phase_event": {"phase": "embed", "status": "start", "total": 9}})
+        for name in ("a/1.md", "a/2.md", "a/3.md"):                                     # converting: one per interval
+            w.progress({"phase": "convert", "done": 1, "total": 9, "current": name})
+        w.progress({"phase": "convert", "done": 9, "total": 9, "current": "a/9.md"})     # the last one of a phase: kept
         w.close()
         rows = [json.loads(x) for x in (self.tmp / "t.jsonl").read_text().splitlines()]
         self.assertEqual([(r["event"], r.get("current")) for r in rows],
-                         [("progress", "a/x.md"), ("progress", "a/y.md"), ("work", None), ("phase", None)])
-        self.assertTrue(all("pid" in r for r in rows[2:]))
+                         [("progress", "a/x.md"), ("progress", "a/y.md"), ("work", None), ("phase", None),
+                          ("progress", "a/1.md"), ("progress", "a/9.md")])
+        self.assertTrue(all("pid" in r for r in rows[2:4]))
 
 
 if __name__ == "__main__":

@@ -470,16 +470,6 @@ def _roots(value: Any) -> SourceRoots:
     return SourceRoots.of(value)
 
 
-def _repoint(idx_dir: Path, src: Path) -> None:
-    """An unchanged document found at a new place (a location was re-registered with another folder, or
-    re-mounted elsewhere): record where it is now, so it is not taken for a deleted one."""
-    meta_file = idx_dir / META_FILE
-    meta = read_json(meta_file)
-    if meta and meta.get("src_path") != str(src):
-        meta["src_path"] = str(src)
-        write_json_atomic(meta_file, meta)
-
-
 def _reader_settings(kind: str, ocr: bool | None, used_ocr: str = "") -> dict[str, Any]:
     """How docling was run for this document (stored with every page record)."""
     if kind == "text":
@@ -655,6 +645,105 @@ def _faces_step(task: dict[str, Any], src: Path, sha: str, slog: Any, rel_name: 
     return n, how, secs
 
 
+def photo_facts(text: str) -> dict[str, Any]:
+    """What a photograph's Markdown says about the facts a later run may have to fill in: whether it is described (and by
+    which model and prompt) and how many faces it counts.  Kept in ``index.meta.json`` so an unchanged photograph is checked
+    without reading its Markdown again."""
+    m = _FACES_LINE.search(text)
+    return {"described": describe.LOOKS in text, "described_by": describe.described_by(describe.section_of(text)[0]),
+            "faces": int(m.group(1)) if m else 0}
+
+
+def _stat_key(st: os.stat_result) -> list[int]:
+    """The file's size and modification time: when both are what they were at the last run, its content is taken as
+    unchanged without reading it (sources rarely change; a forced run or a rebuild reads every file again)."""
+    return [int(st.st_size), int(st.st_mtime_ns)]
+
+
+def _remember_unchanged(idx_dir: Path, src: Path, st: os.stat_result | None, md_path: Path,
+                        understood: dict[str, Any] | None) -> None:
+    """An unchanged document found by its checksum: record where it is now (a re-registered or re-mounted folder), its size
+    and time, what it is (``understood``) and, for a photograph, its facts -- so the next run can skip it from these alone.
+    Written only when something differs (a document indexed by an older version gets them once)."""
+    meta_file = idx_dir / META_FILE
+    meta = read_json(meta_file)
+    if not meta:
+        return
+    want: dict[str, Any] = {"src_path": str(src)}
+    if st is not None:
+        want["src_stat"] = _stat_key(st)
+    if understood is not None:
+        want["understood"] = understood
+    if set(((meta.get("conversion") or {}).get("branches") or {})) == {"photo"}:
+        with contextlib.suppress(OSError):
+            want["photo_facts"] = photo_facts(md_path.read_text(encoding="utf-8", errors="replace"))
+    if any(meta.get(k) != v for k, v in want.items()):
+        meta.update(want)
+        write_json_atomic(meta_file, meta)
+
+
+ROUTE_OF_BRANCH = {"photo": "photograph", "video": "video", "timeline": "timeline"}
+
+
+def quick_skip(task: dict[str, Any], roots: SourceRoots, ctx: dict[str, Any]) -> dict[str, Any] | None:
+    """The result of an unchanged document, decided from its ``index.meta.json`` and a ``stat`` of the file alone, in the run's
+    own process (no checksum, no Markdown read, no conversion process); None when anything needs a closer look: the file's
+    size or time changed, the settings changed, the document is waiting for its vectors, or a photograph lacks a fact this run
+    can fill in (a description, its faces).  *ctx* holds what is known for the whole run (the faces store, the photographs
+    the describe model failed on)."""
+    if task["rebuild"] or task["force_md"]:
+        return None
+    src = Path(task["src"])
+    try:
+        st = src.stat()
+        idx_dir = index_dir_for(src, roots, Path(task["index_root"]))
+    except (OSError, ValueError):
+        return None
+    meta = read_json(idx_dir / META_FILE)
+    if (not meta or meta.get("src_stat") != _stat_key(st) or meta.get("src_path") != str(src) or not meta.get("src_sha256")
+            or not isinstance(meta.get("understood"), dict)):
+        return None
+    if any(meta.get(k) != v for k, v in _params(task["chunk_size"], task["chunk_overlap"], task["model"]).items()):
+        return None
+    if (idx_dir / NODES_NEW).exists() or not (idx_dir / NODES_FILE).exists() or not (idx_dir / EMB_FILE).exists():
+        return None
+    branches = set((meta.get("conversion") or {}).get("branches") or {})
+    if branches == {"image"}:                      # read as a page before 3.0 Sniff existed: the full path looks at it
+        return None
+    sha = str(meta["src_sha256"])
+    res: dict[str, Any] = {"status": "skipped", "src": str(src), "idx_dir": str(idx_dir), "sha": sha,
+                           "understood": meta["understood"], "fast": True,
+                           "route": ROUTE_OF_BRANCH.get(next(iter(branches), "") if len(branches) == 1 else "", "pages")}
+    if branches == {"photo"}:
+        facts = meta.get("photo_facts")
+        if not isinstance(facts, dict):
+            return None
+        if task.get("describe_ready") and not facts.get("described") and sha not in ctx.get("describe_failed", ()):
+            return None                            # its description can be made now
+        if task.get("faces_ready"):
+            n = (ctx.get("faces") or {}).get(sha)
+            if n is None or n != int(facts.get("faces") or 0):
+                return None                        # faces not looked for yet, or the store counts another number
+        model = task.get("picture_model") or ""
+        if model and not pictures.is_current(idx_dir, sha, model):
+            res["picture"] = True                  # 5.2 makes its vector; nothing else is done again
+    return res
+
+
+def quick_context(paths: Paths, describe_ready: bool, faces_ready: bool) -> dict[str, Any]:
+    """What ``quick_skip`` needs to know once per run."""
+    ctx: dict[str, Any] = {}
+    try:
+        if describe_ready:
+            ctx["describe_failed"] = describe.failures(paths, describe.current_id())
+        if faces_ready:
+            ctx["faces"] = faces.known_counts(paths)
+    except Exception as exc:  # noqa: BLE001 - without it every photograph takes the full path
+        log.info("the quick check of unchanged photographs is not available this run: %s", exc)
+        return {"off": True}
+    return ctx
+
+
 def sniff_document(task: dict[str, Any]) -> dict[str, Any]:
     """3.0 Sniff ahead of the conversions (runs in a pool process: Apple Vision's text check must never run in a thread
     beside the loaded vision model).  ``{"src", "route", "seen", "fill"}``; ``route`` is "" for a file that will not be
@@ -751,6 +840,10 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         markup_root, index_root = Path(task["markup_root"]), Path(task["index_root"])
         cs, co, model = task["chunk_size"], task["chunk_overlap"], task["model"]
         t_fp = time.perf_counter()
+        try:
+            st_before = src.stat()                 # taken before the file is read: a change while it is read is seen next time
+        except OSError:
+            st_before = None
         sha = sha256_file(src)
         idx_dir = index_dir_for(src, roots, index_root)
         rel_name = mirror_rel(src, roots).as_posix()
@@ -767,12 +860,12 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
                 # store, or a face added by hand) is made again from what is known (cheap: no model runs) and embedded in this run
                 fill = _faces_line_differs(md_path, faces_seen)
             if not fill:
-                _repoint(idx_dir, src)
                 stage_event(slog, rel_name, "fingerprint", "done", seconds=round(time.perf_counter() - t_fp, 3),
                             unchanged=True)
                 if not task.get("sniffed"):               # 3.0 counts every file it sorted, an unchanged one too
                     stage_event(slog, rel_name, "sniff", "done", seconds=0.0, route="unchanged")
                 und = _understood_unchanged(idx_dir, md_path, src, kind)
+                _remember_unchanged(idx_dir, src, st_before, md_path, und)
                 return {"status": "skipped", "src": str(src), "idx_dir": str(idx_dir), "sha": sha,
                         **({"understood": und} if und else {}),
                         **({"picture": True} if _wants_picture(task, kind, md_path, idx_dir, sha) else {})}
@@ -1042,13 +1135,18 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         stage_event(slog, rel_name, "write", "done", seconds=round(time.perf_counter() - t_write, 3),
                     part="nodes.json")
         forget_outcome(idx_dir)
-        return {"status": "prepared", "src": str(src), "idx_dir": str(idx_dir), "sha": sha,
+        understood = understanding.of_document(
+            fmt=kind, suffix=src.suffix.lower(), status="prepared", text=text, route=route,
+            branches=(conversion or {}).get("branches"), outcomes=(conversion or {}).get("outcomes"))
+        keep: dict[str, Any] = {"understood": understood}       # what the next run needs to skip it quickly
+        if st_before is not None:
+            keep["src_stat"] = _stat_key(st_before)
+        if set((conversion or {}).get("branches") or {}) == {"photo"}:
+            keep["photo_facts"] = photo_facts(text)
+        return {"status": "prepared", "src": str(src), "idx_dir": str(idx_dir), "sha": sha, "keep": keep,
                 **({"picture": True} if route == "photograph" and task.get("picture_model") else {}),
                 "nodes": len(nodes), "markdown": how, "convert_s": convert_s, "chunk_s": chunk_s,
-                "profile_s": prof_s, "conversion": conversion,
-                "understood": understanding.of_document(
-                    fmt=kind, suffix=src.suffix.lower(), status="prepared", text=text, route=route,
-                    branches=(conversion or {}).get("branches"), outcomes=(conversion or {}).get("outcomes")),
+                "profile_s": prof_s, "conversion": conversion, "understood": understood,
                 "elapsed_s": round(time.perf_counter() - t0, 2)}
     except NoTextError as exc:     # a photo, a blank document: nothing to index, not a failure
         lasting("no_text", exc, str(exc))
@@ -1087,7 +1185,8 @@ def embed_document(idx_dir: Path, src: Path, sha: str, embedder: Any, *, chunk_s
                    chunk_overlap: int, model: str,
                    progress: Callable[[int, int], None] | None = None,
                    timing: dict[str, float] | None = None,
-                   conversion: dict[str, Any] | None = None) -> dict[str, Any]:
+                   conversion: dict[str, Any] | None = None,
+                   keep: dict[str, Any] | None = None) -> dict[str, Any]:
     """Embed a prepared document and write its index.meta.json (the completion marker).
 
     *timing* carries the earlier steps (convert_s, chunk_s); the meta records how long each
@@ -1134,6 +1233,7 @@ def embed_document(idx_dir: Path, src: Path, sha: str, embedder: Any, *, chunk_s
     if conv:
         conv["time_s"] = {**(conv.get("time_s") or {}), "embed": embed_s}
     meta["conversion"] = conv
+    meta.update(keep or {})                       # src_stat, understood, photo_facts: what lets the next run skip it quickly
     write_json_atomic(idx_dir / META_FILE, meta)  # written last: marks the index complete
     return meta
 
@@ -1794,11 +1894,16 @@ def run_index(
 
     conv = trace.RunTotals()             # what this run has converted: pages per branch, time, cost
 
+    snap_at = [0.0]                      # when the run totals last went out with a progress event
+
     def emit(ev: dict[str, Any]) -> None:
         if ev.get("phase") in ("convert", "embed", "pictures", "merge"):
             ev["phase_started_at"] = phase_t0.setdefault(ev["phase"], round(time.time(), 3))
-        if "phase" in ev and (conv.docs or conv.files):
-            ev["conversion"] = conv.snapshot()
+        final = ev.get("total") is not None and ev.get("done") == ev.get("total")
+        now_t = time.monotonic()
+        if "phase" in ev and (conv.docs or conv.files) and (final or now_t - snap_at[0] >= 1.0):
+            ev["conversion"] = conv.snapshot()            # the totals at most once a second (they are a kilobyte)
+            snap_at[0] = now_t
         _sink(ev)
 
     def doc_event(src: Path, status: str, **fields: Any) -> None:
@@ -1910,7 +2015,8 @@ def run_index(
                           profile_s=res.get("profile_s"), **_conv_kw(res.get("conversion")), **_und_kw(res))
             elif res["status"] == "skipped":
                 skipped += 1
-                doc_event(Path(res["src"]), "skipped", **_und_kw(res))
+                doc_event(Path(res["src"]), "skipped", **_und_kw(res),
+                          **({"fast": True, "route": res.get("route", "pages")} if res.get("fast") else {}))
             elif res["status"] == "no_text":
                 no_text.append({"src": res["src"], "message": res.get("message", "no text")})
                 doc_event(Path(res["src"]), "no_text", message=res.get("message", "no text"),
@@ -1958,6 +2064,17 @@ def run_index(
             with contextlib.suppress(OSError):
                 os.kill(int(st["pid"]), signal.SIGKILL)
 
+        # Unchanged documents first, in this process, from their index.meta.json and a stat of the file (sources rarely
+        # change: an update run over a library where nothing changed reads no file and starts no conversion process).
+        ctx = quick_context(paths, describe_ready, faces_ready)
+        left: list[dict[str, Any]] = []
+        for t in tasks:
+            res = None if ctx.get("off") else quick_skip(t, roots, ctx)
+            if res is None:
+                left.append(t)
+                continue
+            t["route"] = ""                            # will not be converted (the "unchanged" of the run's plan)
+            _collect(res)
         if stage_log:                                 # with a limit of 0 it stops nothing, and still knows what is open
             watch = stallwatch.StallWatch(Path(str(stage_log)), limit).start(_on_stall)
         try:
@@ -1976,9 +2093,10 @@ def run_index(
             # Only an image or a .json has anything to sniff (a PDF, an Office file or a text file is a document of pages):
             # those go to the pool at once and convert while the images are being sorted, so the run never waits for the
             # slow text check of thousands of photographs (Apple Vision, ~0.8 s each) before it converts anything.
-            sniffable = [t for t in tasks if jobs > 1 and (Path(t["src"]).suffix.lower() in IMAGE_EXTENSIONS
-                                                           or Path(t["src"]).suffix.lower() == ".json")]
-            first = [t for t in tasks if t not in sniffable]
+            sniffable = [t for t in left if jobs > 1 and (Path(t["src"]).suffix.lower() in IMAGE_EXTENSIONS
+                                                          or Path(t["src"]).suffix.lower() == ".json")]
+            sniff_set = {t["src"] for t in sniffable}
+            first = [t for t in left if t["src"] not in sniff_set]
             for t in first:
                 if jobs > 1:               # known from the extension: a video, else a document of pages
                     t["route"] = "video" if Path(t["src"]).suffix.lower() in VIDEO_EXTENSIONS else "pages"
@@ -2080,7 +2198,7 @@ def run_index(
                         progress=_within,
                         timing={"convert_s": res.get("convert_s", 0.0),
                                 "chunk_s": res.get("chunk_s", 0.0)},
-                        conversion=res.get("conversion"))
+                        conversion=res.get("conversion"), keep=res.get("keep"))
                     indexed += 1
                     embed_outcome = "indexed"
                     conv.time_s["embed"] = conv.time_s.get("embed", 0.0) + meta["embed_s"]

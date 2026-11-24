@@ -153,7 +153,7 @@ def timeline(exp: Paths, jid: str) -> dict[str, Any]:
     except OSError:
         return {"docs": [], "queries": queries}
     for line in raw.splitlines():
-        if '"stage"' not in line and '"page"' not in line and '"query"' not in line:
+        if '"stage"' not in line and '"page"' not in line and '"query"' not in line and '"fast": true' not in line:
             continue
         try:
             ev = json.loads(line)
@@ -163,6 +163,12 @@ def timeline(exp: Paths, jid: str) -> dict[str, Any]:
         if kind == "query":
             if len(queries) < MAX_QUERIES:
                 queries.append({k: v for k, v in ev.items() if k not in ("event", "pid")})
+            continue
+        if kind == "doc" and ev.get("fast"):     # unchanged, skipped from its record: stage 2 said so
+            f = "/".join(x for x in (str(ev.get("collection", "")), str(ev.get("path", ""))) if x)
+            d = docs.setdefault(f, {"file": f, "stages": {}, "pages": []})
+            d["stages"]["fingerprint"] = {"id": stages.id_of("fingerprint"), "key": "fingerprint", "status": "done",
+                                          "unchanged": True, "ts": ev.get("ts")}
             continue
         f = str(ev.get("file", ""))
         if not f or kind not in ("stage", "page"):

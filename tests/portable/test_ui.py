@@ -481,7 +481,8 @@ class ConsistencyTests(TempHome):
         actual = {k for k in node if k != "metadata"} | {f"metadata.{k}" for k in node["metadata"]}
         self.assertEqual(documented - info.OPTIONAL_NODE_FIELDS, actual - info.OPTIONAL_NODE_FIELDS)
         meta = json.loads((d / "index.meta.json").read_text())
-        self.assertEqual(set(info.META_FIELDS), set(meta))
+        self.assertEqual(set(info.META_FIELDS) - info.OPTIONAL_META_FIELDS, set(meta) - info.OPTIONAL_META_FIELDS)
+        self.assertLessEqual(set(meta), set(info.META_FIELDS))
         self.publish()
         cat = json.loads((self.paths.serving / "current" / "catalog.json").read_text())
         top = {k.split("[")[0] for k in info.CATALOG_FIELDS if "[" not in k or k.startswith("collections[]")}

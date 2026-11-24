@@ -282,6 +282,18 @@ def for_photo(paths: Paths, src: Path, sha: str, *, store: "Store | None" = None
             st.close()
 
 
+def known_counts(paths: Paths) -> dict[str, int]:
+    """Every photograph looked at for faces, with the faces the finder is sure of (``sure_faces``): one query for a whole run,
+    so an unchanged photograph is checked without opening the store for it."""
+    if available(paths) or not store_file(paths).exists():
+        return {}
+    with Store(paths) as st:
+        rows = st.con.execute(
+            "SELECT p.sha, (SELECT COUNT(*) FROM faces f WHERE f.sha = p.sha AND f.score >= ?) FROM photos p "
+            "WHERE p.detector IN (?, ?)", (SURE_SCORE, DETECTOR, DETECTOR_MS)).fetchall()
+    return {str(sha): int(n) for sha, n in rows}
+
+
 def pending(paths: Paths, sha: str) -> bool:
     """True when this photograph has not been looked at yet and the face models are here to do it."""
     if available(paths):

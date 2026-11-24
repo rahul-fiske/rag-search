@@ -335,6 +335,7 @@ class IndexerDaemon(DaemonBase):
                     if end < 0:
                         return
                     offset += end + 1
+                latest: dict[str, Any] | None = None
                 for line in data[:end].split(b"\n"):
                     try:
                         ev = json.loads(line)
@@ -343,12 +344,18 @@ class IndexerDaemon(DaemonBase):
                     if ev.get("event") in ("start", "stage", "doc"):
                         _log_event(jid, ev)
                     if ev.get("event") == "progress":
-                        self._update(rec, progress={k: v for k, v in ev.items()
-                                                    if k not in ("ts", "event")})
+                        prev = latest or {}
+                        latest = {k: v for k, v in ev.items() if k not in ("ts", "event")}
+                        if "conversion" not in latest and "conversion" in prev:
+                            latest["conversion"] = prev["conversion"]
                     elif ev.get("event") == "result":
                         result = ev.get("summary")
                     elif ev.get("event") == "error":
                         err = ev.get("error", "")
+                if latest is not None:          # one record write per pass, with the newest progress
+                    if "conversion" not in latest and "conversion" in (rec.get("progress") or {}):
+                        latest["conversion"] = rec["progress"]["conversion"]
+                    self._update(rec, progress=latest)
 
             # The run's own stall watch stops a conversion process that goes silent (stallwatch.py).  This is the second
             # line: a run whose event log has not grown at all for twice that limit -- its main process hangs, in a

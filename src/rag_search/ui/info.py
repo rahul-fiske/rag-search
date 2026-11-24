@@ -115,7 +115,12 @@ META_FIELDS = {
     "build_s": "convert_s + chunk_s + embed_s",
     "index_bytes": "size of nodes.json + embeddings.npy",
     "src_bytes": "size of the source file",
+    "src_stat": "size and modification time (ns) of the source when it was read: a file that still has them is skipped "
+                "from this record without being read",
+    "understood": "what the document is and how completely it was understood (kind, grade, facts found and missing)",
+    "photo_facts": "a photograph only: described or not (and by which model), the faces its Markdown counts",
 }
+OPTIONAL_META_FIELDS = {"photo_facts"}
 CATALOG_FIELDS = {
     "generation": "generation number (also the folder name gen-NNNNNN)",
     "published_at": "when this generation was published",
