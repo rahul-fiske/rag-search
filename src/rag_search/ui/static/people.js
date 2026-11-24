@@ -49,6 +49,7 @@
   }
   window.addEventListener('beforeunload', e => { if (pending.size) { e.preventDefault(); e.returnValue = ''; } });
 
+  const splitFile = f => [f.slice(0, f.indexOf('/')), f.slice(f.indexOf('/') + 1)];       // "collection/path" of the Files tab
   const faceImg = (f, extra) => h('img', Object.assign({ class: 'face', src: 'api/people/face?id=' + f, loading: 'lazy', alt: '', width: 72, height: 72 }, extra || {}));
   /* a face with a small "photo" button: opens the whole photograph with every face found in it boxed */
   const faceWithPhoto = (f, extra) => h('span', { class: 'facewrap' }, faceImg(f, extra),
@@ -119,6 +120,7 @@
       queued ? h('span', { class: 'muted' }, ' queued: save to apply') : null) : null;
     fill(viewer,
       h('div', { class: 'pv-head' }, h('b', null, r.name || 'photograph'), h('span', { class: 'muted small' }, `${faces.length} face${faces.length === 1 ? '' : 's'} found`),
+        r.file ? h('a', { class: 'small', href: RS.fileLink ? RS.fileLink(...splitFile(r.file)) : '#/files', title: 'everything recorded about this file', on: { click: () => viewer.close() } }, 'Open in Files') : null,
         h('button', { class: 'btn small', style: { marginLeft: 'auto' }, on: { click: () => viewer.close() } }, 'Close')),
       r.available === false ? h('div', { class: 'notice warn' }, 'The photograph is not in a source folder any more: only its faces can be shown.') : null,
       r.available === false ? null : h('div', { class: 'pv-stage' }, h('img', { src: 'api/people/photo?face=' + faceId, alt: r.name || 'photograph' }), boxes),
@@ -335,7 +337,10 @@
       refs.names = h('datalist', { id: 'people-names' }); refs.pendbar = h('div', { class: 'pendbar hidden', role: 'status' });
       root.append(h('h2', null, 'People'), refs.names, refs.pendbar, refs.setup, refs.person, h('div', { class: 'grid g2', style: { marginTop: '16px' } }, refs.people, refs.groups), refs.clusters);
     },
-    show() { refreshAll(); },
+    show() {
+      refreshAll();
+      if (RS.openFace) { const f = RS.openFace; RS.openFace = null; openPhoto(f); }       // asked for by the Files tab
+    },
     tick() { if (taskActive() && ++ticks % 2 === 0) load().then(() => { if (!taskActive()) loadClusters(); }); },
   };
 })();

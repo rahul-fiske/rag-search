@@ -13,12 +13,15 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import hmac
 import importlib.metadata
 import json
 import os
+import re
 import secrets
+import shutil
 import signal
 import subprocess
 import sys
@@ -127,6 +130,32 @@ COOKIE = "rag_search_ui"
 MAX_BODY = 64 * 1024
 CSP = ("default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+RANGE_BYTES = 8 * 2**20                    # the most of a video one reply carries (the player asks again)
+_POSTERS: dict[tuple[str, float], bytes | None] = {}
+
+
+def _poster(src: Path) -> bytes | None:
+    """A picture of a video (the system's Quick Look thumbnail, ``qlmanage``), kept in memory for the last few asked; None when
+    this machine cannot make one."""
+    import subprocess
+    import tempfile
+
+    key = (str(src), src.stat().st_mtime)
+    if key in _POSTERS:
+        return _POSTERS[key]
+    png = None
+    if shutil.which("qlmanage"):
+        with tempfile.TemporaryDirectory() as tmp:
+            with contextlib.suppress(OSError, subprocess.SubprocessError):
+                subprocess.run(["qlmanage", "-t", "-s", "1200", "-o", tmp, str(src)], capture_output=True, timeout=60, check=False)
+                out = next(Path(tmp).glob("*.png"), None)
+                png = out.read_bytes() if out else None
+    if len(_POSTERS) >= 24:
+        _POSTERS.pop(next(iter(_POSTERS)))
+    _POSTERS[key] = png
+    return png
+
+
 CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                  ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml",
                  ".png": "image/png", ".ico": "image/x-icon"}
@@ -512,6 +541,8 @@ class Handler(BaseHTTPRequestHandler):
             coll = (q.get("collection") or [""])[0]
             return self._json({"ok": True, **_SLOW.get(("photos", coll, _task_stamp(task)), lambda: describe.status(app.paths, coll)),
                                "task": task if task and task.get("op") == "describe" else None})
+        if name.startswith("files/"):
+            return self._files_get(name[len("files/"):], q)
         if name == "people" or name.startswith("people/"):
             return self._people_get(name[len("people/"):] if name != "people" else "", q)
         if name == "maps":
@@ -891,7 +922,7 @@ class Handler(BaseHTTPRequestHandler):
     def _people_get(self, what: str, q: dict[str, list[str]]) -> None:
         """The People tab: names and groups, the faces nobody is matched to (in groups of look-alikes), one person's faces,
         and the small picture of a face.  See core/faces.py and core/people.py."""
-        from ..core import faces, people
+        from ..core import dossier, faces, people
 
         paths = self.app.paths
 
@@ -926,7 +957,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(404, "no such face")
             if what == "photo/faces":
                 return self._json({"ok": True, **{k: v for k, v in found.items() if k != "src"},
-                                   "name": Path(found["src"]).name, "available": people.source_file(paths, found["src"]) is not None})
+                                   "name": Path(found["src"]).name, "file": dossier.locate(paths, found["src"]), "available": people.source_file(paths, found["src"]) is not None})
             src = people.source_file(paths, found["src"])
             if src is None:
                 return self._error(404, "the photograph is not in a source folder any more")
@@ -936,6 +967,77 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(404, "the photograph cannot be read")
             return self._send(200, jpg, "image/jpeg", {"Cache-Control": "private, max-age=3600"})
         self._error(404, "not found")
+
+    def _files_get(self, what: str, q: dict[str, list[str]]) -> None:
+        """The Files tab (core/dossier.py): the collections, a folder or a search in one, everything recorded about one file, and its
+        original (a photograph as an upright JPEG, a page of a document as a PNG, a video's poster frame or the video itself).
+        Read-only; only files inside a registered source folder are ever sent."""
+        from ..core import dossier, photo
+
+        paths = self.app.paths
+
+        def one(key: str) -> str:
+            return (q.get(key) or [""])[0]
+
+        def num(key: str, default: int = 0) -> int:
+            try:
+                return int(one(key) or default)
+            except ValueError:
+                return default
+        try:
+            if what == "collections":
+                return self._json({"ok": True, "collections": dossier.collections(paths)})
+            if what == "list":
+                return self._json({"ok": True, **dossier.listing(paths, one("collection"), one("prefix"), one("q"), num("limit", dossier.MAX_LIST))})
+            if what == "dossier":
+                return self._json({"ok": True, **dossier.dossier(paths, one("collection"), one("path"))})
+            src = dossier.source_file(paths, one("collection"), one("path"))
+            kind = dossier.kind_of(dossier._dirs(paths, one("collection"), one("path"))[0]) or dossier._guess(src.name)
+            if what == "raw":                                   # a video, to play: by ranges, so it can be seeked
+                if src.suffix.lower() not in dossier.VIDEO_EXT:
+                    return self._error(404, "only videos are sent as they are")
+                return self._send_range(src, {".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime",
+                                              ".3gp": "video/3gpp", ".avi": "video/x-msvideo"}[src.suffix.lower()])
+            if what != "original":
+                return self._error(404, "not found")
+            width = max(256, min(num("w", 1600), 2048))
+            if kind == "video":
+                png = _poster(src)
+                if png is None:
+                    return self._error(404, "no picture can be made of this video here")
+                return self._send(200, png, "image/png", {"Cache-Control": "private, max-age=3600"})
+            if src.suffix.lower() in dossier.PHOTO_EXT:
+                jpg, _size = photo.render_jpeg(src, width, 88)
+                return self._send(200, jpg, "image/jpeg", {"Cache-Control": "private, max-age=3600"})
+            from ..core.conversion import pageimage
+
+            return self._send(200, pageimage.render(src, max(1, num("page", 1)), width), "image/png", {"Cache-Control": "private, max-age=3600"})
+        except dossier.FileError as exc:
+            return self._error(404, str(exc))
+        except (OSError, ValueError, ImportError) as exc:
+            return self._error(404, f"cannot show this file: {exc}")
+
+    def _send_range(self, f: Path, ctype: str) -> None:
+        """A file in pieces of at most RANGE_BYTES (``Range: bytes=a-b``), as a browser's video player asks for it."""
+        size = f.stat().st_size
+        start, end = 0, size - 1
+        m = re.match(r"bytes=(\d*)-(\d*)$", (self.headers.get("Range") or "").strip())
+        if m and (m.group(1) or m.group(2)):
+            if m.group(1):
+                start = int(m.group(1))
+                end = int(m.group(2)) if m.group(2) else size - 1
+            else:
+                start = max(0, size - int(m.group(2)))
+            if start >= size:
+                return self._send(416, b"", ctype, {"Content-Range": f"bytes */{size}"})
+        end = min(end, size - 1, start + RANGE_BYTES - 1)
+        with open(f, "rb") as fh:
+            fh.seek(start)
+            body = fh.read(end - start + 1)
+        extra = {"Accept-Ranges": "bytes", "Cache-Control": "private, max-age=3600"}
+        if m:
+            extra["Content-Range"] = f"bytes {start}-{end}/{size}"
+        self._send(206 if m else 200, body, ctype, extra)
 
     def _people_post(self, action: str, body: dict[str, Any]) -> None:
         """Names, labels and groups (each a small change to ``<home>/people.sqlite``), and the task that downloads the face

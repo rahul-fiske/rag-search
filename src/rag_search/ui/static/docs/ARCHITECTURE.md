@@ -1299,6 +1299,25 @@ standing as BM25 and the text vectors.
   both. Two photographs or videos whose names differ only by extension (`IMG_1204.HEIC` and `IMG_1204.JPEG`) share one index
   folder: only one is indexed and the other is reported as having the same name (rename one of them).
 
+### 5.3g The Files tab: one file and everything recorded about it (`core/dossier.py`)
+
+* **Read-only, nothing recomputed.** The Files tab lists a registered collection's source folder a level at a time (`files/list`:
+  folders and files, with the kind and whether it is indexed from `index.meta.json`; a search walks the collection and is
+  capped at 400) and, for one file, puts together the records the steps left (`files/dossier`): the facts of the Markdown's Photo or
+  Video details (with the `geo:` position and a map link), the descriptions kept for its checksum (the current model's first), its
+  faces and who they are (`people.faces_of_photo`, the same matching as the People viewer), and a **ledger** with one row per step
+  (convert, locate, faces, describe, picture vector, embed, publish): the result, what produced it, when, and whether that is still
+  current (the map stamp against `maps.map_state`, the finder, the describe model and prompt, the picture model, the embedding model
+  of the live generation).
+* **The original** (`files/original`) is an upright JPEG of a photograph (`photo.render_jpeg`, HEIC included), a page image of a
+  document (`pageimage`), or a video's first frame (Quick Look's `qlmanage`); `files/raw` sends a video by byte ranges so the
+  browser can play it. Only files inside a registered source folder are ever read (`dossier.resolve`).
+* **Tabs and links.** The inspector has Overview, Original (with the face boxes, a click opens the People viewer), Markdown (beside
+  the original) and Records (every derived file with size and time, workspace and published copy). The address is
+  `#/files/<collection>/<path>`; the Indexing tab's document list and the People viewer link to it. Known limit: `IMG_1.HEIC` and
+  `IMG_1.JPG` in one folder share one index folder, and the dossier says so. Filters (missing step, person, place, date) and the
+  chunks of a file are planned, as are actions (re-index, re-describe, re-scan faces).
+
 ### 5.4 Playground (`core/playground.py`)
 
 A playground experiment is a sandbox for trying a different embedding model, reranker, chunk size

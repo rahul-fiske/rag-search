@@ -342,6 +342,11 @@ def photo_of_face(paths: Paths, face: int) -> dict[str, Any] | None:
             return None
         sha, src = row
         rows = st.con.execute("SELECT id, x, y, w, h, score, px FROM faces WHERE sha = ? ORDER BY x", (sha,)).fetchall()
+    return {"face": int(face), "sha": sha, "src": src, "faces": _named(paths, rows)}
+
+
+def _named(paths: Paths, rows: list[Any]) -> list[dict[str, Any]]:
+    """Faces ``(id, x, y, w, h, score, px)`` of one photograph with who each is (see ``photo_of_face``)."""
     w = who(paths)
     out = []
     for fid, x, y, fw, fh, score, px in rows:
@@ -355,7 +360,20 @@ def photo_of_face(paths: Paths, face: int) -> dict[str, Any] | None:
             name, how = w.names.get(person, ""), "suggested"             # a guess: the viewer shows it as one, never as the name
         out.append({"id": fid, "x": x, "y": y, "w": fw, "h": fh, "score": round(score or 0.0, 2), "px": px,
                     "person": person, "name": name, "how": how, "similarity": sim})
-    return {"face": int(face), "sha": sha, "src": src, "faces": out}
+    return out
+
+
+def faces_of_photo(paths: Paths, sha: str) -> dict[str, Any] | None:
+    """What the People store holds of the photograph with checksum *sha*: ``{"detector", "found", "at", "faces": [...]}``
+    (faces as in ``photo_of_face``), or None when no face finder has looked at it."""
+    if not sha or not faces.store_file(paths).exists():
+        return None
+    with faces.Store(paths) as st:
+        row = st.con.execute("SELECT detector, faces, ts FROM photos WHERE sha = ?", (sha,)).fetchone()
+        if row is None:
+            return None
+        rows = st.con.execute("SELECT id, x, y, w, h, score, px FROM faces WHERE sha = ? ORDER BY x", (sha,)).fetchall()
+    return {"detector": row[0], "found": row[1], "at": row[2], "faces": _named(paths, rows)}
 
 
 def source_file(paths: Paths, src: str) -> Path | None:

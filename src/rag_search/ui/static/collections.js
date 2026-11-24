@@ -391,6 +391,7 @@
         h('td', { class: 'num' }, ramOf(r.collection) ? '~' + bytes(ramOf(r.collection).total) : '–'),
         h('td', { class: 'nowrap muted grp' }, c ? stamp(c.built_at) : '–'), h('td', { class: 'num' }, c && c.build_seconds !== null && c.build_seconds !== undefined ? dur(c.build_seconds) : '–'),
         h('td', { class: 'nowrap', on: { click: e => e.stopPropagation() } },
+          r.kind === 'location' && r.exists ? h('a', { class: 'btn small', href: RS.fileLink(r.collection, ''), title: 'Browse its folders and files and see everything recorded about one file' }, 'Browse files') : null, ' ',
           h('button', { class: 'btn small', disabled: ro || !r.exists, title: 'Say in a sentence what this collection holds', on: { click: () => describeDialog(r) } }, 'Describe…'), ' ',
           h('button', { class: 'btn small', disabled: ro || !r.exists || r.kind === 'imported', title: 'Index new and changed documents of this collection', on: { click: async () => { const x = await act('index/start', { mode: 'new', path: r.collection }); if (x.ok !== false) toast(x.already_running ? 'A run is already active' : 'Indexing started', x.already_running ? '' : 'ok'); } } }, 'Index'))));
       if (isOpen) body.push(h('tr', { class: 'cd-row' }, h('td', { colspan: 11 }, details(r))));
