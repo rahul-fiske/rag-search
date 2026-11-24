@@ -47,7 +47,7 @@ DEFAULTS: dict[str, Any] = {
         "retrieval_pool": 0, "rerank_pool": 0, "rrf_k": 0, "stages": "", "top_k": 0,
     },
     "indexer": {
-        "idle_exit_seconds": 0, "jobs": 0, "auto_publish": True,
+        "idle_exit_seconds": 0, "jobs": 0, "auto_publish": True, "keep_runs": 10,
         "chunk_size": 0, "chunk_overlap": 0,
         "ocr": "", "ocr_engine": "", "ocr_lang": "", "table_mode": "", "pdf_backend": "",
         "pipeline": "", "routing": "", "vlm": "", "repair": "",

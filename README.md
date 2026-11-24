@@ -123,6 +123,7 @@ rag-search index estimate [PATH]                               dry run: pages pe
 rag-search trace COLLECTION/DOC [--page N] [--md]              how a document was converted: branch, lane (a text layer, b OCR, c text layer + pictures, d document reader, `from` the lane that handed the page on) and outcome per page; --md prints the converted Markdown
 rag-search index cache [--clear]                               the page cache (pages already read): size, empty it
 rag-search index cancel | publish | foreground                 stop / publish now / run without daemon
+rag-search index prune [--keep N] [--dry-run]                   delete the records and logs of runs older than the last N
 rag-search daemon status|start|stop|restart [search|indexer]   state, warm-up time and memory; control
 rag-search service install|uninstall|status                    launchd or systemd: daemons start at login
 rag-search config show|init|path                               settings file (see below)
@@ -600,6 +601,7 @@ usable copy fails with that reason instead of reporting success.
 | `indexer.idle_exit_seconds` | `0` | same for the indexer daemon (never exits while a run is active) |
 | `indexer.jobs` | `0` | parallel conversion workers; `0` = 1 on ≤ 17 GB RAM, else 2 |
 | `indexer.auto_publish` | `true` | publish + reload the search daemon after a successful run |
+| `indexer.keep_runs` | `10` | runs whose records and logs (`jobs/`) are kept; older ones are deleted after every run (`0` = keep all; the run in progress and the latest run are always kept). Also `rag-search index prune` and the Indexing tab's Run history card |
 | `models.embedding` / `models.reranker` | `""` (= the defaults) | the models in use; set with `rag-search models set` or the dashboard rather than by hand |
 | `models.memory_limit_gb` | `0` | memory the models may use for the fit check; `0` = 60% of the installed memory |
 

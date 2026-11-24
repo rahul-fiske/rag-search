@@ -25,6 +25,7 @@ from ..catalog import collection_names, list_view, live_catalog
 from ..config import ConfigStore
 from ..grep import grep_isolated
 from ..paths import DEFAULT_TOP_K, Paths, get_paths, parse_collections
+from ..publish import current_generation
 from ..effective import ambient, settings_env
 from ..spec import parse_stages
 from .daemon_base import LOG_DATE_FORMAT, DaemonBase, process_memory
@@ -122,11 +123,7 @@ class SearchDaemon(DaemonBase):
         while not self.stop.wait(self.watch_seconds):
             if not self.ready.is_set():
                 continue
-            live = self.paths.current_gen()
-            live_no = None
-            if live is not None:
-                cat = live_catalog(self.paths)
-                live_no = cat.get("generation")
+            live_no = current_generation(self.paths)   # the symlink's target name: no catalog is read just to compare
             if live_no != self.engine.generation and (live_no or self.engine.generation):
                 try:
                     self.reload(prewarm=self.prewarm)

@@ -5,6 +5,8 @@ their fingerprints are made up (two people, each a direction in 128 dimensions).
 from __future__ import annotations
 
 import json
+import os
+import time
 from pathlib import Path
 from unittest import mock
 
@@ -662,4 +664,9 @@ class ResidueTests(PeopleCase):
             s = indexer.run_index(self.paths, [], self.roots(), prune=["trip"], jobs=1, embedder=FakeEmbedder(), progress=lambda e: None)
             self.assertEqual((purge.call_count, s["residue"]), (1, {"photographs": 1}))
             s = indexer.run_index(self.paths, [], self.roots(), jobs=1, embedder=FakeEmbedder(), progress=lambda e: None)
-            self.assertEqual(purge.call_count, 2)                                      # after every run, not only a whole-collection one
+            self.assertEqual(purge.call_count, 1)                  # a run that changed nothing walks nothing (sources rarely change)
+            stamp = self.paths.workspace / ".residue_purged"
+            old = time.time() - 2 * 24 * 3600
+            os.utime(stamp, (old, old))
+            s = indexer.run_index(self.paths, [], self.roots(), jobs=1, embedder=FakeEmbedder(), progress=lambda e: None)
+            self.assertEqual(purge.call_count, 2)                  # ... except once a day (a collection deleted outside a run)

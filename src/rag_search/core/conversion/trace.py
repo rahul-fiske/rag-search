@@ -15,6 +15,8 @@ is still read by docling; later phases change the readers, not these records.
 
 from __future__ import annotations
 
+import json
+import threading
 import time
 from pathlib import Path
 from typing import Any, Iterable
@@ -228,6 +230,7 @@ class RunTotals:
 
     def __init__(self, files: dict[str, int] | None = None) -> None:
         self.t0 = time.time()
+        self._lock = threading.RLock()        # documents are added by one thread while another takes a snapshot
         self.files = dict(files or {})
         self.docs = 0
         self.pages = 0
@@ -261,6 +264,10 @@ class RunTotals:
     def add(self, summary: dict[str, Any] | None, ok: bool = True) -> None:
         """*ok*: the document converted successfully (a failed or empty one still counts in the totals, but
         not in ``ok_*``, the figures of the successfully converted files)."""
+        with self._lock:
+            self._add(summary, ok)
+
+    def _add(self, summary: dict[str, Any] | None, ok: bool) -> None:
         if not summary:
             self.no_record += 1
             return
@@ -308,6 +315,10 @@ class RunTotals:
         self.merged_tables += int(summary.get("merged_tables", 0))
 
     def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return json.loads(json.dumps(self._snapshot()))     # a copy: the caller may keep it while documents are added
+
+    def _snapshot(self) -> dict[str, Any]:
         elapsed = max(0.001, time.time() - self.t0)
         return {
             "v": TRACE_VERSION, "files": self.files, "docs": self.docs, "pages": self.pages,

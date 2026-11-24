@@ -262,6 +262,10 @@ def index_status(paths: Paths, *, job_id: str = "", history: int = 0, docs: int 
     c = _client(client)
     r = _index_status(paths, job_id, history, client)
     job = r.get("job") if r.get("ok") else None
+    if r.get("ok"):                          # retention: how many runs are on record, their size, how many are kept
+        from .config import load_config
+
+        r["runs"] = {**jobs.disk_use(paths), "keep": jobs.keep_setting(load_config(paths)[0])}
     if job:
         hidden = policy.current_rules(paths).hidden_from(c)
         r["documents"] = jobs.documents(paths, job["id"], docs, status=doc_status,
@@ -312,6 +316,19 @@ def index_cancel(paths: Paths, *, client: str | None = None) -> dict[str, Any]:
 def index_publish(paths: Paths, *, client: str | None = None) -> dict[str, Any]:
     return client_mod.request_sync(paths, "indexer", "publish", client=_client(client),
                                    wait_s=30, request_timeout=700)
+
+
+def index_prune(paths: Paths, *, keep: int = 0, dry_run: bool = False, client: str | None = None) -> dict[str, Any]:
+    """Delete the records and logs of the runs older than the last *keep* (0 = the ``indexer.keep_runs`` setting).  The
+    run in progress and the newest finished run are always kept.  Works when the indexer daemon is not running too."""
+    r = client_mod.request_sync(paths, "indexer", "prune", client=_client(client), autostart=False, wait_s=0,
+                                request_timeout=60, keep=int(keep or 0), dry_run=bool(dry_run))
+    if r.get("code") != protocol.UNAVAILABLE:
+        return r
+    from .config import load_config
+
+    n = int(keep or 0) or jobs.keep_setting(load_config(paths)[0]) or jobs.DEFAULT_KEEP
+    return {"ok": True, **jobs.prune(paths, n, dry_run=dry_run)}
 
 
 def index_follow(paths: Paths, *, job_id: str = "",

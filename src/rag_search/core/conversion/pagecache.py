@@ -69,9 +69,21 @@ class PageCache:
                             size += f.stat().st_size
         return {"entries": n, "bytes": size}
 
+    GC_STAMP = ".gc"
+    GC_EVERY_S = 24 * 3600.0
+
+    def gc_due(self, now: float | None = None) -> bool:
+        """True when the cache was not cleaned for a day (a run that changed nothing cleans it only then)."""
+        try:
+            return (now or time.time()) - (self.root / self.GC_STAMP).stat().st_mtime > self.GC_EVERY_S
+        except OSError:
+            return True
+
     def gc(self, keep: set[str], *, grace_s: float = GRACE_S, now: float | None = None) -> dict[str, int]:
         """Remove entries whose key is not in *keep* and that are older than *grace_s*."""
         now = now or time.time()
+        with contextlib.suppress(OSError):
+            (self.root / self.GC_STAMP).touch()
         removed = freed = 0
         if self.root.is_dir():
             for sub in list(self.root.iterdir()):

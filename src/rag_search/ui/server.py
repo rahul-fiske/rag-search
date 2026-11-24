@@ -39,7 +39,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .. import DIST_NAME, __version__, access, api, catalog, model_tasks, models, playground_runs, policy, spec
 from ..config import ConfigStore, update_config
-from ..paths import Paths, allow_cloud_files, detached_start, pasted_path, ensure_dirs, get_paths, parse_collections
+from ..paths import Paths, allow_cloud_files, detached_start, pasted_path, ensure_dirs, get_paths, parse_collections, rotate_log
 from . import info, markdown
 
 _INSTALLED: dict[str, Any] = {"at": -1e9, "version": ""}
@@ -667,6 +667,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(r)
             if name == "index/cancel":
                 r = api.index_cancel(paths, client="cli")
+                app.live.nudge()
+                return self._json(r)
+            if name == "index/prune":             # retention: the records and logs of the runs older than the last N
+                keep = int(body.get("keep") or 0)
+                if keep < 0:
+                    return self._error(400, "keep must be 0 (the setting) or a number of runs")
+                if keep and flag("save"):         # the number becomes the setting used after every run
+                    update_config(paths, "indexer", {"keep_runs": keep})
+                r = api.index_prune(paths, keep=keep, dry_run=flag("dry_run"), client="cli")
                 app.live.nudge()
                 return self._json(r)
             if name == "index/publish":
@@ -1547,6 +1556,7 @@ def _detach(paths: Paths, port: int, read_only: bool, open_browser: bool) -> int
     args = [sys.executable, "-m", "rag_search.ui.server", "--port", str(port), "--no-browser"]
     if read_only:
         args.append("--read-only")
+    rotate_log(paths.log_file("ui"))
     log = open(paths.log_file("ui"), "ab")
     proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                             start_new_session=True, close_fds=True,

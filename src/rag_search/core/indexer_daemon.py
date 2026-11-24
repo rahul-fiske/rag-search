@@ -34,7 +34,8 @@ from typing import Any
 from .. import api, locations, protocol, stages
 from ..config import ConfigStore, effective_jobs
 from ..effective import ambient, settings_env
-from ..jobs import ACTIVE, all_records, events_file, job_file, now, read_record, view
+from ..jobs import ACTIVE, all_records, events_file, job_file, keep_setting, now, read_record, view
+from ..jobs import prune as prune_runs
 from ..paths import SUPPORTED_EXTENSIONS, Paths, detached_start, get_paths, write_json_atomic
 from . import stallwatch
 from .daemon_base import LOG_DATE_FORMAT, DaemonBase
@@ -42,7 +43,6 @@ from .worker import EXIT_BUSY
 
 log = logging.getLogger("rag_search.indexer_daemon")
 
-KEEP_JOBS = 30
 MODES = ("new", "all")
 
 
@@ -204,14 +204,20 @@ class IndexerDaemon(DaemonBase):
         self._gc_jobs()
 
     def _gc_jobs(self) -> None:
-        recs = self._all_records()
-        for rec in recs[KEEP_JOBS:]:
-            for f in (job_file(self.paths, rec["id"]), events_file(self.paths, rec["id"]),
-                      self.paths.jobs / f"{rec['id']}.log"):
-                try:
-                    f.unlink()
-                except OSError:
-                    pass
+        """Keep the records and logs of the last ``indexer.keep_runs`` runs (0 = every run); the run in progress and the
+        newest finished one are never removed."""
+        keep = keep_setting(self.cfgs.get())
+        if keep:
+            self.prune(keep)
+
+    def prune(self, keep: int, dry_run: bool = False) -> dict[str, Any]:
+        with self.lock:
+            active = self.job["id"] if self.job else ""
+            res = prune_runs(self.paths, keep, active=active, dry_run=dry_run)
+        if res["removed"] and not dry_run:
+            log.info("removed the records and logs of %d old run(s) (%d bytes); keeping the last %d",
+                     len(res["removed"]), res["freed_bytes"], res["keep"])
+        return res
 
     # ── job control ─────────────────────────────────────────────────────────
     def _validate_spec(self, req: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
@@ -448,6 +454,14 @@ class IndexerDaemon(DaemonBase):
         if action == "follow":
             self._follow(conn, str(req.get("job_id") or ""))
             return None
+        if action == "prune":
+            try:
+                keep = int(req.get("keep") or keep_setting(self.cfgs.get()) or 0)
+            except (TypeError, ValueError):
+                keep = 0
+            if keep < 1:
+                return protocol.error(protocol.BAD_REQUEST, "keep must be a whole number of runs, 1 or more")
+            return {"ok": True, **self.prune(keep, dry_run=bool(req.get("dry_run")))}
         if action == "publish":
             with self.lock:
                 if self.job is not None:
@@ -472,10 +486,12 @@ class IndexerDaemon(DaemonBase):
         return read_record(self.paths, job_id)
 
     def _status(self, job_id: str, history: int) -> dict[str, Any]:
-        rec = self._find(job_id)
+        with self.lock:
+            rec = self._find(job_id)
+            running = self.job is not None
         if job_id and rec is None:
             return protocol.error(protocol.BAD_REQUEST, f"no such job: {job_id}")
-        out: dict[str, Any] = {"ok": True, "running": self.job is not None,
+        out: dict[str, Any] = {"ok": True, "running": running,
                                "job": view(rec) if rec else None,
                                "sources": locations.sources(self.paths),
                                "supported_extensions": sorted(SUPPORTED_EXTENSIONS)}

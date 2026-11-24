@@ -185,7 +185,7 @@ the status item (PyObjC). `machine.menubar_possible()` says whether the machine 
     current -> gen-000042     symlink switched atomically (os.replace)
   run/                        0700: <kind>.sock .alive .start.lock .pid .log, index.lock,
                               ui.token (0600) ui.pid ui.port (dashboard)
-  jobs/                       <id>.json (record) <id>.events.jsonl <id>.log
+  jobs/                       <id>.json (record) <id>.events.jsonl <id>.log -- the last indexer.keep_runs runs (10)
 ```
 
 **Publishing** (`publish.py`) collects every workspace collection with a complete `_all/` index,
@@ -326,7 +326,7 @@ the document reader for every other scan and image; a page a cheaper lane doubts
 | 5.2 | Picture vectors (optional) | GPU | run | one vector per photograph from its pixels (SigLIP 2), after the text vectors, with the picture model loaded once; `pictures.npy` with a key of its own (`pictures.json`: model and checksum), so a new picture model embeds only the photographs again and a photograph indexed before picture vectors existed is caught up without being converted or embedded again. Nothing is downloaded by a run: without the model the step is left out (5.3d) | `models.picture` |
 | 6 | Write | CPU | document | nodes.json and embeddings.npy, then index.meta.json last, so a half-written document is never taken for a finished one | – |
 | 7 | Merge | CPU | collection | concatenate the documents' vectors into the collection's index for search (nothing is re-embedded) | – |
-| 8 | Publish | CPU | collection | hard-link the new generation, switch the "current" symlink, tell the search daemon to reload; the last three generations are kept | `indexer.auto_publish` |
+| 8 | Publish | CPU | collection | hard-link the new generation, switch the "current" symlink, tell the search daemon to reload; the previous generation is kept until the search daemon has switched, then only the live one | `indexer.auto_publish` |
 
 Search (one query):
 

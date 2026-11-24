@@ -593,9 +593,31 @@
     return parts.length ? parts.join(' · ') + ': ' : '';
   }
 
+  // Retention: the records and logs of runs older than the last N are deleted (after every run automatically, or now).
+  async function pruneRuns() {
+    const box = refs.hist.querySelector('input[data-keep-runs]');
+    const keep = Math.max(1, parseInt(box && box.value, 10) || 10);
+    const dry = await act('index/prune', { keep, dry_run: true });
+    if (dry.ok === false) return;
+    const n = (dry.removed || []).length;
+    if (!n && !dry.files) { toast(`Nothing to delete: ${num(dry.kept)} run(s) on record, keeping the last ${keep}`, 'ok'); await act('index/prune', { keep, save: true, dry_run: true }); return; }
+    if (!await confirmDialog(`Delete ${n} old run(s)?`, `Their records and logs (${num(dry.files)} files, ${(dry.freed_bytes / 1e6).toFixed(1)} MB) are deleted. The run in progress and the latest run are always kept. From now on the last ${keep} runs are kept after every run.`, 'Delete', true)) return;
+    const r = await act('index/prune', { keep, save: true });
+    if (r.ok !== false) toast(`Deleted ${num((r.removed || []).length)} run(s), ${(r.freed_bytes / 1e6).toFixed(1)} MB freed`, 'ok');
+  }
+
+  function retentionRow(idx) {
+    const runs = (idx && idx.runs) || {};
+    const keepBox = h('input', { type: 'number', min: '1', step: '1', value: String(runs.keep || 10), 'data-keep-runs': '1', style: { width: '70px' }, title: 'how many runs keep their records and logs' });
+    return h('div', { class: 'row', style: { marginTop: '6px', alignItems: 'center' } },
+      h('span', { class: 'muted small' }, runs.runs !== undefined ? `${num(runs.runs)} run(s) on record, ${((runs.bytes || 0) / 1e6).toFixed(1)} MB of records and logs. Keep the last` : 'Keep the last'),
+      keepBox, h('span', { class: 'muted small' }, 'runs'),
+      h('button', { class: 'btn small', disabled: readOnly(), title: 'delete the records and logs of older runs now (done automatically after every run)', on: { click: pruneRuns } }, 'Delete older runs'));
+  }
+
   function historyCard() {
     const idx = RS.state.live && RS.state.live.index; const hist = (idx && idx.history) || [];
-    return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', null, 'Run history')),
+    return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', null, 'Run history')), retentionRow(idx),
       hist.length ? h('div', { class: 'table-wrap' }, h('table', null,
         h('thead', null, h('tr', null, ['Run', 'Mode', 'Result', 'Started', 'Took', 'Documents'].map(t => h('th', null, t)))),
         h('tbody', null, hist.map(j => h('tr', null, h('td', { class: 'mono' }, j.id), h('td', null, (j.mode || '') + (j.path ? ' · ' + j.path : '')),

@@ -12,15 +12,16 @@ Exit codes: 0 finished (see the 'result' event for per-document errors),
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
 from ..jobs import events_file, job_file
+from . import events
 from ..paths import (
     DEFAULT_CHUNK_OVERLAP,
     DEFAULT_CHUNK_SIZE,
@@ -35,19 +36,21 @@ PROGRESS_MIN_INTERVAL = 0.3
 
 
 class EventWriter:
+    """The run's event log (see ``core/events.py``): the run's threads share it, every line is one ``os.write``."""
+
     def __init__(self, path: Path):
         self.path = path
-        self.fh = open(path, "a", encoding="utf-8", buffering=1)  # line buffered
+        self._out = events.Writer(path)
+        self._lock = threading.Lock()
         self._last = 0.0
         self._last_phase = ""
         self._last_current = ""
 
     def emit(self, event: str, **fields: Any) -> None:
-        self.fh.write(json.dumps({"ts": round(time.time(), 3), "event": event, **fields},
-                                 ensure_ascii=False) + "\n")
+        self._out.write(event, **fields)
 
     def progress(self, ev: dict[str, Any]) -> None:
-        """Throttle chatty embed-progress events; always pass phase changes and totals."""
+        """Throttle chatty progress events; always pass phase changes and totals."""
         if "doc" in ev:          # one finished document: never throttled
             self.emit("doc", **ev["doc"])
             return
@@ -64,15 +67,16 @@ class EventWriter:
         phase = ev.get("phase", "")
         current = str(ev.get("current") or "")
         final = ev.get("total") and ev.get("done") == ev.get("total")
-        # a change of phase or of the document being worked on is never dropped: only repeats of the same are
-        if (phase == self._last_phase and current == self._last_current and not final
-                and now - self._last < PROGRESS_MIN_INTERVAL):
-            return
-        self._last, self._last_phase, self._last_current = now, phase, current
+        with self._lock:
+            # a change of phase or of the document being worked on is never dropped: only repeats of the same are
+            if (phase == self._last_phase and current == self._last_current and not final
+                    and now - self._last < PROGRESS_MIN_INTERVAL):
+                return
+            self._last, self._last_phase, self._last_current = now, phase, current
         self.emit("progress", **ev)
 
     def close(self) -> None:
-        self.fh.close()
+        self._out.close()
 
 
 def resolve_sources(paths: Paths, spec: dict[str, Any]) -> tuple[Any, list[Path], list[dict[str, str]]]:

@@ -20,6 +20,7 @@ import json
 import os
 import re
 import shutil
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -96,10 +97,33 @@ def list_generations(paths: Paths) -> list[int]:
     return sorted(out)
 
 
+_CAT_LOCK = threading.Lock()
+_CAT_CACHE: dict[str, tuple[tuple[int, int, int], dict[str, Any]]] = {}     # catalog file -> (stat key, parsed)
+
+
 def read_catalog(gen_dir: Path | None) -> dict[str, Any]:
+    """The catalog of a generation, parsed once per file version (a generation is never changed after it is published, and
+    the catalog of a large library is several MB: the dashboard, the search daemon and every `list` read it).  The dict is
+    shared between callers: read it, never change it."""
     if gen_dir is None:
         return {}
-    return read_json(gen_dir / CATALOG) or {}
+    f = gen_dir / CATALOG
+    try:
+        st = f.stat()
+    except OSError:
+        return {}
+    key = (st.st_ino, st.st_size, st.st_mtime_ns)
+    name = str(f.resolve())
+    with _CAT_LOCK:
+        hit = _CAT_CACHE.get(name)
+        if hit is not None and hit[0] == key:
+            return hit[1]
+    data = read_json(f) or {}
+    with _CAT_LOCK:
+        _CAT_CACHE[name] = (key, data)
+        while len(_CAT_CACHE) > 4:
+            _CAT_CACHE.pop(next(iter(_CAT_CACHE)))
+    return data
 
 
 def _collect(paths: Paths) -> list[dict[str, Any]]:

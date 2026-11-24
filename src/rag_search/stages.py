@@ -219,8 +219,8 @@ INDEXING: tuple[Stage, ...] = (
     Stage("7", "merge", "Merge", COLLECTION, CPU,
           "concatenate the documents' vectors into the collection's index for search (nothing is re-embedded)"),
     Stage("8", "publish", "Publish", COLLECTION, CPU,
-          "hard-link the new generation, switch the \"current\" symlink, tell the search daemon to reload; the "
-          "last three generations are kept", settings=("indexer.auto_publish",), constants=(("generations kept", 3),)),
+          "hard-link the new generation, switch the \"current\" symlink, tell the search daemon to reload; "
+          "the previous generation is kept until the search daemon has switched", settings=("indexer.auto_publish",), constants=(("generations kept", 2),)),
 )
 
 SEARCH: tuple[Stage, ...] = (

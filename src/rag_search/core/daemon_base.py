@@ -19,7 +19,7 @@ import time
 from typing import Any
 
 from .. import __version__, machine, protocol
-from ..paths import Paths, allow_cloud_files, ensure_dirs
+from ..paths import LOG_ROTATE_BYTES, Paths, allow_cloud_files, ensure_dirs
 
 log = logging.getLogger("rag_search.daemon")
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -123,8 +123,26 @@ class DaemonBase:
             conn.close()
 
     # ── lifecycle ───────────────────────────────────────────────────────────
+    def _rotate_own_log(self) -> None:
+        """An always-on daemon writes its log for weeks: when ``run/<kind>.log`` (our standard error) passes the limit it
+        becomes ``.log.1`` and a fresh file takes its place, without a restart.  Nothing happens when standard error is
+        not that file (a terminal, a test)."""
+        f = self.paths.log_file(self.kind)
+        try:
+            st, err = f.stat(), os.fstat(2)
+            if (st.st_ino, st.st_dev) != (err.st_ino, err.st_dev) or st.st_size <= LOG_ROTATE_BYTES:
+                return
+            os.replace(f, f.with_suffix(".log.1"))
+            fd = os.open(f, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+            for target in (1, 2):
+                os.dup2(fd, target)
+            os.close(fd)
+        except OSError:
+            return
+
     def _idle_watch(self) -> None:
         while not self.stop.wait(self.idle_poll):
+            self._rotate_own_log()
             if (self.idle_exit_seconds and not self.is_busy()
                     and time.monotonic() - self.last_activity > self.idle_exit_seconds):
                 log.info("idle for %ds; exiting", self.idle_exit_seconds)

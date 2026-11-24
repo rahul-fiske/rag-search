@@ -32,7 +32,7 @@ import uuid
 from typing import Any, Callable
 
 from . import models
-from .paths import Paths, detached_start, ensure_dirs, get_paths, read_json, write_json_atomic
+from .paths import Paths, detached_start, ensure_dirs, get_paths, read_json, rotate_log, write_json_atomic
 
 TASK_FILE = "models.task.json"
 LOCK_FILE = "models.task.lock"
@@ -666,6 +666,7 @@ def start_detached(paths: Paths, request: dict[str, Any]) -> dict[str, Any]:
               "started_at": round(time.time(), 3), "updated_at": round(time.time(), 3),
               "log": [], "progress": {}, "result": {}}
     write_json_atomic(task_file(paths), queued, indent=None)
+    rotate_log(log_file(paths))
     log = open(log_file(paths), "ab")
     try:
         subprocess.Popen([sys.executable, "-m", "rag_search.model_tasks", "run",

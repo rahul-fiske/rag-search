@@ -19,9 +19,8 @@ import time
 from typing import Any, Iterator
 
 from . import protocol
-from .paths import Paths, detached_start, ensure_dirs
+from .paths import Paths, detached_start, ensure_dirs, rotate_log
 
-LOG_ROTATE_BYTES = 5 * 1024 * 1024
 DAEMON_MODULES = {
     "search": "rag_search.core.search_daemon",
     "indexer": "rag_search.core.indexer_daemon",
@@ -124,9 +123,7 @@ def spawn(paths: Paths, kind: str, lock_wait: float = 10.0) -> bool:
         if ping(paths, kind, 1.0) or alive_lock_held(paths, kind):
             return False
         log = paths.log_file(kind)
-        with contextlib.suppress(OSError):
-            if log.exists() and log.stat().st_size > LOG_ROTATE_BYTES:
-                os.replace(log, log.with_suffix(".log.1"))
+        rotate_log(log)
         out = open(log, "ab")
         env = dict(os.environ, RAG_SEARCH_HOME=str(paths.home))
         proc = subprocess.Popen(

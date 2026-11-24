@@ -234,7 +234,7 @@
         table(['Changes', 'What is redone'], [
           ['the source file (SHA-256)', '3 convert · 4 chunk · 5 embed · 6 write'],
           ['chunk size / overlap, chunker version, tokenizer version, index format', '4 chunk · 5 embed · 6 write (the Markdown is reused)'],
-          ['embedding model', '5 embed · 6 write (chunks are reused)'],
+          ['embedding model', '4 chunk · 5 embed · 6 write (the Markdown is reused)'],
           ['conversion settings (OCR, tables, routing, a lane switched on, the document reader or repair switched off)', '3 convert · 4 chunk · 5 embed · 6 write (pages come from the page cache)'],
           ['map data downloaded or updated (Models tab, Maps) · Refresh places', '3.7 locate again, only for the photographs and Timeline files whose map cells changed · 4 chunk · 5 embed · 6 write (a photograph is updated in place: its picture is not read again, its description is kept)'],
           ['a photograph description (a new model or prompt, or a photograph left undescribed)', '3.10 describe · 4 chunk · 5 embed · 6 write (cached by photograph, model and prompt; nothing else is converted again)'],

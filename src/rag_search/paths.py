@@ -179,6 +179,18 @@ def ensure_dirs(p: Paths) -> None:
 
 # ── settings from the environment ────────────────────────────────────────────
 
+LOG_ROTATE_BYTES = 5 * 1024 * 1024        # a daemon's or a task's log becomes <name>.log.1 past this size
+
+
+def rotate_log(log: Path, limit: int = LOG_ROTATE_BYTES) -> None:
+    """Move *log* to ``<name>.log.1`` when it is larger than *limit* (before a process starts writing to it)."""
+    try:
+        if log.stat().st_size > limit:
+            os.replace(log, log.with_suffix(".log.1"))
+    except OSError:
+        pass
+
+
 def env_int(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, "") or default)

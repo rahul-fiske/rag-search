@@ -849,6 +849,20 @@ def _cmd_index_cancel(a: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_index_prune(a: argparse.Namespace) -> int:
+    r = api.index_prune(get_paths(), keep=a.keep, dry_run=a.dry_run, client=a.client)
+    if not r.get("ok"):
+        return _fail(r)
+    if a.json:
+        _json(r)
+        return EXIT_OK
+    verb = "would remove" if a.dry_run else "removed"
+    mb = r.get("freed_bytes", 0) / 1e6
+    print(f"{verb} {len(r.get('removed') or [])} run(s) ({r.get('files', 0)} file(s), {mb:.1f} MB); "
+          f"kept the last {r.get('keep')} ({r.get('kept')} on record)")
+    return EXIT_OK
+
+
 def _cmd_index_publish(a: argparse.Namespace) -> int:
     r = api.index_publish(get_paths(), client=a.client)
     if not r.get("ok"):
@@ -2818,6 +2832,11 @@ def build_parser() -> argparse.ArgumentParser:
          _cmd_index_cache).add_argument("--clear", action="store_true",
                                         help="delete every cached page (they are read again next time)")
     iadd("cancel", "stop the running indexing run", _cmd_index_cancel)
+    q = iadd("prune", "delete the records and logs of old runs (the run in progress and the latest are kept)",
+             _cmd_index_prune)
+    q.add_argument("--keep", type=int, default=0,
+                   help="runs to keep (default: the indexer.keep_runs setting, 10; after every run this is done automatically)")
+    q.add_argument("--dry-run", action="store_true", help="say what would be removed, remove nothing")
     iadd("publish", "publish the workspace now (normally automatic after a run)",
          _cmd_index_publish)
     q = iadd("foreground", "index in this process, without the daemon, then publish",

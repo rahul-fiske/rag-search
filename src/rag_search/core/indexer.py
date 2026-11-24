@@ -63,7 +63,7 @@ from ..paths import (
     sha256_file,
     write_json_atomic,
 )
-from . import chunker, describe, faces, photo, pictures, residue, sniffcache, stallwatch, timeline, understanding, video
+from . import chunker, describe, events, faces, photo, pictures, residue, sniffcache, stallwatch, timeline, understanding, video
 from .bm25 import TOKENIZER_VERSION
 from .conversion import (
     applevision,
@@ -213,7 +213,10 @@ def md_is_current(md_path: Path, src_sha: str, *, force: bool = False,
     if force or not md_path.exists() or not sidecar.exists():
         return False
     # sidecar = source SHA, then the conversion settings the Markdown was made with
-    lines = sidecar.read_text(encoding="utf-8").split("\n")
+    try:
+        lines = sidecar.read_text(encoding="utf-8").split("\n")
+    except OSError:                        # removed in the meantime (a prune, a re-conversion): not current
+        return False
     return lines[0].strip() == src_sha and len(lines) > 1 and lines[1].strip() == convert_profile(ocr)
 
 
@@ -277,90 +280,51 @@ def _node_id(rel: str, i: int, sha: str) -> str:
 def stage_event(path: str | os.PathLike | None, rel: str, stage: str, status: str,
                 **fields: Any) -> None:
     """Append one "this document is in this stage" line to the job's event log.  Called from the
-    conversion processes too, which is why it appends to the file itself (one short line per
-    write) instead of using the progress callback.  *stage* is a key of ``stages.py`` ("convert", "chunk",
-    "embed", ...); the event carries its number as ``id`` ("3", "4", "5").  Never raises."""
-    if not path:
-        return
-    try:
-        line = json.dumps({"ts": round(time.time(), 3), "event": "stage", "file": rel,
-                           "stage": stage, "id": stages.id_of(stage), "status": status, "pid": os.getpid(), **fields},
-                          ensure_ascii=False)
-        with open(path, "a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
-    except (OSError, ValueError, TypeError):
-        pass
+    conversion processes too, which is why it appends to the file itself (``events.append``) instead of using the
+    progress callback.  *stage* is a key of ``stages.py`` ("convert", "chunk", "embed", ...); the event carries its
+    number as ``id`` ("3", "4", "5").  Never raises."""
+    events.append(path, "stage", file=rel, stage=stage, id=stages.id_of(stage), status=status, pid=os.getpid(), **fields)
 
 
 def work_event(path: str | os.PathLike | None, rel: str, phase: str, status: str, **fields: Any) -> None:
     """Append one "this process starts / ends a unit of work" line (``status`` start | done) to the job's
     event log.  *phase* is the run phase the work belongs to (``convert``, ``embed``, ``merge``), *rel* the
-    document's path inside its collection (or the collection's name).  Written by the conversion processes
-    too, hence the append to the file itself; never raises."""
-    if not path:
-        return
-    try:
-        pid = int(fields.pop("of_pid", 0) or os.getpid())          # of_pid: written for a process that cannot any more
-        line = json.dumps({"ts": round(time.time(), 3), "event": "work", "pid": pid, "phase": phase,
-                           "file": rel, "status": status, **fields}, ensure_ascii=False)
-        with open(path, "a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
-    except (OSError, ValueError, TypeError):
-        pass
+    document's path inside its collection (or the collection's name).  Never raises."""
+    pid = int(fields.pop("of_pid", 0) or os.getpid())          # of_pid: written for a process that cannot any more
+    events.append(path, "work", pid=pid, phase=phase, file=rel, status=status, **fields)
 
 
 def plan_event(path: str | os.PathLike | None, rel: str, branches: dict[str, int]) -> None:
     """Append what kind of pages this document has (``{"digital": 40, "raster": 2}``), known as soon as its
     pages are profiled: the dashboard's "pages in active files" is made of these.  Never raises."""
-    if not path or not branches:
-        return
-    try:
-        line = json.dumps({"ts": round(time.time(), 3), "event": "plan", "file": rel, "pid": os.getpid(),
-                           "pages": sum(branches.values()), "branches": branches}, ensure_ascii=False)
-        with open(path, "a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
-    except (OSError, ValueError, TypeError):
-        pass
+    if branches:
+        events.append(path, "plan", file=rel, pid=os.getpid(), pages=sum(branches.values()), branches=branches)
 
 
 def step_event(path: str | os.PathLike | None, rel: str, page: int, what: str) -> None:
     """Append "this process is about to read page N with this reader" (a reader call can take minutes).  The
     dashboard shows it next to the worker, and the stall watch (``stallwatch.py``) takes it as a sign of life.
     Never raises."""
-    if not path:
-        return
-    try:
-        line = json.dumps({"ts": round(time.time(), 3), "event": "step", "file": rel, "pid": os.getpid(),
-                           "page": page, "what": what}, ensure_ascii=False)
-        with open(path, "a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
-    except (OSError, ValueError, TypeError):
-        pass
+    events.append(path, "step", file=rel, pid=os.getpid(), page=page, what=what)
 
 
 def page_event(path: str | os.PathLike | None, rel: str, rec: dict[str, Any], total: int) -> None:
     """Append one finished page to the job's event log (a compact line: the dashboard's live pipeline
-    and per-document progress are built from these).  Never raises."""
-    if not path:
-        return
-    try:
-        line = json.dumps({
-            "ts": round(time.time(), 3), "event": "page", "file": rel, "pid": os.getpid(),
-            "page": rec.get("page"), "of": total, "branch": rec.get("branch"), "kind": trace.page_kind(rec),
-            "outcome": rec.get("outcome"), "cache": rec.get("cache", ""),
-            "read_s": (rec.get("time_s") or {}).get("read"),
-            "chars": (rec.get("out") or {}).get("chars"),
-            "tokens": rec.get("tokens"), "gpu_s": rec.get("gpu_s"),
-            "model": (rec.get("reader") or {}).get("model") if (rec.get("reader") or {}).get("tool") == "vlm" else None,
-            "gate": [c.get("name") for c in (rec.get("gate") or {}).get("checks", [])] or None,
-            "runway": (rec.get("route") or {}).get("final"),
-            "moved": ((rec.get("route") or {}).get("escalated_from") or {}).get("runway"),
-            "engine": (rec.get("route") or {}).get("engine"),
-        }, ensure_ascii=False)
-        with open(path, "a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
-    except (OSError, ValueError, TypeError):
-        pass
+    and per-document progress are built from these; empty fields are left out).  Never raises."""
+    route = rec.get("route") or {}
+    reader = rec.get("reader") or {}
+    events.append(
+        path, "page", file=rel, pid=os.getpid(),
+        page=rec.get("page"), of=total, branch=rec.get("branch"), kind=trace.page_kind(rec),
+        outcome=rec.get("outcome"), cache=rec.get("cache", ""),
+        read_s=(rec.get("time_s") or {}).get("read"),
+        chars=(rec.get("out") or {}).get("chars"),
+        tokens=rec.get("tokens"), gpu_s=rec.get("gpu_s"),
+        model=reader.get("model") if reader.get("tool") == "vlm" else None,
+        gate=[c.get("name") for c in (rec.get("gate") or {}).get("checks", [])] or None,
+        runway=route.get("final"),
+        moved=(route.get("escalated_from") or {}).get("runway"),
+        engine=route.get("engine"))
 
 
 def convert_source_routed(src: Path, md_path: Path, profile: dict[str, Any], *, src_sha: str,
@@ -1070,9 +1034,9 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
                     node["metadata"]["confidence"] = "low"
 
         idx_dir.mkdir(parents=True, exist_ok=True)
-        for stale in (META_FILE, EMB_FILE):  # invalidate before touching nodes
+        for old_part in (META_FILE, EMB_FILE):  # invalidate before touching nodes
             with contextlib.suppress(OSError):
-                (idx_dir / stale).unlink()
+                (idx_dir / old_part).unlink()
         t_write = time.perf_counter()
         write_json_atomic(idx_dir / NODES_FILE, {"format": INDEX_FORMAT, "nodes": nodes},
                           indent=None)
@@ -1961,10 +1925,8 @@ def run_index(
             msg = stallwatch.describe(st)
             log.error("%s: %s", st.get("file"), msg)
             if st["pid"] == os.getpid():              # documents are converted in this process: only ending it helps
-                with contextlib.suppress(OSError), open(str(stage_log), "a", encoding="utf-8") as fh:
-                    fh.write(json.dumps({"ts": round(time.time(), 3), "event": "error",
-                                         "error": f"{st.get('file')}: {msg.replace('and the run went on', 'and the run ended')}"},
-                                        ensure_ascii=False) + "\n")
+                events.append(stage_log, "error",
+                              error=f"{st.get('file')}: {msg.replace('and the run went on', 'and the run ended')}")
                 logging.shutdown()
                 os._exit(1)
             stalled[str(st.get("file", ""))] = msg
@@ -2062,8 +2024,9 @@ def run_index(
         # Phase 2 — embeddings (one model, this process)
         indexed = 0
         t_phase = time.perf_counter()
+        own_embedder = embedder is None          # made here (and freed here) unless the caller passed one
         if prepared:
-            if embedder is None:
+            if own_embedder:
                 from .embedding import make_embedder
 
                 embedder = make_embedder()
@@ -2116,6 +2079,11 @@ def run_index(
             _sink({"phase_event": {"phase": "embed", "status": "done", "total": len(prepared), "indexed": indexed}})
 
         phase_s["embed"] = round(time.perf_counter() - t_phase, 1)
+        if prepared and own_embedder:        # the text model is done: free it before 5.2 loads the picture model
+            embedder = None
+            from .embedding import release_memory
+
+            release_memory()
         picture_info = _picture_phase(picture_todo, picture_model, roots, _sink, emit, errors, stage_log)
         if picture_info.get("seconds") is not None:
             phase_s["pictures"] = picture_info["seconds"]
@@ -2140,15 +2108,27 @@ def run_index(
                 errors.append({"src": f"collection:{m['collection']}", "message": m["error"]})
 
     vlm.close_shared()                     # the document reader's process (only when this process had one)
+    # Housekeeping walks the whole workspace (seconds per ten thousand documents), so it runs only when this run changed
+    # something it looks after: a document removed or converted again (its checksum, its trace), or a wipe.  Sources rarely
+    # change, and an update run that finds nothing new costs nothing here.
+    changed = bool(removed or orphans_removed or wiped or prepared or no_text)
     residue_info: dict[str, Any] = {}
-    try:                                   # after every run: what is left of photographs deleted from every folder goes too (it only
-        residue_info = residue.purge(paths)  # touches what no index folder or Markdown in the workspace still has)
-    except Exception as exc:  # noqa: BLE001 - housekeeping only
-        log.warning("forgetting what is left of deleted photographs failed: %s", exc)
+    stamp = paths.workspace / ".residue_purged"     # also once a day: a collection deleted outside a run leaves its residue
+    try:
+        due = time.time() - stamp.stat().st_mtime > 24 * 3600
+    except OSError:
+        due = True
+    if changed or due:
+        with contextlib.suppress(OSError):
+            stamp.touch()
+        try:                               # what is left of photographs deleted from every folder goes too (it only
+            residue_info = residue.purge(paths)  # touches what no index folder or Markdown in the workspace still has)
+        except Exception as exc:  # noqa: BLE001 - housekeeping only
+            log.warning("forgetting what is left of deleted photographs failed: %s", exc)
     cache_info: dict[str, Any] = {}
     try:                                   # forget cached pages no stored trace refers to any more
         pc = pagecache.PageCache(paths.workspace)
-        if pc.root.is_dir():
+        if pc.root.is_dir() and (changed or pc.gc_due()):
             cache_info = {**pc.gc(pagecache.referenced_keys(paths.markup)), **pc.stats()}
     except Exception as exc:  # noqa: BLE001 - housekeeping only
         log.warning("page cache cleanup failed: %s", exc)
