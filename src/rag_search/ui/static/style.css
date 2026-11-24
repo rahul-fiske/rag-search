@@ -350,10 +350,10 @@ svg.dg { display: block; width: 100%; height: auto; min-width: 820px; font-famil
 .cv-track-l b { font-size: 13px; } .cv-track-more { display: block; color: var(--muted); font-size: 11px; } .cv-track-n { font-size: 20px; font-weight: 600; line-height: 1.2; } .cv-track-l small { color: var(--muted); font-size: 11px; }
 .cv-track-steps { display: flex; flex-wrap: wrap; gap: 6px; align-items: stretch; }
 .cv-track-steps > .cv-arrow { align-self: center; }
-.cv-tn { flex: 1 1 0; min-width: 128px; border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 9px; background: var(--panel-2); font-size: 12px; display: grid; gap: 3px; align-content: start; }
+.cv-tn { flex: 1 1 0; min-width: 156px; border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 9px; background: var(--panel-2); font-size: 12px; display: grid; gap: 3px; align-content: start; }
 .cv-tn.on { background: var(--accent-soft); border-color: var(--accent); }
-.cv-tn-h { display: flex; align-items: center; gap: 6px; } .cv-tn-h b { flex: 1; } .cv-tn-id { color: var(--muted); font-variant-numeric: tabular-nums; }
-.cv-tn > * { min-width: 0; overflow-wrap: anywhere; }
+.cv-tn-h { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; } .cv-tn-h b { flex: 1 1 auto; white-space: nowrap; } .cv-tn-id { color: var(--muted); font-variant-numeric: tabular-nums; }
+.cv-tn > * { min-width: 0; overflow-wrap: normal; word-break: normal; }      /* words are never broken inside a box: the box grows or the line wraps between words */
 .cv-tn-fig { font-weight: 600; } .cv-tn:not(.on) .cv-tn-fig { color: var(--faint); font-weight: 400; }
 .cv-tn-note { color: var(--muted); font-size: 11px; }
 .cv-tn-bar { display: block; height: 6px; border-radius: 999px; background: var(--idle-soft); overflow: hidden; min-width: 50px; }
