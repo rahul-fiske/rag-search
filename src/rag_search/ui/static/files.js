@@ -170,6 +170,20 @@
       h('div', null, d.markdown ? [h('pre', { class: 'mdpre' }, d.markdown), d.markdown_cut ? h('p', { class: 'small muted' }, 'The Markdown is longer: only the start is shown.') : null]
         : h('p', { class: 'muted' }, 'No Markdown was made for this file.')));
   }
+  /* what each record is for and what it holds, shown under its name */
+  const WHAT = [
+    [/^index\.meta\.json$/, 'The index card of the file: its checksum and size, when it was indexed, the embedding model and settings, the conversion settings, how many passages it has and how long each step took. Its checksum is how an unchanged file is skipped.'],
+    [/^nodes\.json$/, 'The passages (chunks) the Markdown was cut into, with the text and the metadata of each: what search reads back as results.'],
+    [/^embeddings\.npy$/, 'One vector per passage from the embedding model: what meaning-based search compares your question with.'],
+    [/^pictures\.json$/, 'The key of the picture vector: which picture model made it and for which checksum, so a stale or half-written vector is never used.'],
+    [/^pictures\.npy$/, 'The picture vector: the photograph itself as numbers (not its text), what searching by what a picture looks like compares against.'],
+    [/^outcome\.json$/, 'A remembered failure: why the file could not be indexed, so it is not tried again until it changes.'],
+    [/\.md\.sha256$/, 'The checksum of the original file the Markdown was made from (first line) and the conversion settings (second): tells whether the Markdown is still current.'],
+    [/\.md\.geo\.json$/, 'The map stamp: which map data (places, towns, areas) described the position in this file. When the map data changes, the file is described again.'],
+    [/\.trace\.json$/, 'The conversion trace: what each reader did with the file, per page (reader, outcome, time and cost). The Indexing tab\'s page-by-page record is made from it.'],
+    [/\.md$/, 'The Markdown: the text rag-search made of the file (details, description, faces and text for a photograph; the page text for a document). What is chunked, searched and read back.'],
+  ];
+  const whatIs = name => { const w = WHAT.find(([re]) => re.test(name)); return w ? w[1] : ''; };
   function records(d) {
     if (!d.records.length) return empty('Nothing on disk for this file.');
     const groups = [...new Set(d.records.map(r => r.group))];
@@ -177,7 +191,7 @@
       d.index ? h('p', { class: 'small muted' }, `Embedded with ${d.index.model} (${d.index.dim} dimensions, ${d.index.nodes} passage(s)); converted with ${d.index.convert}.`) : null,
       groups.map(g => h('div', { style: { marginBottom: '14px' } }, h('h4', { style: { margin: '0 0 6px' } }, g),
         h('div', { class: 'table-wrap' }, h('table', null, h('tbody', null, d.records.filter(r => r.group === g).map(r => h('tr', null,
-          h('td', null, h('code', null, r.name), r.note ? h('div', { class: 'small muted' }, r.note) : null), h('td', { class: 'num nowrap' }, bytes(r.size)), h('td', { class: 'nowrap' }, when(r.mtime)),
+          h('td', { style: { maxWidth: '420px' } }, h('code', null, r.name), whatIs(r.name) ? h('div', { class: 'small muted', style: { margin: '3px 0' } }, whatIs(r.name)) : null, r.note ? h('div', { class: 'small muted' }, r.note) : null), h('td', { class: 'num nowrap' }, bytes(r.size)), h('td', { class: 'nowrap' }, when(r.mtime)),
           h('td', { class: 'small muted', style: { wordBreak: 'break-all' } }, r.path)))))))));
   }
 
