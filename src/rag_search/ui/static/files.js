@@ -11,6 +11,7 @@
   const hashOf = (coll, path) => '#/files/' + encodeURIComponent(coll) + (path ? '/' + path.split('/').map(encodeURIComponent).join('/') : '');
   RS.fileLink = (coll, path) => hashOf(coll, path);
   function fromHash() {
+    if (!/^#\/?files(\/|$)/.test(location.hash)) return { coll: '', path: '' };       // another tab's address (#/collections): keep what is shown
     const rest = location.hash.replace(/^#\/?files\/?/, '');
     if (!rest) return { coll: '', path: '' };
     const parts = rest.split('/').map(p => { try { return decodeURIComponent(p); } catch (e) { return p; } });
