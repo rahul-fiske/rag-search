@@ -437,7 +437,13 @@
   RS.views.collections = {
     init(root) {
       refs.list = h('div'); refs.matrix = h('div', { style: { marginTop: '16px' } });
-      root.append(h('h2', null, 'Collections & access'), refs.list, refs.matrix);
+      refs.files = h('div', { id: 'files-section', style: { marginTop: '24px' } });
+      root.append(h('h2', null, 'Collections & access'), refs.list, refs.matrix, refs.files);
+      RS.files.mount(refs.files);
+    },
+    show() {
+      RS.files.sync();
+      if (/^#\/files/.test(location.hash)) setTimeout(() => refs.files.scrollIntoView({ block: 'start' }), 150);     // a link to a file
     },
     update() {
       const cat = RS.state.catalog; if (!cat) return;

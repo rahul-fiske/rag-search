@@ -554,6 +554,19 @@ def _text_seen(src: Path, sha: str, cache: Path | None) -> str | None:
     return seen
 
 
+def _read_as_pages(task: dict[str, Any], kind: str, idx_dir: Path, src: Path, sha: str) -> bool:
+    """A picture whose conversion recorded the page branch ``image`` (it was read by the document reader, before 3.0 Sniff sent
+    pictures with little text to the photograph path) but that the quick text check says is a photograph: its Markdown is what a
+    reader made up for a picture with nothing to read (``![](https://example.com/image.jpg)``) and it must be made again.  Only
+    these are looked at (the check is kept by checksum), so an unchanged collection costs nothing."""
+    if kind != "image":
+        return False
+    branches = ((read_json(idx_dir / META_FILE) or {}).get("conversion") or {}).get("branches") or {}
+    if set(branches) != {"image"}:
+        return False
+    return photo.is_photograph(_text_seen(src, sha, Path(task["index_root"]).parent / sniffcache.FILE))
+
+
 def _sniff(src: Path, kind: str, reused_md: bool, old: dict[str, Any],
            reuse_trace: bool, sha: str = "", cache: Path | None = None) -> tuple[str, dict[str, Any], str | None]:
     """3.0 Sniff: what kind of file is this?  ``(route, exif, text seen)``.  Decided from the file itself, before any page is
@@ -693,7 +706,8 @@ def sniff_document(task: dict[str, Any]) -> dict[str, Any]:
         fill = False
         unchanged = lambda: stage_event(task.get("stage_log"), mirror_rel(src, roots).as_posix(), "sniff", "done",  # noqa: E731
                                         seconds=0.0, route="unchanged")
-        if again and is_fresh(idx_dir, sha, task["chunk_size"], task["chunk_overlap"], task["model"]):
+        stale = _read_as_pages(task, kind, idx_dir, src, sha)
+        if again and not stale and is_fresh(idx_dir, sha, task["chunk_size"], task["chunk_overlap"], task["model"]):
             fill = _fills_description(task, kind, md_path, sha, idx_dir)
             if not fill:
                 unchanged()
@@ -702,7 +716,7 @@ def sniff_document(task: dict[str, Any]) -> dict[str, Any]:
             unchanged()
             return {"src": str(src), "route": ""}
         t_sn = time.perf_counter()
-        reused_md = md_is_current(md_path, sha, force=task["force_md"], ocr=task.get("ocr"))
+        reused_md = md_is_current(md_path, sha, force=task["force_md"], ocr=task.get("ocr")) and not stale
         old = trace.read_trace(trace.trace_path_for(md_path)) if reused_md else {}
         reuse_trace = bool(old and old.get("src_sha256") == sha and old.get("convert") == convert_profile(task.get("ocr")))
         cache = Path(task["index_root"]).parent / sniffcache.FILE
@@ -778,7 +792,8 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         slog = task.get("stage_log")
         md_path = markup_path_for(src, roots, markup_root)
         fill = False                       # an unchanged photograph whose description can be made now
-        if (not task["rebuild"] and not task["force_md"]
+        stale = _read_as_pages(task, kind, idx_dir, src, sha)
+        if (not task["rebuild"] and not task["force_md"] and not stale
                 and is_fresh(idx_dir, sha, cs, co, model)):
             fill = bool(task["fill"]) if "fill" in task else _fills_description(task, kind, md_path, sha, idx_dir)
             if not fill and _wants_faces(task, kind, md_path, idx_dir):   # 3.9 Faces for a photograph indexed before faces were found
@@ -812,7 +827,7 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         trace_file = trace.trace_path_for(md_path)
         stage_event(slog, rel_name, "convert", "start")
 
-        reused_md = md_is_current(md_path, sha, force=task["force_md"], ocr=task.get("ocr"))
+        reused_md = md_is_current(md_path, sha, force=task["force_md"], ocr=task.get("ocr")) and not stale
         old = trace.read_trace(trace_file) if reused_md else {}
         reuse_trace = bool(old and old.get("src_sha256") == sha
                            and old.get("convert") == convert_profile(task.get("ocr")))

@@ -328,7 +328,8 @@ async function poll() {
 
 /* ---------- router ---------- */
 function route() {
-  const name = (location.hash.replace(/^#\/?/, '').split('/')[0]) || 'overview';
+  let name = (location.hash.replace(/^#\/?/, '').split('/')[0]) || 'overview';
+  if (name === 'files') name = 'collections';          // the file browser is a section of the Collections & access tab
   const view = RS.views[name] ? name : 'overview';
   if (RS.current && RS.views[RS.current] && RS.views[RS.current].leave) RS.views[RS.current].leave();
   RS.current = view;

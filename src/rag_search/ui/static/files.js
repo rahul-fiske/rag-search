@@ -209,8 +209,9 @@
     if (S.collection) await loadList(); else paintBrowser();
   }
 
-  RS.views.files = {
-    init(root) {
+  /* The Files section sits below the collections on the Collections & access tab (the address #/files/... opens that tab). */
+  RS.files = {
+    mount(root) {
       refs.pick = h('select', { on: { change: ev => { S.q = ''; refs.search.value = ''; S.prefix = ''; S.file = null; S.dossier = null; location.hash = hashOf(ev.target.value, ''); } } });
       refs.search = h('input', { type: 'search', placeholder: 'Search names and paths', style: { width: '100%' },
         on: { input: () => { clearTimeout(timer); timer = setTimeout(() => { S.q = refs.search.value.trim(); loadList(); }, 300); } } });
@@ -221,6 +222,6 @@
         h('p', { class: 'muted' }, 'Browse a collection and see everything rag-search recorded about one file. Nothing here changes anything.'),
         h('div', { class: 'files' }, h('div', { class: 'card fbrowser' }, refs.pick, h('div', { style: { height: '8px' } }), refs.search, refs.crumbs, refs.list), refs.inspector));
     },
-    show() { sync(); },
+    sync,
   };
 })();

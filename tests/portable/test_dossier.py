@@ -109,3 +109,26 @@ class EndpointTests(DossierCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StalePictureTests(DossierCase):
+    """A picture read by the document reader (page branch ``image``) before pictures with little text went to the photograph path."""
+
+    def test_an_image_read_as_pages_that_has_little_text_is_made_again(self):
+        from unittest import mock
+
+        from rag_search.core import indexer, photo
+
+        idx = self.paths.index / "pics" / "trip" / "a"
+        meta = json.loads((idx / "index.meta.json").read_text())
+        meta["conversion"]["branches"] = {"image": 1}
+        (idx / "index.meta.json").write_text(json.dumps(meta))
+        task = {"index_root": str(self.paths.index)}
+        src = self.root / "trip" / "a.jpg"
+        with mock.patch.object(photo, "visible_text", return_value="a few words"):
+            self.assertTrue(indexer._read_as_pages(task, "image", idx, src, "ab" * 32))
+        with mock.patch.object(photo, "visible_text", return_value="word " * 300):
+            self.assertFalse(indexer._read_as_pages(task, "image", idx, src, "cd" * 32))      # a real page stays
+        meta["conversion"]["branches"] = {"photo": 1}
+        (idx / "index.meta.json").write_text(json.dumps(meta))
+        self.assertFalse(indexer._read_as_pages(task, "image", idx, src, "ab" * 32))
