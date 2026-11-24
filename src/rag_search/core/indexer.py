@@ -63,7 +63,7 @@ from ..paths import (
     sha256_file,
     write_json_atomic,
 )
-from . import chunker, describe, faces, photo, pictures, sniffcache, stallwatch, timeline, understanding, video
+from . import chunker, describe, faces, photo, pictures, residue, sniffcache, stallwatch, timeline, understanding, video
 from .bm25 import TOKENIZER_VERSION
 from .conversion import (
     applevision,
@@ -2125,6 +2125,12 @@ def run_index(
                 errors.append({"src": f"collection:{m['collection']}", "message": m["error"]})
 
     vlm.close_shared()                     # the document reader's process (only when this process had one)
+    residue_info: dict[str, Any] = {}
+    if prune:                              # whole collections were walked: what is left of the photographs deleted from them goes too
+        try:
+            residue_info = residue.purge(paths)
+        except Exception as exc:  # noqa: BLE001 - housekeeping only
+            log.warning("forgetting what is left of deleted photographs failed: %s", exc)
     cache_info: dict[str, Any] = {}
     try:                                   # forget cached pages no stored trace refers to any more
         pc = pagecache.PageCache(paths.workspace)
@@ -2145,6 +2151,7 @@ def run_index(
         "pictures": picture_info,
         "scanned": len(sources),
         "removed": removed,
+        "residue": residue_info,
         "orphans_removed": orphans_removed,
         "known": known, "not_retried": len(known),
         **(plan_info or {}),

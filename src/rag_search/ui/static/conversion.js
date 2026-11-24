@@ -191,6 +191,10 @@ const CV = (function () {
   // either every photograph has one already, or some do not and why that may be.
   let coverage = null;
   const setCoverage = r => { coverage = r; };
+  // when this run made none, the step's figure is how many photographs have a vector (from coverage): done of expected, with its bar
+  const pictureStep = () => { const s = coverage && coverage.total && coverage.total.steps.pictures; return s && s.expected && !(coverage.notes || {}).pictures ? s : null; };
+  const pictureFigure = nP => { const s = nP && pictureStep(); return s ? `${num(s.done)} of ${num(s.expected)} photographs have one` : ''; };
+  const pictureShare = nP => { const s = nP && pictureStep(); return s ? pctOf(s.done, s.expected) : null; };
   function pictureNote(nP) {
     if (!nP) return null;
     const s = coverage && coverage.total && coverage.total.steps.pictures, why = coverage && (coverage.notes || {}).pictures;
@@ -240,7 +244,7 @@ const CV = (function () {
           tnode('3.10', 'Describe', 'gpu', nP ? `described ${num(pf.description || 0)} of ${num(nP)}` : '', nP ? pctOf(pf.description || 0, nP) : null,
             'A vision model writes a short description before the photograph is chunked; cached by photograph, model and prompt, so a map refresh or a rebuild never repeats it. A description is a fact like the others: one that could not be made now is missing, and a later run fills it in.',
             sumOf(dsrc) ? `by the model ${num(dsrc.model || 0)} · from the cache ${num(dsrc.cache || 0)}` + (dsrc.none ? ` · missing ${num(dsrc.none)} (a later run fills them in)` : '') : null),
-          tnode('5.2', 'Picture vectors', 'gpu', pv.n ? `${num(pvhow.made || 0)} photograph${pvhow.made === 1 ? '' : 's'} embedded by their picture` : '', null,
+          tnode('5.2', 'Picture vectors', 'gpu', pv.n ? `${num(pvhow.made || 0)} photograph${pvhow.made === 1 ? '' : 's'} embedded by their picture` : pictureFigure(nP), pv.n ? null : pictureShare(nP),
             'After the text vectors, each photograph gets one vector from its pixels (SigLIP 2), so a query finds what a photograph shows even when its description does not say it. Kept with a key of its own: a new picture model, or the first run after picture vectors exist, embeds only the photographs.',
             pv.n ? (pvscope['indexed earlier'] ? `of which indexed earlier ${num(pvscope['indexed earlier'])}` : 'all from this run') + (pvhow['could not be opened'] ? ` · could not be opened ${num(pvhow['could not be opened'])}` : '') : pictureNote(nP))], caught ? `+ ${num(caught)} indexed earlier, checked for faces and picture vectors` : null),
         track('video', num(nV || ro.video || 0), [

@@ -1065,6 +1065,18 @@ def _cmd_people(a: argparse.Namespace) -> int:
             return EXIT_FAIL
         _json(rec.get("result") or {})
         return EXIT_OK
+    if a.action == "purge":
+        from .core import residue
+
+        res = residue.purge(p, force=a.force, dry_run=a.dry_run)
+        for what, why in res["skipped"].items():
+            print(f"left alone ({what}): {why}", file=sys.stderr)
+        print(("would forget" if a.dry_run else "forgot") + f" {res['photographs']} photograph(s) that left every source folder: "
+              f"{res['faces']} face(s) ({res['labelled']} with a name or an answer from you), {res['descriptions']} description(s), "
+              f"{res['text_checks']} text check(s)"
+              + (f"; {'would correct' if a.dry_run else 'corrected'} the remembered path of {res['repaired']} photograph(s) whose folder was renamed"
+                 if res["repaired"] else ""))
+        return EXIT_OK
     if a.action == "rescan":
         from .core import faces
 
@@ -3104,8 +3116,12 @@ def build_parser() -> argparse.ArgumentParser:
             "3.9 Faces): in a photograph while it is converted, and in the photographs indexed before without converting them "
             "again. The names, groups and the faces you named are kept in <home>/people.sqlite, never in the photographs or "
             "the index; a search that names people keeps to their photographs. rescan: look again, at two sizes, at the photographs "
-            "the first (one-size) finder looked at, and add the faces it missed; faces already found keep their names.")
-    p.add_argument("action", nargs="?", choices=["status", "setup", "rescan"], default="status")
+            "the first (one-size) finder looked at, and add the faces it missed; faces already found keep their names. purge: forget "
+            "what is left of photographs that are gone from every source folder (their faces and the names given to them, their "
+            "description, their text check); an indexing run does it too after walking whole collections.")
+    p.add_argument("action", nargs="?", choices=["status", "setup", "rescan", "purge"], default="status")
+    p.add_argument("--force", action="store_true", help="purge: go on even when it would forget more than a fifth of a store")
+    p.add_argument("--dry-run", action="store_true", help="purge: only say what would be forgotten")
     p.add_argument("--limit", type=int, default=0, help="rescan: at most this many photographs (a trial)")
 
     p = add("paths", "print data and index folder locations", _cmd_paths)

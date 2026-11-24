@@ -582,3 +582,84 @@ class RescanTests(PeopleCase):
         self.assertEqual(self.st.labels()[0], {kept: avni})
         self.assertEqual((len(rows), self.st.sure_faces("s1")), (3, 2))
         self.assertEqual(self.st.con.execute("SELECT detector, faces FROM photos WHERE sha = 's1'").fetchone(), (faces.DETECTOR_MS, 3))
+
+
+class ResidueTests(PeopleCase):
+    def setUp(self):
+        super().setUp()
+        from PIL import Image
+
+        from rag_search.core import describe, sniffcache
+
+        self.folder = self.source("trip")
+        self.alive = self.folder / "IMG_1.jpg"
+        Image.new("RGB", (40, 30)).save(self.alive)
+        self.renamed = self.folder / "renamed" / "IMG_3.jpg"
+        self.renamed.parent.mkdir()
+        Image.new("RGB", (40, 30)).save(self.renamed)
+        for sha, src in (("s1", self.alive), ("s2", self.folder / "deleted" / "IMG_2.jpg"), ("s3", self.folder / "old name" / "IMG_3.jpg")):
+            self.photo(sha, A, src=str(src))
+        self.ids = {s: [r[0] for r in self.st.con.execute("SELECT id FROM faces WHERE sha = ?", (s,))][0] for s in ("s1", "s2", "s3")}
+        self.avni = self.st.person_id("Avni", create=True)
+        self.st.label([self.ids["s1"], self.ids["s2"]], self.avni)
+        for sha, path in (("s1", self.alive), ("s3", self.renamed)):         # the index knows these two
+            d = self.paths.index / "trip" / sha
+            d.mkdir(parents=True)
+            (d / "index.meta.json").write_text(json.dumps({"src_sha256": sha, "src_path": str(path)}))
+        made_by = describe.current_id()
+        for sha in ("s1", "s2"):
+            describe.remember(self.paths, sha, made_by, {"description": "x", "tags": [], "people": 0})
+        describe.remember_failure(self.paths, "s2", made_by, "no")
+        for sha in ("s1", "s2"):
+            sniffcache.put(self.paths.workspace / sniffcache.FILE, sha, "text")
+
+    def counts(self):
+        import sqlite3
+
+        con = sqlite3.connect(self.paths.workspace / "describe_cache.sqlite")
+        d = sorted(r[0] for r in con.execute("SELECT sha FROM d"))
+        con.close()
+        return (sorted(r[0] for r in self.st.con.execute("SELECT sha FROM photos")), d)
+
+    def test_a_photograph_that_left_every_folder_is_forgotten_everywhere_and_a_renamed_folder_is_followed(self):
+        from rag_search.core import residue
+
+        dry = residue.purge(self.paths, dry_run=True, force=True)
+        self.assertEqual((dry["photographs"], dry["faces"], dry["labelled"], dry["descriptions"], dry["text_checks"], dry["repaired"]),
+                         (1, 1, 1, 1, 1, 1))
+        self.assertEqual(self.counts()[0], ["s1", "s2", "s3"])                 # a dry run changes nothing
+        res = residue.purge(self.paths, force=True)
+        self.assertEqual((res["photographs"], res["faces"], res["labelled"]), (1, 1, 1))
+        self.assertEqual(self.counts(), (["s1", "s3"], ["s1"]))
+        self.assertEqual(self.st.labels()[0], {self.ids["s1"]: self.avni})        # the names of the others are untouched
+        self.assertIsNone(self.st.thumb(self.ids["s2"]))
+        self.assertEqual(self.st.con.execute("SELECT COUNT(*) FROM vectors").fetchone()[0], 2)
+        self.assertEqual(self.st.sources(["s3"]), {"s3": str(self.renamed)})      # the renamed folder is followed
+
+    def test_nothing_is_forgotten_when_the_workspace_cannot_be_read_or_a_great_part_would_go(self):
+        import shutil
+
+        from rag_search.core import residue
+
+        shutil.rmtree(self.paths.index)
+        res = residue.purge(self.paths, force=True)
+        self.assertEqual((res["photographs"], list(res["skipped"])), (0, ["all"]))
+        self.assertEqual(self.counts()[0], ["s1", "s2", "s3"])
+        d = self.paths.index / "trip" / "s1"                                    # one photograph left in the index
+        d.mkdir(parents=True)
+        (d / "index.meta.json").write_text(json.dumps({"src_sha256": "s1", "src_path": str(self.alive)}))
+        for i in range(120):                                                    # and many in the store that nobody has
+            self.photo(f"x{i}", B, src=f"/gone/{i}.jpg")
+        res = residue.purge(self.paths)
+        self.assertEqual(res["photographs"], 0)
+        self.assertIn("people", res["skipped"])                                 # more than a fifth: stopped
+        self.assertEqual(residue.purge(self.paths, force=True)["photographs"], 122)
+
+    def test_an_indexing_run_that_walked_whole_collections_forgets_what_is_left_of_deleted_photographs(self):
+        from rag_search.core import indexer, residue
+
+        with mock.patch.object(residue, "purge", return_value={"photographs": 1}) as purge:
+            s = indexer.run_index(self.paths, [], self.roots(), prune=["trip"], jobs=1, embedder=FakeEmbedder(), progress=lambda e: None)
+            self.assertEqual((purge.call_count, s["residue"]), (1, {"photographs": 1}))
+            s = indexer.run_index(self.paths, [], self.roots(), jobs=1, embedder=FakeEmbedder(), progress=lambda e: None)
+            self.assertEqual((purge.call_count, s["residue"]), (1, {}))                # a run of one path forgets nothing

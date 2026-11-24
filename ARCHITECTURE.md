@@ -1281,6 +1281,16 @@ standing as BM25 and the text vectors.
   made from what those steps found and the little text it has, under a heading and with the picture's size (`photo.headed`), and
   a picture of which nothing is known is still a genuine "no text". A picture with a page of text, or one the text check cannot
   look at, is read as a page as before.
+* **A deleted photograph leaves nothing behind** (`core/residue.py`, `rag-search people purge [--dry-run] [--force]`): indexing already
+  removed the Markdown, index and picture vector of a document whose file was deleted. Three stores keyed by the photograph's
+  checksum lived outside the index and outlived it: the People store (faces, fingerprints, thumbnails, the names and "not this
+  person" answers given to those faces), the description cache and the text-check cache. After a run that walked whole
+  collections (not one path, not a cancelled run), `residue.purge` forgets what no photograph still needs. A photograph is
+  *present* when its checksum is in any index folder or beside any Markdown in the workspace, so a collection whose folder cannot be
+  read, and a document being made again, are never touched; a face goes only when its file is gone from where it was seen and the
+  photograph is not present. A photograph that is present but whose remembered path is gone (its folder was renamed: seven in one
+  collection, which also made the viewer and the rescan skip them) has the path corrected. Nothing is removed when no photograph is
+  present, and a purge removing more than a fifth of a store (over 100 rows) stops and says so, until `--force`.
 * **Rescanning faces** (`rag-search people rescan [--limit N]`, `faces.rescan`): the photographs the first, one-size finder looked
   at are looked at again at two sizes and only the faces it missed are added (a box that overlaps a stored face is that face), so
   every stored face keeps its id, fingerprint and name; the photograph is then marked as looked at by the two-size finder. About a
