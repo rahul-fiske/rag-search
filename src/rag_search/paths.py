@@ -59,6 +59,7 @@ VIDEO_EXTENSIONS = frozenset({".mov", ".mp4", ".m4v", ".3gp", ".avi"})
 PAGE_MARKER = "<!-- page {page} -->"
 META_FILE = "index.meta.json"
 NODES_FILE = "nodes.json"
+NODES_NEW = "nodes.json.new"     # a document converted again, waiting for its vectors: nodes.json and the rest stay until then
 EMB_FILE = "embeddings.npy"
 PICTURES_FILE = "pictures.npy"        # 5.2 Picture vectors: one row per photograph (core/pictures.py)
 PICTURES_ROWS = "pictures.rows.json"  # in _all/: the passage each picture row belongs to

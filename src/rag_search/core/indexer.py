@@ -43,6 +43,7 @@ from ..paths import (
     MERGE_MANIFEST,
     META_FILE,
     NODES_FILE,
+    NODES_NEW,
     IMAGE_EXTENSIONS,
     VIDEO_EXTENSIONS,
     PASSTHROUGH_EXTENSIONS,
@@ -1034,12 +1035,10 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
                     node["metadata"]["confidence"] = "low"
 
         idx_dir.mkdir(parents=True, exist_ok=True)
-        for old_part in (META_FILE, EMB_FILE):  # invalidate before touching nodes
-            with contextlib.suppress(OSError):
-                (idx_dir / old_part).unlink()
+        # the new chunks wait beside the old index (nodes.json.new): until their vectors exist the document keeps serving
+        # its last complete version, so a merge or publish in between never drops it (``embed_document`` swaps them in)
         t_write = time.perf_counter()
-        write_json_atomic(idx_dir / NODES_FILE, {"format": INDEX_FORMAT, "nodes": nodes},
-                          indent=None)
+        write_json_atomic(idx_dir / NODES_NEW, {"format": INDEX_FORMAT, "nodes": nodes}, indent=None)
         stage_event(slog, rel_name, "write", "done", seconds=round(time.perf_counter() - t_write, 3),
                     part="nodes.json")
         forget_outcome(idx_dir)
@@ -1096,7 +1095,8 @@ def embed_document(idx_dir: Path, src: Path, sha: str, embedder: Any, *, chunk_s
     the document's conversion summary (``core/conversion/trace.py``), kept in the meta with the
     embedding time added.
     """
-    payload = read_json(idx_dir / NODES_FILE)
+    fresh = (idx_dir / NODES_NEW).exists()
+    payload = read_json(idx_dir / (NODES_NEW if fresh else NODES_FILE))
     nodes = payload.get("nodes", [])
     if not nodes:
         raise RuntimeError("nodes.json is missing or empty")
@@ -1105,7 +1105,15 @@ def embed_document(idx_dir: Path, src: Path, sha: str, embedder: Any, *, chunk_s
     embed_s = round(time.perf_counter() - t_embed, 2)
     if emb.shape[0] != len(nodes):
         raise RuntimeError(f"embedder returned {emb.shape[0]} vectors for {len(nodes)} chunks")
-    _save_npy(idx_dir / EMB_FILE, np.asarray(emb, dtype=np.float32))
+    tmp_emb = idx_dir / (EMB_FILE + ".tmp")
+    with open(tmp_emb, "wb") as f:
+        np.save(f, np.asarray(emb, dtype=np.float32))
+    # swap in the new version: the completion marker goes first and comes back last (an instant, not the whole run)
+    with contextlib.suppress(OSError):
+        (idx_dir / META_FILE).unlink()
+    if fresh:
+        os.replace(idx_dir / NODES_NEW, idx_dir / NODES_FILE)
+    os.replace(tmp_emb, idx_dir / EMB_FILE)
     meta = _params(chunk_size, chunk_overlap, model)
     steps = {"convert_s": 0.0, "chunk_s": 0.0, **(timing or {}), "embed_s": embed_s}
     size = 0
@@ -1309,7 +1317,7 @@ def _doc_dirs_any(coll_dir: Path) -> list[Path]:
     for dp, dirnames, filenames in os.walk(coll_dir):
         dirnames[:] = [d for d in dirnames if d != ALL_DIR and not d.startswith(".")]
         if (META_FILE in filenames or NODES_FILE in filenames or EMB_FILE in filenames
-                or OUTCOME_FILE in filenames):
+                or OUTCOME_FILE in filenames or NODES_NEW in filenames):
             out.append(Path(dp))
     return out
 
@@ -1317,7 +1325,7 @@ def _doc_dirs_any(coll_dir: Path) -> list[Path]:
 def _remove_doc_index(d: Path) -> None:
     """Delete one document's index files.  Not ``rmtree``: a folder next to a document with the
     same name (``a.pdf`` and ``a/b.pdf``) nests ``b``'s index inside ``a``'s folder."""
-    for f in (META_FILE, EMB_FILE, NODES_FILE, EMB_FILE + ".tmp", OUTCOME_FILE):   # completion marker first
+    for f in (META_FILE, EMB_FILE, NODES_FILE, NODES_NEW, EMB_FILE + ".tmp", OUTCOME_FILE):   # completion marker first
         with contextlib.suppress(OSError):
             (d / f).unlink()
     pictures.remove(d)
@@ -1524,6 +1532,21 @@ def run_plan(paths: Paths, plan: ScanPlan, **kw: Any) -> dict[str, Any]:
     return run_index(paths, plan.sources, plan.roots, unsupported=plan.unsupported,
                      prune=plan.covered, frozen=plan.frozen, orphans=plan.orphans,
                      plan_info=plan.to_dict(), **kw)
+
+
+def apply_config_env(paths: Paths) -> None:
+    """Give this process the conversion and model settings of ``config.json`` (an environment variable that is set wins), the
+    way the indexer daemon gives them to its workers.  Every caller of ``run_index`` -- the worker, `rag-search index
+    foreground`, a script -- then computes the same freshness key (``convert_profile``): one without them would take every
+    document for one made with other settings and convert it again."""
+    try:
+        from ..config import load_config
+        from ..effective import settings_env
+
+        for k, v in settings_env(load_config(paths)[0], {}).items():
+            os.environ.setdefault(k, v)
+    except Exception as exc:  # noqa: BLE001 - the environment as it is, then
+        log.warning("the settings of config.json could not be applied: %s", exc)
 
 
 POOL_EXIT_GRACE_S = 20.0             # how long a conversion process may take to exit once its work is done
@@ -1764,6 +1787,7 @@ def run_index(
     """
     t_start = time.perf_counter()
     ensure_dirs(paths)
+    apply_config_env(paths)
     _sink: ProgressFn = progress or (lambda _e: None)
     phase_t0: dict[str, float] = {}      # wall-clock start of each phase, for "running for ..."
     phase_s: dict[str, float] = {}       # seconds spent in each phase

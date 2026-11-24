@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import unittest
@@ -111,6 +112,42 @@ class ExtraIndexerTests(TempHome):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReplaceSafelyTests(TempHome):
+    """A document converted again keeps serving its last complete version until its new vectors exist, and every caller of
+    run_index computes the same freshness key from config.json."""
+
+    def sources(self):
+        return indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
+
+    def test_a_changed_document_whose_embedding_fails_keeps_its_old_index_in_the_merge(self):
+        doc = self.write_doc("c/a.md", "# T\n\n<!-- page 1 -->\n\nthe first version")
+        indexer.run_index(self.paths, self.sources(), self.roots(), jobs=1, embedder=FakeEmbedder())
+        doc.write_text("# T\n\n<!-- page 1 -->\n\nthe second version, longer", encoding="utf-8")
+
+        class Broken(FakeEmbedder):
+            def encode(self, texts, progress=None):
+                raise RuntimeError("no GPU today")
+        s = indexer.run_index(self.paths, self.sources(), self.roots(), jobs=1, embedder=Broken())
+        self.assertIn("embedding failed", s["errors"][0]["message"])
+        coll = self.paths.index / "c"
+        self.assertEqual(len(indexer.per_doc_dirs(coll)), 1)               # still complete: the old version
+        merged = json.loads((coll / "_all" / "nodes.json").read_text())["nodes"]
+        self.assertIn("first version", " ".join(n["text"] for n in merged))
+        s = indexer.run_index(self.paths, self.sources(), self.roots(), jobs=1, embedder=FakeEmbedder())
+        self.assertEqual(s["indexed"], 1)
+        merged = json.loads((coll / "_all" / "nodes.json").read_text())["nodes"]
+        self.assertIn("second version", " ".join(n["text"] for n in merged))
+        self.assertFalse(list(coll.rglob("nodes.json.new")))
+
+    def test_run_index_takes_the_settings_of_config_json_like_the_daemons_workers(self):
+        from rag_search.config import update_config
+
+        update_config(self.paths, "indexer", {"table_mode": "fast"})
+        self.write_doc("c/a.md", "# T\n\n<!-- page 1 -->\n\ntext")
+        indexer.run_index(self.paths, self.sources(), self.roots(), jobs=1, embedder=FakeEmbedder())
+        self.assertEqual(os.environ.get("RAG_SEARCH_TABLE_MODE"), "fast")
 
 
 class PoolShutdownTests(unittest.TestCase):

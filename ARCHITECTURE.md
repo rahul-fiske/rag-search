@@ -398,8 +398,9 @@ Settings, Architecture and Playground tabs and `rag-search playground settings` 
 │          prose by sentences, then by words                                                    │
 │       ─▶ greedy packing to ~512 estimated tokens with ~64 tokens of block-level overlap       │
 │       every chunk carries: page, nearest heading, file, collection, source path               │
-│  6  WRITE nodes.json   (index.meta.json is removed first, so a half-done document is never    │
-│                         mistaken for a complete one)                                          │
+│  6  WRITE nodes.json.new beside the old index: the document keeps serving its last complete   │
+│     version until its vectors exist; embedding swaps nodes.json + embeddings.npy in, writes   │
+│     index.meta.json last, so a half-done document is never mistaken for a complete one        │
 └──────────────────────────────────────────────┬────────────────────────────────────────────────┘
                                                ▼
 ┌─ PHASE 2 · embeddings · one process · model loaded once ──────────────────────────────────────┐

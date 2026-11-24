@@ -27,6 +27,7 @@ from .paths import (
     MERGE_MANIFEST,
     META_FILE,
     NODES_FILE,
+    NODES_NEW,
     Paths,
     index_dir_for,
     is_plain_name,
@@ -133,7 +134,7 @@ def _workspace(paths: Paths, coll: str) -> dict[str, Any]:
                 meta = read_json(Path(dp) / META_FILE)
                 if meta:
                     metas[rel] = meta
-            elif NODES_FILE in filenames or EMB_FILE in filenames:
+            elif NODES_FILE in filenames or EMB_FILE in filenames or NODES_NEW in filenames:
                 incomplete.append(rel)
     md_files, md_bytes = _du(md)
     idx_files, idx_bytes = _du(idx)

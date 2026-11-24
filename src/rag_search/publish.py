@@ -32,6 +32,7 @@ from .paths import (
     MERGE_MANIFEST,
     META_FILE,
     NODES_FILE,
+    NODES_NEW,
     PICTURES_FILE,
     PICTURES_ROWS,
     SUPPORTED_EXTENSIONS,
@@ -221,7 +222,7 @@ def incomplete_documents(paths: Paths, limit: int = 20) -> list[str]:
         return out
     for dp, dirnames, filenames in os.walk(paths.index):
         dirnames[:] = [d for d in dirnames if d != ALL_DIR]
-        if (NODES_FILE in filenames or EMB_FILE in filenames) and META_FILE not in filenames:
+        if (NODES_FILE in filenames or EMB_FILE in filenames or NODES_NEW in filenames) and META_FILE not in filenames:
             out.append(str(Path(dp).relative_to(paths.index)))
             if len(out) >= limit:
                 break
