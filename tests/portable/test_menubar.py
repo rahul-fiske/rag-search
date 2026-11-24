@@ -144,6 +144,20 @@ class ActionTests(TempHome):
         run.assert_not_called()
         self.assertEqual((msg, opened), ("opened", ["http://127.0.0.1:8765/?token=tok"]))
 
+    def test_a_busy_dashboard_is_opened_never_replaced(self):
+        from rag_search.ui import server
+
+        opened = []
+        with mock.patch.object(server, "running_port", return_value=8765), \
+                mock.patch.object(server, "_ping", return_value={"busy": True}), \
+                mock.patch.object(server, "stop_running") as stop, mock.patch.object(server, "run") as run, \
+                mock.patch.object(server, "load_token", return_value="tok"):
+            msg = menubar.open_dashboard(self.paths, opener=opened.append)
+        stop.assert_not_called()
+        run.assert_not_called()
+        self.assertEqual(opened, ["http://127.0.0.1:8765/?token=tok"])
+        self.assertIn("busy", msg)
+
     def test_no_dashboard_is_started_and_opened(self):
         from rag_search.ui import server
 

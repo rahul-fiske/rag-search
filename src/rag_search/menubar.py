@@ -164,9 +164,13 @@ def open_dashboard(paths: Paths, *, opener=None) -> str:
 
     opener = opener or server._open
     port = server.running_port(paths)
-    if port and (server._ping(port) or {}).get("version") == installed_version() == __version__:
+    answer = (server._ping(port) or {}) if port else {}
+    if port and answer.get("version") == installed_version() == __version__:
         opener(_dashboard_url(paths))
         return "opened"
+    if port and answer.get("busy"):       # working through a heavy request: never killed for being slow
+        opener(_dashboard_url(paths))
+        return "opened (the dashboard is busy and may take a moment)"
     if port:
         server.stop_running(paths)
     rc = server.run(paths, port=server.DEFAULT_PORT, open_browser=False, detach=True)

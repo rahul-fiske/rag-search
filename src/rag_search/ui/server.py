@@ -1369,17 +1369,45 @@ def url_for(server: UiServer) -> str:
 
 # ── command line ─────────────────────────────────────────────────────────────
 
-def _ping(port: int) -> dict | None:
+PING_WAIT = (1.5, 10.0)                  # seconds: a quick ask, then a patient one when the first timed out
+
+
+def _timed_out(exc: BaseException) -> bool:
+    return isinstance(getattr(exc, "reason", exc), TimeoutError)
+
+
+def _ping(port: int, waits: tuple[float, ...] = PING_WAIT) -> dict | None:
     """The answer of whatever listens on *port* to /api/ping, {} if it is not a dashboard,
-    None if nothing listens."""
+    None if nothing listens, {"busy": True} if something listens but did not answer in time.
+
+    A dashboard working through a heavy request can be slow to answer even this; taken for "not a dashboard" it was
+    replaced by the menu bar (killed in the middle of its work) or a second one was started on its port, so a timeout
+    is asked again with more patience and is never reported as "nothing here"."""
+    for i, wait in enumerate(waits):
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/ping", timeout=wait) as r:
+                data = json.loads(r.read().decode())
+        except (urllib.error.URLError, OSError) as exc:
+            if _timed_out(exc):
+                if i + 1 < len(waits):
+                    continue
+                return {"busy": True}
+            return None if isinstance(exc, urllib.error.URLError) else {}
+        except ValueError:
+            return {}
+        return data if isinstance(data, dict) else {}
+    return {"busy": True}
+
+
+def _busy_ours(paths: Paths, port: int) -> bool:
+    """A dashboard that is too busy to answer, recognised by the port and the live process it recorded."""
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/ping", timeout=1.5) as r:
-            data = json.loads(r.read().decode())
-    except urllib.error.URLError:
-        return None
+        recorded = int(port_file(paths).read_text().strip())
+        pid = int(pid_file(paths).read_text().strip())
+        os.kill(pid, 0)
     except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+        return False
+    return recorded == port
 
 
 def _probe(port: int, paths: Paths) -> str:
@@ -1388,6 +1416,8 @@ def _probe(port: int, paths: Paths) -> str:
     data = _ping(port)
     if data is None:
         return ""
+    if data.get("busy"):
+        return "ours" if _busy_ours(paths, port) else "other"
     return "ours" if data.get("app") == "rag-search-ui" and data.get("home") == home_id(paths) else "other"
 
 

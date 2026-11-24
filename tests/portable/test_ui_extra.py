@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import http.server
 import json
+import os
 import subprocess
 import threading
 import unittest
@@ -198,6 +199,22 @@ class HelperTests(TempHome):
         free.server_close()
         self.assertIsNone(ui_server._ping(port))
         self.assertEqual(ui_server._probe(port, self.paths), "")
+
+    def test_a_dashboard_too_busy_to_answer_is_busy_and_ours_never_gone(self):
+        import socket
+
+        lsn = socket.socket()
+        lsn.bind(("127.0.0.1", 0))
+        lsn.listen(1)                                              # accepts, never answers: a dashboard at work
+        self.addCleanup(lsn.close)
+        port = lsn.getsockname()[1]
+        self.assertEqual(ui_server._ping(port, waits=(0.1, 0.2)), {"busy": True})
+        with mock.patch.object(ui_server, "_ping", lambda p, waits=(0.1, 0.2): {"busy": True}):
+            self.assertEqual(ui_server._probe(port, self.paths), "other")      # no record of it: not taken for ours
+            ui_server.port_file(self.paths).write_text(str(port))
+            ui_server.pid_file(self.paths).write_text(str(os.getpid()))
+            self.assertEqual(ui_server._probe(port, self.paths), "ours")
+            self.assertEqual(ui_server.running_port(self.paths), port)
 
     def test_stopping_a_dashboard_by_its_recorded_process_id(self):
         pid_file = ui_server.pid_file(self.paths)
