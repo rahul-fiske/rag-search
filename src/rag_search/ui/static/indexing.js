@@ -77,8 +77,46 @@
     return running ? 'convert' : (job.publish || job.publish_s != null ? 'publish' : 'convert');
   }
 
+  // The run the cards show: the live one (latest), or one picked in Run history -- its record, documents and run view are
+  // fetched once (a finished run does not change), and every card below reads it through curIdx() / convLive().
+  let picked = { id: '', idx: null, conv: null };
+  function curIdx() {
+    const live = RS.state.live && RS.state.live.index;
+    if (!picked.id || !picked.idx || !picked.idx.job) return live;
+    return Object.assign({}, live, { job: picked.idx.job, documents: picked.idx.documents });
+  }
+  async function pickRun(id) {
+    const live = RS.state.live && RS.state.live.index;
+    const latest = live && live.job && live.job.id;
+    docFetch.sig = '';
+    if (!id || id === latest || id === picked.id) { picked = { id: '', idx: null, conv: null }; RS.views.indexing.update(); return; }
+    picked = { id, idx: null, conv: null };
+    RS.views.indexing.update();
+    const q = encodeURIComponent(id);
+    const [a, b] = await Promise.all([api('index/documents?limit=200&job_id=' + q), api('conversion/run?job_id=' + q)]);
+    if (picked.id !== id) return;
+    if (a.ok === false) { toast(a.error || 'that run is not on record any more', 'bad'); picked = { id: '', idx: null, conv: null }; }
+    else { picked.idx = a; picked.conv = b && b.ok !== false ? b : {}; }
+    RS.views.indexing.update();
+    refs.run.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   // One snapshot for every card: what the run is working on, from the events the processes write.
-  const convLive = () => (RS.state.live && RS.state.live.conversion) || {};
+  const convLive = () => (picked.id && picked.conv) ? picked.conv : ((RS.state.live && RS.state.live.conversion) || {});
+
+  // The Stages table: every numbered stage that saw a file in this run, with files and seconds (from the run's events).
+  function stagesTable(job) {
+    const rows = (convLive().stage_totals || []).slice();
+    if (job && job.publish_s != null) rows.push({ id: '8', name: '8 Publish', files: job.publish && job.publish.collections, seconds: job.publish_s });
+    if (!rows.length) return null;
+    return h('details', { style: { marginTop: '12px' } }, h('summary', { class: 'small muted', style: { cursor: 'pointer' } }, `Stages of this run (${rows.length})`),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'plain' },
+        h('thead', null, h('tr', null, ['Stage', 'Files', 'Time', 'Per file'].map(t => h('th', null, t)))),
+        h('tbody', null, rows.map(r => h('tr', null, h('td', { class: 'nowrap' }, r.name || r.id),
+          h('td', { class: 'num' }, r.files != null ? num(r.files) + (r.unchanged ? ` (${num(r.unchanged)} unchanged)` : '') : ''),
+          h('td', { class: 'num nowrap' }, r.seconds ? dur(r.seconds) : '–'),
+          h('td', { class: 'num nowrap' }, r.files && r.seconds ? dur(r.seconds / r.files) : '')))))));
+  }
   function nowLine(job, running) {
     const n = running ? convLive().now : null;
     if (!n) return null;
@@ -148,7 +186,7 @@
   }
 
   function runCard() {
-    const idx = RS.state.live && RS.state.live.index; const job = idx && idx.job;
+    const idx = curIdx(); const job = idx && idx.job;
     if (!job) return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', null, 'Current run')),
       empty('No indexing run yet. Start one above.'));
     const running = job.status === 'running' || job.status === 'queued';
@@ -159,8 +197,9 @@
     const by = docs.by_status || {};
     const sum = job.summary;
     return h('div', { class: 'card' },
-      h('div', { class: 'card-head' }, h('h2', null, running ? 'Current run' : 'Last run'), statusPill(job.status),
+      h('div', { class: 'card-head' }, h('h2', null, picked.id ? 'Earlier run' : running ? 'Current run' : 'Last run'), statusPill(job.status),
         h('span', { class: 'muted small mono' }, job.id),
+        picked.id ? h('button', { class: 'btn small', on: { click: () => pickRun('') } }, 'Back to the latest run') : null,
         h('div', { class: 'spacer' }, h('span', { class: 'muted small' }, `${job.mode || ''}${job.path ? ' · ' + job.path : ''}`))),
       stepper(job, running),
       h('div', { class: 'bar ' + (job.status === 'failed' ? 'bad' : !running ? 'ok' : ''), style: { marginTop: '10px' } }, h('i', { style: { width: pct + '%' } })),
@@ -182,6 +221,7 @@
       sum && sum.residue && (sum.residue.photographs || sum.residue.repaired) ? h('div', { class: 'notice', style: { marginTop: '12px' } },
         h('b', null, 'Housekeeping after the run: '), sum.residue.photographs ? `forgot what was left of ${num(sum.residue.photographs)} photograph(s) deleted from every source folder (${num(sum.residue.faces)} faces${sum.residue.labelled ? ', ' + num(sum.residue.labelled) + ' with a name or an answer from you' : ''}, ${num(sum.residue.descriptions)} descriptions, ${num(sum.residue.text_checks)} text checks)` : '',
         sum.residue.photographs && sum.residue.repaired ? '; ' : '', sum.residue.repaired ? `corrected the remembered path of ${num(sum.residue.repaired)} photograph(s) whose folder was renamed` : '', '.') : null,
+      stagesTable(job),
       job.publish ? h('p', { class: 'small muted', style: { marginBottom: 0 } }, 'Published: ' + (job.publish.generation ? `generation ${job.publish.generation}` : (job.publish.changed === false ? 'nothing changed' : JSON.stringify(job.publish)))) : null);
   }
 
@@ -312,7 +352,7 @@
   }
 
   function updateDocsCard() {
-    const idx = RS.state.live && RS.state.live.index;
+    const idx = curIdx();
     const docs = docsSource(idx);
     const active = filterActive();
     const shown = Math.min((docs.items || []).length, active ? docs.matched : docs.total);
@@ -429,7 +469,7 @@
 
   function phaseCard() {
     const live = convLive();
-    const idx = RS.state.live && RS.state.live.index; const job = idx && idx.job;
+    const idx = curIdx(); const job = idx && idx.job;
     if (!job) return null;
     const running = job.status === 'running' || job.status === 'queued';
     const p = job.progress || {}, shown = shownPhase(job, running);
@@ -449,7 +489,7 @@
   // ---------- Workers: the processes of the run and the work each is doing, whatever the phase ----------
   function workersCard() {
     const live = convLive();
-    const idx = RS.state.live && RS.state.live.index; const job = idx && idx.job;
+    const idx = curIdx(); const job = idx && idx.job;
     if (!job || !CV.lanes(live.lanes)) return null;
     return h('div', { class: 'card', style: { marginTop: '16px' } },
       h('div', { class: 'card-head' }, h('h2', null, 'Workers'),
@@ -620,7 +660,7 @@
     return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', null, 'Run history')), retentionRow(idx),
       hist.length ? h('div', { class: 'table-wrap' }, h('table', null,
         h('thead', null, h('tr', null, ['Run', 'Mode', 'Result', 'Started', 'Took', 'Documents'].map(t => h('th', null, t)))),
-        h('tbody', null, hist.map(j => h('tr', null, h('td', { class: 'mono' }, j.id), h('td', null, (j.mode || '') + (j.path ? ' · ' + j.path : '')),
+        h('tbody', null, hist.map(j => h('tr', { class: 'clickable' + (j.id === picked.id ? ' selected' : ''), title: 'show this run in the cards above', on: { click: () => pickRun(j.id) } }, h('td', { class: 'mono' }, j.id), h('td', null, (j.mode || '') + (j.path ? ' · ' + j.path : '')),
           h('td', null, statusPill(j.status)), h('td', { class: 'nowrap muted' }, clock(j.started_at || j.created_at)),
           h('td', { class: 'nowrap' }, j.elapsed_s !== undefined ? dur(j.elapsed_s) : ''),
           h('td', { class: 'muted' }, j.summary ? `${byKind(j.summary.conversion)}${j.summary.indexed ?? 0} indexed, ${(j.summary.skipped_fresh ?? j.summary.skipped) ?? 0} unchanged, ${j.summary.no_text_count ? j.summary.no_text_count + ' without text, ' : ''}${j.summary.unsupported_count ? j.summary.unsupported_count + ' unsupported format, ' : ''}${j.summary.live_photo_count ? j.summary.live_photo_count + ' Live Photo videos, ' : ''}${j.summary.error_count || 0} failed` : ''))))))
@@ -689,7 +729,7 @@
       const names = ((RS.state.catalog && RS.state.catalog.list && RS.state.catalog.list.collections) || []).map(c => c.collection);
       if (refs.list.dataset.sig !== names.join('|')) { refs.list.dataset.sig = names.join('|'); fill(refs.list, names.map(n => h('option', { value: n }))); }
       controls();
-      maybeFetchDocs(job);
+      maybeFetchDocs((curIdx() || {}).job);
       patch(refs.run, runCard());
       patch(refs.conv, phaseCard() || '');
       patch(refs.workers, workersCard() || '');

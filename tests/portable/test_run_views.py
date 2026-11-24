@@ -245,3 +245,19 @@ class DocumentListTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StageTotalsTests(unittest.TestCase):
+    def test_every_stage_counts_its_files_and_seconds_and_a_fast_skip_counts_at_stage_2(self):
+        st = runview._fresh()
+        for i, (stage, sec) in enumerate([("fingerprint", 0.1), ("convert", 2.0), ("chunk", 0.5), ("convert", 4.0)]):
+            runview._feed(st, json.dumps({"ts": float(i), "event": "stage", "pid": 9, "file": f"c/{i}.pdf", "stage": stage,
+                                          "status": "done", "seconds": sec}))
+        runview._feed(st, json.dumps({"ts": 9.0, "event": "stage", "pid": 9, "file": "c/x.pdf", "stage": "convert",
+                                      "status": "start"}))                       # a start is not a file through the stage
+        runview._feed(st, json.dumps({"ts": 10.0, "event": "doc", "fast": True, "status": "skipped", "route": "pages",
+                                      "collection": "c", "path": "old.pdf"}))
+        rows = {r["key"]: r for r in runview.stage_totals_view(st)}
+        self.assertEqual((rows["convert"]["files"], rows["convert"]["seconds"]), (2, 6.0))
+        self.assertEqual((rows["fingerprint"]["files"], rows["fingerprint"]["unchanged"]), (2, 1))
+        self.assertEqual([r["key"] for r in runview.stage_totals_view(st)], ["fingerprint", "convert", "chunk"])

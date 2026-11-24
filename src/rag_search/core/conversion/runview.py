@@ -40,7 +40,7 @@ def _fresh() -> dict[str, Any]:
                      "runway_outcomes": {}, "engines": {},
                      "first": 0.0, "last": 0.0, "tokens": 0, "gpu_s": 0.0,
                      "first_read": 0.0, "last_read": 0.0},
-            "steps": {}, "kinds": {}, "tracks": {}}
+            "steps": {}, "kinds": {}, "tracks": {}, "stage_totals": {}}
 
 
 def _lane(st: dict[str, Any], pid: int, role: str, ts: float) -> dict[str, Any]:
@@ -116,6 +116,28 @@ def _feed_work(st: dict[str, Any], ev: dict[str, Any]) -> None:
         ph["status"] = "running"
 
 
+def _feed_stage_total(st: dict[str, Any], ev: dict[str, Any]) -> None:
+    """Every numbered stage of the run: how many files passed it and the seconds they spent (the Stages table)."""
+    if ev.get("status") != "done":
+        return
+    key = str(ev.get("stage") or "")
+    t = st["stage_totals"].setdefault(key, {"id": str(ev.get("id") or stages.id_of(key)), "n": 0, "seconds": 0.0})
+    t["n"] += 1
+    t["seconds"] += float(ev.get("seconds") or 0.0)
+    if ev.get("unchanged"):
+        t["unchanged"] = t.get("unchanged", 0) + 1
+
+
+def stage_totals_view(st: dict[str, Any]) -> list[dict[str, Any]]:
+    """The Stages table: one row per stage that saw a file, in the registry's order, with files, seconds and (for 2
+    Fingerprint) how many were unchanged."""
+    order = {s.key: i for i, s in enumerate(stages.INDEXING)}
+    rows = [{"key": k, "id": v["id"], "name": stages.named(k), "files": v["n"], "seconds": round(v["seconds"], 1),
+             **({"unchanged": v["unchanged"]} if v.get("unchanged") else {})}
+            for k, v in st["stage_totals"].items()]
+    return sorted(rows, key=lambda r: (order.get(r["key"], 99), r["id"]))
+
+
 def _feed_fast_skip(st: dict[str, Any], ev: dict[str, Any]) -> None:
     """An unchanged document skipped from its record alone: one finished unit of the convert phase, counted with the
     unchanged ones of its track, and one file 3.0 Sniff sorted as unchanged."""
@@ -128,6 +150,9 @@ def _feed_fast_skip(st: dict[str, Any], ev: dict[str, Any]) -> None:
     sp["last"] = float(ev.get("ts") or 0)
     routes = sp.setdefault("routes", {})
     routes["unchanged"] = routes.get("unchanged", 0) + 1
+    fp = st["stage_totals"].setdefault("fingerprint", {"id": stages.id_of("fingerprint"), "n": 0, "seconds": 0.0})
+    fp["n"] += 1
+    fp["unchanged"] = fp.get("unchanged", 0) + 1
 
 
 def _feed_stage_of_proc(st: dict[str, Any], ev: dict[str, Any]) -> None:
@@ -179,6 +204,7 @@ def _feed(st: dict[str, Any], line: str) -> None:
     if kind == "stage" and "pid" in ev:
         _feed_stage_of_proc(st, ev)
         _feed_step(st, ev)
+        _feed_stage_total(st, ev)
     if ev.get("event") == "page" and "pid" in ev:
         _feed_page(st, ev)
         return
@@ -603,6 +629,7 @@ def run_view(paths: Paths, job_id: str = "") -> dict[str, Any]:
             "phase": prog.get("phase", ""), "done": prog.get("done"), "total": prog.get("total"),
             "totals": totals, "lanes": lanes,
             "live": live_view(st, running), "steps": _steps_view(st), "tracks": tracks_view(st, running),
+            "stage_totals": stage_totals_view(st),
             "kinds": {k: {**v, "examples": {f: list(x) for f, x in v["examples"].items()}} for k, v in st["kinds"].items()},
             "stall_limit_s": _stall_limit(),
             "started_at": rec.get("started_at"), "finished_at": rec.get("finished_at")}
