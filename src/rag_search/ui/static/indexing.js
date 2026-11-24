@@ -179,6 +179,9 @@
       sum && sum.unsupported_count ? unsupportedNotice(sum) : null,
       sum && sum.known_count ? knownNotice(sum) : null,
       sum && sum.live_photo_count ? livePhotoNotice(sum) : null,
+      sum && sum.residue && (sum.residue.photographs || sum.residue.repaired) ? h('div', { class: 'notice', style: { marginTop: '12px' } },
+        h('b', null, 'Housekeeping after the run: '), sum.residue.photographs ? `forgot what was left of ${num(sum.residue.photographs)} photograph(s) deleted from every source folder (${num(sum.residue.faces)} faces${sum.residue.labelled ? ', ' + num(sum.residue.labelled) + ' with a name or an answer from you' : ''}, ${num(sum.residue.descriptions)} descriptions, ${num(sum.residue.text_checks)} text checks)` : '',
+        sum.residue.photographs && sum.residue.repaired ? '; ' : '', sum.residue.repaired ? `corrected the remembered path of ${num(sum.residue.repaired)} photograph(s) whose folder was renamed` : '', '.') : null,
       job.publish ? h('p', { class: 'small muted', style: { marginBottom: 0 } }, 'Published: ' + (job.publish.generation ? `generation ${job.publish.generation}` : (job.publish.changed === false ? 'nothing changed' : JSON.stringify(job.publish)))) : null);
   }
 

@@ -2126,11 +2126,10 @@ def run_index(
 
     vlm.close_shared()                     # the document reader's process (only when this process had one)
     residue_info: dict[str, Any] = {}
-    if prune:                              # whole collections were walked: what is left of the photographs deleted from them goes too
-        try:
-            residue_info = residue.purge(paths)
-        except Exception as exc:  # noqa: BLE001 - housekeeping only
-            log.warning("forgetting what is left of deleted photographs failed: %s", exc)
+    try:                                   # after every run: what is left of photographs deleted from every folder goes too (it only
+        residue_info = residue.purge(paths)  # touches what no index folder or Markdown in the workspace still has)
+    except Exception as exc:  # noqa: BLE001 - housekeeping only
+        log.warning("forgetting what is left of deleted photographs failed: %s", exc)
     cache_info: dict[str, Any] = {}
     try:                                   # forget cached pages no stored trace refers to any more
         pc = pagecache.PageCache(paths.workspace)

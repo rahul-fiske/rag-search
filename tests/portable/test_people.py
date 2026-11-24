@@ -655,11 +655,11 @@ class ResidueTests(PeopleCase):
         self.assertIn("people", res["skipped"])                                 # more than a fifth: stopped
         self.assertEqual(residue.purge(self.paths, force=True)["photographs"], 122)
 
-    def test_an_indexing_run_that_walked_whole_collections_forgets_what_is_left_of_deleted_photographs(self):
+    def test_an_indexing_run_forgets_what_is_left_of_deleted_photographs(self):
         from rag_search.core import indexer, residue
 
         with mock.patch.object(residue, "purge", return_value={"photographs": 1}) as purge:
             s = indexer.run_index(self.paths, [], self.roots(), prune=["trip"], jobs=1, embedder=FakeEmbedder(), progress=lambda e: None)
             self.assertEqual((purge.call_count, s["residue"]), (1, {"photographs": 1}))
             s = indexer.run_index(self.paths, [], self.roots(), jobs=1, embedder=FakeEmbedder(), progress=lambda e: None)
-            self.assertEqual((purge.call_count, s["residue"]), (1, {}))                # a run of one path forgets nothing
+            self.assertEqual(purge.call_count, 2)                                      # after every run, not only a whole-collection one

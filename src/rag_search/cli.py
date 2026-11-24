@@ -267,6 +267,10 @@ def _fmt_job(job: dict[str, Any] | None) -> str:
                      "(protected, damaged, without text, or the name of another file); a complete run tries them")
         if summ.get("removed_count"):
             line += f", removed {summ['removed_count']} (source deleted)"
+        rs = summ.get("residue") or {}
+        if rs.get("photographs") or rs.get("repaired"):
+            line += (f"\n  forgot what was left of {rs.get('photographs', 0)} deleted photograph(s) ({rs.get('faces', 0)} faces, "
+                     f"{rs.get('descriptions', 0)} descriptions)" + (f", corrected {rs['repaired']} remembered path(s)" if rs.get("repaired") else ""))
         if summ.get("unreachable"):
             line += ("\n  skipped, not reachable (kept as indexed before): "
                      + ", ".join(summ["unreachable"]))

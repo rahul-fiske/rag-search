@@ -1284,8 +1284,8 @@ standing as BM25 and the text vectors.
 * **A deleted photograph leaves nothing behind** (`core/residue.py`, `rag-search people purge [--dry-run] [--force]`): indexing already
   removed the Markdown, index and picture vector of a document whose file was deleted. Three stores keyed by the photograph's
   checksum lived outside the index and outlived it: the People store (faces, fingerprints, thumbnails, the names and "not this
-  person" answers given to those faces), the description cache and the text-check cache. After a run that walked whole
-  collections (not one path, not a cancelled run), `residue.purge` forgets what no photograph still needs. A photograph is
+  person" answers given to those faces), the description cache and the text-check cache. After every completed run (not a cancelled
+  one; the run summary and the Indexing tab say what it forgot), `residue.purge` forgets what no photograph still needs. A photograph is
   *present* when its checksum is in any index folder or beside any Markdown in the workspace, so a collection whose folder cannot be
   read, and a document being made again, are never touched; a face goes only when its file is gone from where it was seen and the
   photograph is not present. A photograph that is present but whose remembered path is gone (its folder was renamed: seven in one
