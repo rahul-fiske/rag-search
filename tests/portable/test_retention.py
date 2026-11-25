@@ -141,3 +141,29 @@ class EventLogTests(TempHome):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OwnLogRotationTests(TempHome):
+    def test_a_daemon_whose_log_passes_the_limit_continues_in_a_fresh_file(self):
+        from rag_search.core.daemon_base import DaemonBase
+        from rag_search.paths import LOG_ROTATE_BYTES
+
+        class D(DaemonBase):
+            kind = "indexer"
+        d = D(self.paths)
+        log = self.paths.log_file("indexer")
+        log.write_text("x" * (LOG_ROTATE_BYTES + 10))
+        saved = os.dup(2)
+        try:
+            fd = os.open(log, os.O_WRONLY | os.O_APPEND)
+            os.dup2(fd, 2)                                        # standard error is the log, as under launchd
+            os.close(fd)
+            d._rotate_own_log()
+            os.write(2, b"after\n")
+        finally:
+            os.dup2(saved, 2)
+            os.close(saved)
+        self.assertEqual(log.read_text(), "after\n")
+        self.assertGreater(log.with_suffix(".log.1").stat().st_size, LOG_ROTATE_BYTES)
+        d._rotate_own_log()                                        # small now, and stderr is not the file: nothing happens
+        self.assertEqual(log.read_text(), "after\n")

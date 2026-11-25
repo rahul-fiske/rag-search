@@ -206,6 +206,76 @@ class QuickSkipTests(TempHome):
         self.assertIsNone(self.run_()[1][0].get("fast"))
 
 
+class QuickSkipPhotographTests(TempHome):
+    """The checks a photograph passes before it is skipped from its record: a description by the current model (a run makes
+    PER_RUN at most, the rest are counted), the faces the People store counts, and its picture vector."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_doc("c/p.md", "# T\n\n<!-- page 1 -->\n\ntext")
+        self.src = self.sdir / "c" / "p.md"
+        srcs = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
+        self.roots_ = self.roots()
+        indexer.run_index(self.paths, srcs, self.roots_, jobs=1, embedder=FakeEmbedder())
+        self.meta_file = next((self.paths.index / "c").rglob("index.meta.json"))
+        meta = json.loads(self.meta_file.read_text())
+        meta["conversion"] = {"branches": {"photo": 1}}              # make it a photograph's record
+        meta["photo_facts"] = {"described": True, "described_by": "model-a", "faces": 2}
+        self.meta_file.write_text(json.dumps(meta))
+
+    def task(self, **kw):
+        from rag_search.paths import DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE, model_name
+        return {"src": str(self.src), "index_root": str(self.paths.index), "rebuild": False, "force_md": False,
+                "chunk_size": DEFAULT_CHUNK_SIZE, "chunk_overlap": DEFAULT_CHUNK_OVERLAP, "model": model_name(), **kw}
+
+    def skip(self, task, ctx=None):
+        return indexer.quick_skip(task, self.roots_, ctx if ctx is not None else {})
+
+    def test_a_photograph_with_every_fact_is_skipped_and_says_it_is_a_photograph(self):
+        res = self.skip(self.task())
+        self.assertEqual((res["status"], res["route"], res["fast"]), ("skipped", "photograph", True))
+
+    def test_a_description_by_another_model_is_made_within_the_quota_and_the_rest_are_counted(self):
+        task = self.task(describe_ready=True)
+        ctx = {"describe_id": "model-b", "describe_quota": 1, "describe_deferred": 0, "describe_failed": set()}
+        self.assertIsNone(self.skip(task, ctx))                        # within the quota: the full path describes it
+        self.assertEqual(ctx["describe_quota"], 0)
+        self.assertIsNotNone(self.skip(task, ctx))                      # quota spent: skipped, left for the next run
+        self.assertEqual(ctx["describe_deferred"], 1)
+        ctx = {"describe_id": "model-a", "describe_quota": 5, "describe_failed": set()}
+        self.assertIsNotNone(self.skip(task, ctx))                      # already by the current model
+        sha = json.loads(self.meta_file.read_text())["src_sha256"]
+        ctx = {"describe_id": "model-b", "describe_quota": 5, "describe_failed": {sha}}
+        self.assertIsNotNone(self.skip(task, ctx))                      # the model failed on it: not tried again
+
+    def test_faces_that_are_unknown_or_counted_differently_take_the_full_path(self):
+        task = self.task(faces_ready=True)
+        sha = json.loads(self.meta_file.read_text())["src_sha256"]
+        self.assertIsNone(self.skip(task, {"faces": {}}))               # never looked at
+        self.assertIsNone(self.skip(task, {"faces": {sha: 3}}))         # the store counts another number
+        self.assertIsNotNone(self.skip(task, {"faces": {sha: 2}}))
+
+    def test_a_missing_picture_vector_is_flagged_for_5_2_and_nothing_else_is_done(self):
+        res = self.skip(self.task(picture_model="some/picture-model"))
+        self.assertTrue(res["picture"])
+
+    def test_a_record_without_facts_a_stale_mark_or_a_changed_file_is_looked_at(self):
+        meta = json.loads(self.meta_file.read_text())
+        for change in ({"photo_facts": None}, {"stale": "places"}, {"src_stat": [0, 0]}):
+            m = {**meta, **change}
+            self.meta_file.write_text(json.dumps({k: v for k, v in m.items() if v is not None}))
+            self.assertIsNone(self.skip(self.task()), change)
+        self.meta_file.write_text(json.dumps(meta))
+        self.assertIsNotNone(self.skip(self.task()))
+        self.assertIsNone(self.skip(self.task(rebuild=True)))
+
+    def test_a_store_that_cannot_be_read_turns_the_quick_check_off_for_the_run(self):
+        from unittest import mock
+
+        with mock.patch.object(indexer.faces, "known_counts", side_effect=RuntimeError("locked")):
+            self.assertEqual(indexer.quick_context(self.paths, False, True)["off"], True)
+
+
 class PoolShutdownTests(unittest.TestCase):
     """A conversion process that cannot exit (a thread abandoned after a document timeout is stuck
     in a native call) must not keep the run from reaching embedding."""

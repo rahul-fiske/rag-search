@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import http.client
+import io
 import json
 import os
 import re
@@ -325,21 +327,17 @@ class ActionTests(UiBase):
         st, _, _, _ = self.dash.req("POST", "/api/index/start", {"mode": "bogus"})
         self.assertEqual(st, 400)
 
-    def test_index_start_runs_a_job_and_publishes(self):
-        self.write_doc("security/new.md", "# New\n\nKerberos ticket lifetime is ten hours. " * 5)
-        st, js, _, _ = self.dash.req("POST", "/api/index/start", {"mode": "new"})
-        self.assertEqual(st, 200, js)
-        deadline = time.time() + 90
-        job = {}
-        while time.time() < deadline:
-            _, s, _, _ = self.dash.req("GET", "/api/state")
-            job = (s["live"]["index"] or {}).get("job") or {}
-            if job.get("status") in ("succeeded", "partial", "failed"):
-                break
-            time.sleep(0.5)
-        self.assertEqual(job.get("status"), "succeeded", job)
-        st, js, _, _ = self.dash.req("POST", "/api/search", {"query": "Kerberos ticket lifetime", "top_k": 3})
-        self.assertIn("new", {r["file"] for r in js["result"]["results"]})
+    def test_index_start_passes_the_request_to_the_run_and_wakes_the_sampler(self):
+        # the run itself (daemon -> worker -> publish -> search) is tested through the daemon and the CLI flow
+        from rag_search import api
+
+        with mock.patch.object(api, "index_start", return_value={"ok": True, "started": True, "job": {"id": "j1"}}) as start:
+            st, js, _, _ = self.dash.req("POST", "/api/index/start",
+                                         {"mode": "new", "path": "security", "rebuild": True, "force_md": True, "restart": True})
+        self.assertEqual((st, js["job"]["id"]), (200, "j1"))
+        kw = start.call_args.kwargs
+        self.assertEqual((kw["mode"], kw["path"], kw["rebuild"], kw["force_md"], kw["restart"]),
+                         ("new", "security", True, True, True))
 
     def test_index_cancel_when_idle_is_harmless(self):
         st, js, _, _ = self.dash.req("POST", "/api/index/cancel", {})
@@ -541,11 +539,17 @@ class DetachAndCliTests(TempHome):
             self.assertEqual(out, "", mod)
 
     def test_doctor_json_is_machine_readable(self):
-        env = dict(os.environ, PYTHONPATH=SUBPROC_PYTHONPATH)
-        p = subprocess.run([sys.executable, "-m", "rag_search.cli", "doctor", "--json"], capture_output=True,
-                           text=True, env=env, timeout=90)
-        rows = json.loads(p.stdout)
-        self.assertTrue(rows and all({"status", "check", "detail"} <= set(r) for r in rows))
+        from rag_search import cli
+        from rag_search.core import diagnostics
+
+        rows = [(diagnostics.OK, "config.json", "fine"), (diagnostics.WARN, "models", "not downloaded")]
+        out = io.StringIO()
+        with mock.patch.object(diagnostics, "run_checks", return_value=rows), contextlib.redirect_stdout(out), \
+                self.assertRaises(SystemExit) as ex:
+            cli.main(["doctor", "--json"])
+        self.assertEqual(ex.exception.code, 0)
+        parsed = json.loads(out.getvalue())
+        self.assertEqual(parsed, [{"status": s_, "check": c, "detail": d} for s_, c, d in rows])
 
     def test_cli_ui_command_starts_serves_and_stops(self):
         env = dict(os.environ, PYTHONPATH=SUBPROC_PYTHONPATH, RAG_SEARCH_UI_PORT="0")

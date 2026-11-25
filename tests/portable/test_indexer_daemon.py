@@ -95,16 +95,18 @@ class IndexerDaemonTests(IndexerCase):
         self.assertEqual(job["search_reload"], {"ok": True, "generation": 2, "changed": True,
                                               "reused": [], "loaded": ["c"]})
 
-    def test_start_is_idempotent_while_running(self):
+    def test_start_is_idempotent_while_running_and_publish_waits_for_the_run(self):
         self.docs()
-        self.slow("1.0")
+        self.slow("0.6")
         self.start_daemon()
         a = self.call("start")
         b = self.call("start")
         self.assertTrue(a["started"])
         self.assertEqual((b["started"], b["already_running"], b["job"]["id"]),
                          (False, True, a["job"]["id"]))
+        self.assertEqual(self.call("publish")["code"], protocol.BUSY)          # publishing is the run's own last step
         self.assertEqual(self.wait_idle()["status"], "succeeded")
+        self.assertTrue(self.call("publish")["ok"])
 
     def test_restart_kills_worker_group_and_starts_over(self):
         self.docs()
@@ -235,15 +237,6 @@ class IndexerDaemonTests(IndexerCase):
         self.assertEqual(self.call("status", job_id="zzz")["code"], protocol.BAD_REQUEST)
         st = self.call("status")
         self.assertEqual((st["ok"], st["running"], st["job"]), (True, False, None))
-
-    def test_publish_refused_while_running_allowed_after(self):
-        self.docs()
-        self.slow("1.0")
-        self.start_daemon()
-        self.call("start")
-        self.assertEqual(self.call("publish")["code"], protocol.BUSY)
-        self.wait_idle()
-        self.assertTrue(self.call("publish")["ok"])
 
     def test_auto_publish_can_be_disabled(self):
         (self.paths.home / "config.json").write_text(json.dumps({"indexer": {"auto_publish": False}}))
