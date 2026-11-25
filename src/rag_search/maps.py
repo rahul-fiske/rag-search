@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from . import reference
-from .paths import META_FILE, Paths
+from .paths import META_FILE, Paths, read_json, write_json_atomic
 
 PER_DEG = 20                       # store cells per degree of latitude or longitude
 CELL_DEG = 1 / PER_DEG             # a store cell: 0.05 degree, about 6 km
@@ -621,6 +621,17 @@ def is_current(md: Path, text: str, state: dict[str, Any]) -> bool:
     return all(saved.get(c) == cell_stamp(c, state) for c in cells_in_text(text))
 
 
+def mark_stale(meta_file: Path, why: str) -> None:
+    """Mark a document's index record out of date (``stale``): the next run converts or describes it again and embeds it,
+    while its last complete version keeps being merged and served (``indexer.is_fresh`` and the quick check see the mark)."""
+    if not meta_file.exists():
+        return
+    meta = read_json(meta_file)
+    if isinstance(meta, dict) and meta.get("stale") != why:
+        meta["stale"] = why
+        write_json_atomic(meta_file, meta)
+
+
 def refresh(paths: Paths, *, everything: bool = False) -> dict[str, int]:
     """Mark the documents whose map data changed (every document with positions, with *everything*) so the next
     indexing run describes them again.  A photo keeps its Markdown (only its index is marked out of date: the run
@@ -644,14 +655,13 @@ def refresh(paths: Paths, *, everything: bool = False) -> dict[str, int]:
             res["current"] += 1
             continue
         rel = md.relative_to(paths.markup).with_suffix("")
-        stale = [paths.index / rel / META_FILE]
+        # the record is marked, not removed: the document stays complete (and searchable) until the run has embedded it again
+        mark_stale(paths.index / rel / META_FILE, "places")
         if PHOTO_HEADING in text:
             res["in_place"] += 1
         else:
-            stale.append(md.with_name(md.name + ".sha256"))
-            res["reconverted"] += 1
-        for f in stale:
             with contextlib.suppress(OSError):
-                os.unlink(f)
+                os.unlink(md.with_name(md.name + ".sha256"))
+            res["reconverted"] += 1
         res["refreshed"] += 1
     return res

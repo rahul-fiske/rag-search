@@ -3,6 +3,8 @@ documents, refresh, the task and the dashboard route.  No network."""
 
 from __future__ import annotations
 
+import json
+
 import os
 from unittest import mock
 
@@ -183,7 +185,8 @@ class PlanTests(TempHome):
         res = maps.refresh(self.paths)                       # no stamps yet: both are described again, once
         self.assertEqual((res["checked"], res["refreshed"], res["in_place"], res["reconverted"]), (2, 2, 1, 1))
         self.assertTrue(photo.with_name("a.md.sha256").exists())             # a photo keeps its Markdown
-        self.assertFalse((self.paths.index / "photos/a" / META_FILE).exists())
+        meta = json.loads((self.paths.index / "photos/a" / META_FILE).read_text())        # marked, not removed: it keeps
+        self.assertEqual(meta["stale"], "places")                                       # serving until the run redoes it
         self.assertFalse(trip.with_name("t.md.sha256").exists())            # a timeline is converted again
         self.assertTrue(plain.with_name("plain.md.sha256").exists())
         self.assertTrue((self.paths.index / "docs/plain" / META_FILE).exists())

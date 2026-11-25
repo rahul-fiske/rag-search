@@ -145,7 +145,7 @@ def is_fresh(idx_dir: Path, src_sha: str, chunk_size: int, chunk_overlap: int,
     if not (idx_dir / NODES_FILE).exists() or not (idx_dir / EMB_FILE).exists():
         return False
     meta = read_json(idx_dir / META_FILE)
-    if not meta or meta.get("src_sha256") != src_sha:
+    if not meta or meta.get("src_sha256") != src_sha or meta.get("stale"):    # stale: marked out of date (maps.mark_stale)
         return False
     want = _params(chunk_size, chunk_overlap, model)
     return all(meta.get(k) == v for k, v in want.items())
@@ -932,7 +932,7 @@ def quick_skip(task: dict[str, Any], roots: SourceRoots, ctx: dict[str, Any]) ->
         return None
     meta = read_json(idx_dir / META_FILE)
     if (not meta or meta.get("src_stat") != _stat_key(st) or meta.get("src_path") != str(src) or not meta.get("src_sha256")
-            or not isinstance(meta.get("understood"), dict)):
+            or not isinstance(meta.get("understood"), dict) or meta.get("stale")):
         return None
     if any(meta.get(k) != v for k, v in _params(task["chunk_size"], task["chunk_overlap"], task["model"]).items()):
         return None

@@ -227,6 +227,7 @@ class Live:
         self.clients = 0
         self.stopping = False
         self._catalog_due = 0.0
+        self._sampled_at = 0.0
         self._thread: threading.Thread | None = None
         self._nudge = threading.Event()
 
@@ -247,6 +248,7 @@ class Live:
                 "access": access.overview(self.paths, seen)}
 
     def sample(self, force_catalog: bool = False) -> None:
+        self._sampled_at = time.monotonic()
         try:
             live = self.build_live()
         except Exception as exc:  # noqa: BLE001 - one bad sample must not kill the thread
@@ -279,7 +281,9 @@ class Live:
 
     def _loop(self) -> None:
         while not self.stopping:
-            self._nudge.wait(1.0 if self.clients else 5.0)
+            # With nobody looking nothing is sampled at all: the dashboard process sleeps until a page connects (a connection
+            # nudges it) or an action does; an idle rag-search does no work.
+            self._nudge.wait(1.0 if self.clients else None)
             self._nudge.clear()
             if self.stopping:
                 return
@@ -298,6 +302,8 @@ class Live:
             self.cond.notify_all()
 
     def snapshot(self) -> dict[str, Any]:
+        if time.monotonic() - self._sampled_at > 10.0:       # nobody was watching: what is held is old, ask now
+            self.sample(force_catalog=True)
         with self.cond:
             return {k: json.loads(v) for k, v in self.payload.items()}
 

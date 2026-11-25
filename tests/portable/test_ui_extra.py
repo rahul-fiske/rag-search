@@ -328,3 +328,40 @@ class SlowAnswerTests(unittest.TestCase):
         self.assertEqual(slow.get(("models", ("t1", "running")), lambda: n.append(1) or len(n)), 2)   # another task state
         slow.clear()
         self.assertEqual(slow.get(("models", ()), lambda: n.append(1) or len(n)), 3)
+
+
+class IdleTests(TempHome):
+    """An idle rag-search does no work: the dashboard samples the daemons only while a page is open (or on an action), and a
+    request that finds the held answer old asks once."""
+
+    def live(self):
+        from rag_search.ui import server
+
+        live = server.Live(self.paths, False)
+        calls = []
+        live.build_live = lambda: calls.append("live") or {"ts": 1}
+        live.build_catalog = lambda seen: {"v": 1}
+        self.addCleanup(live.stop)
+        return live, calls
+
+    def test_nobody_watching_means_no_sampling_until_a_page_connects_or_an_action_nudges(self):
+        import time
+
+        live, calls = self.live()
+        live.start()
+        self.assertEqual(len(calls), 1)                                  # the first answer, at start
+        time.sleep(0.4)
+        self.assertEqual(len(calls), 1)                                  # then nothing at all
+        live.nudge()
+        time.sleep(0.3)
+        self.assertEqual(len(calls), 2)                                  # an action asks once
+        time.sleep(0.4)
+        self.assertEqual(len(calls), 2)
+
+    def test_a_request_after_a_long_quiet_takes_a_fresh_sample_once(self):
+        live, calls = self.live()
+        live.start()
+        live._sampled_at -= 60
+        live.snapshot()
+        live.snapshot()
+        self.assertEqual(len(calls), 2)                                  # start + one refresh for the two requests

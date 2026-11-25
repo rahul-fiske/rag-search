@@ -27,7 +27,8 @@ from . import __version__, api, client, machine
 from .paths import Paths, get_paths
 
 MODULE = "rag_search.menubar"
-REFRESH_S = 5.0
+REFRESH_S = 5.0                # while a run is active
+IDLE_REFRESH_S = 30.0          # otherwise: nothing to watch, nothing is asked more often than this
 ICONS = {"ready": "doc.text.magnifyingglass", "warming": "hourglass", "indexing": "arrow.triangle.2.circlepath",
          "down": "exclamationmark.triangle"}
 
@@ -329,8 +330,13 @@ def run(paths: Paths | None = None) -> int:
             if self.ticks % 12 == 1:
                 note(f"alive: icon={self.shown} visible={bool(self.item.isVisible())}")
             self.item.button().setToolTip_("\n".join(status_lines(state["snap"])))
-            if not state["busy"]:
+            # the icon asks the daemons every REFRESH_S while a run is going, and only every IDLE_REFRESH_S otherwise
+            snap = state["snap"] or {}
+            quiet = not snap.get("job") and not (snap.get("indexer") or {}).get("running")
+            due = time.monotonic() - state.get("asked", 0.0) >= (IDLE_REFRESH_S if quiet else REFRESH_S) - 0.5
+            if due and not state["busy"]:
                 state["busy"] = True
+                state["asked"] = time.monotonic()
                 background(refresh)
 
         def clicked_(self, sender):

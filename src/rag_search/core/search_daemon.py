@@ -188,10 +188,10 @@ class SearchDaemon(DaemonBase):
         return w
 
     def _memory_view(self) -> dict[str, Any]:
-        """Resident memory of this daemon; cached for 2 s (a `ps` call on macOS)."""
+        """Resident memory of this daemon; cached for 15 s (a `ps` call on macOS; the status bar and the dashboard ask every few seconds)."""
         stamp, key, cached = self._mem_cache
         now_key = (self.state, self.engine.generation)      # a new state/generation changes it
-        if cached and key == now_key and time.monotonic() - stamp < 2.0:
+        if cached and key == now_key and time.monotonic() - stamp < 15.0:
             return cached
         mem = process_memory()
         info = getattr(self.engine, "memory_info", None)

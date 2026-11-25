@@ -284,7 +284,9 @@ class SearchEngine:
         emb = txt = 0
         for name, d in list(self.gen.indexes.items()):
             e = int(d.emb.nbytes)
-            t = sum(len(n["text"]) for n in d.nodes)
+            t = getattr(d, "_text_bytes", None)
+            if t is None:                          # an index never changes once loaded: summed once, not at every ping
+                t = d._text_bytes = sum(len(n["text"]) for n in d.nodes)     # type: ignore[attr-defined]
             mem = index_memory(d)
             colls[name] = {"chunks": len(d.nodes), "embeddings_bytes": e, "text_bytes": t,
                            "passages_bytes": mem["passages"], "keyword_bytes": mem["keyword"], "ram_bytes": mem["total"]}

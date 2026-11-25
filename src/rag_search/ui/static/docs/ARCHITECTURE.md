@@ -56,6 +56,16 @@ the process pool and `import torch` fail.
 * Job statuses: `queued running succeeded partial failed cancelled interrupted` (`partial` = some
   documents failed; the rest is published).
 
+**Idle means idle.** Nothing in rag-search starts work by itself: no schedule (the launchd agents have `RunAtLoad` and
+`KeepAlive` only, no interval), no file watcher, no automatic scan. Indexing, conversion, describing and publishing start only
+from a person or a client: the dashboard, the menu-bar item, the CLI, or an MCP tool (`rag_index_update`). What follows a
+requested run is part of it: the publish, and the next runs that describe the photographs a run left (`IndexerDaemon._describe_next`,
+500 a run, only while progress is made). The processes that stay up wake rarely and do almost nothing: the daemons' sockets
+(a 1 s accept timeout, a 15 s idle check), the search daemon's generation check (5 s, a symlink name, no file is read), the
+dashboard (it samples the daemons only while a page is open or after an action; a request that finds the answer older than 10 s
+asks once), and the menu-bar item (asks the daemons every 5 s while a run is active and every 30 s otherwise). Measured idle,
+with the models loaded: about 0.1 % of one core in all four processes together.
+
 ### Search daemon (`core/search_daemon.py`)
 
 * Binds its socket first, then loads models in a background thread: state
