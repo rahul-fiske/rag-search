@@ -132,8 +132,8 @@ class ByKindTests(IndexedPhotoTests):
         self.assertTrue(indexer._fills_description(self.task(src, describe_ready=True), "image", md, sha))
         line = f"- {describe.LOOKS} a road\n"
         with mock.patch.object(describe, "inline_ready", return_value=""), \
-                mock.patch.object(describe, "for_indexing", return_value=([line[2:].strip()], {"described": "model",
-                                                                                                 "why": "", "seconds": 1.0})), \
+                mock.patch.object(describe, "for_indexing", return_value=([line[2:].strip(), f"{describe.BY} {describe.current_id()}"],
+                                                                         {"described": "model", "why": "", "seconds": 1.0})), \
                 mock.patch.object(photo, "visible_text", return_value=""):
             s = self.run_index()
         self.assertEqual((s["indexed"], s.get("skipped_fresh", 0)), (1, 0))

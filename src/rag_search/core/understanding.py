@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .. import kinds
 from . import describe, faces, video
 
 PHOTOGRAPH = "photograph"
@@ -80,7 +81,7 @@ def _page_kind(fmt: str, suffix: str, branches: dict[str, int]) -> str:
     return "PDF, scanned" if scanned else "PDF with a text layer"
 
 
-TRACKS = ("pages", "photograph", "video", "timeline")   # the ways through a run, one per kind of file 3.0 Sniff tells apart
+TRACKS = kinds.TRACKS          # the ways through a run, one per kind of file 3.0 Sniff tells apart (kinds.py)
 GRADES = ("complete", "partial", "no_text", "error")
 
 

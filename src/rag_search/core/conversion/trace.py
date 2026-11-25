@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
+from ... import kinds
 from ...paths import read_json, write_json_atomic
 
 TRACE_VERSION = 1
@@ -31,7 +32,7 @@ BRANCHES = ("copy", "office", "digital", "raster", "image", "embedded", "fallbac
 BRANCH_LETTER = {"copy": "c", "office": "o", "digital": "d", "raster": "r", "image": "i",
                  "embedded": "e", "fallback": "f", "cached": "k", "photo": "p", "timeline": "t", "video": "v", "unknown": "?"}
 LETTER_BRANCH = {v: k for k, v in BRANCH_LETTER.items()}
-WHOLE_FILES = frozenset(("photo", "timeline", "video"))   # the "branch" of a file that has no pages: counted as a document
+WHOLE_FILES = kinds.WHOLE_BRANCHES   # the "branch" of a file that has no pages: counted as a document
 BRANCH_TITLE = {
     "copy": "Markdown / text, used as is",
     "office": "Office / HTML file (docling reads the structure)",

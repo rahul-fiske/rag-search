@@ -27,12 +27,13 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-from .. import machine, maps, stages
+from .. import kinds, machine, maps, stages
 from ..locations import ScanPlan, index_is_imported, scan_tree, workspace_excludes
 from ..paths import (
     ALL_DIR,
@@ -558,17 +559,19 @@ def _is_photo_doc(idx_dir: Path | None, text: str) -> bool:
 
 
 def _fills_description(task: dict[str, Any], kind: str, md_path: Path, sha: str, idx_dir: Path | None = None) -> bool:
-    """An unchanged photograph is converted again when its description is missing and can be made now: "description" is
-    one of its facts like any other, and a later run fills it in (unless the model failed on this photograph before)."""
+    """An unchanged photograph is converted again when its description is missing, or written by another model or prompt,
+    and can be made now: "description" is one of its facts like any other, and a later run fills it in (unless the model
+    failed on this photograph before)."""
     if kind != "image" or not task.get("describe_ready") or task["rebuild"] or task["force_md"]:
         return False
     try:
         text = md_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
-    if describe.LOOKS in text or not _is_photo_doc(idx_dir, text):
-        return False
-    return sha not in describe.failures(get_paths(), describe.current_id())
+    made_by = describe.current_id()
+    if describe.described_by(describe.section_of(text)[0]) == made_by or not _is_photo_doc(idx_dir, text):
+        return False                       # described by the current model and prompt (another one's is done again)
+    return bool(task.get("describe_retry")) or sha not in describe.failures(get_paths(), made_by)
 
 
 def _wants_faces(task: dict[str, Any], kind: str, md_path: Path, idx_dir: Path | None = None) -> bool:
@@ -609,7 +612,7 @@ def _understood_unchanged(idx_dir: Path, md_path: Path, src: Path, kind: str) ->
             text = md_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return None
-    route = {"photo": "photograph", "video": "video", "timeline": "timeline"}.get(next(iter(whole), ""), "pages")
+    route = kinds.route_of_branches(whole) if whole else kinds.PAGES
     return understanding.of_document(fmt=kind, suffix=src.suffix.lower(), status="prepared", text=text, route=route,
                                      branches=branches, outcomes=outcomes)
 
@@ -643,6 +646,237 @@ def _faces_step(task: dict[str, Any], src: Path, sha: str, slog: Any, rel_name: 
         stage_event(slog, rel_name, "faces", "done", seconds=secs, how=how, earlier=earlier,
                     **({"faces": n} if n is not None else {}))
     return n, how, secs
+
+
+# ── 3 Convert, by kind (kinds.py) ─────────────────────────────────────────────
+# Every kind takes the same way through a run; only its own steps of 3 Convert differ.  ``_Doc`` is the one record of the
+# document those steps fill in; ``CONVERT`` lists each kind's steps in order; ``convert_by_kind`` runs them, then writes
+# the Markdown the kind's way.  Timelines that turn out not to be one continue as pages.
+
+@dataclass
+class _Doc:
+    task: dict[str, Any]
+    src: Path
+    kind: str                          # the profiler's format (pdf | image | office | text | video)
+    sha: str
+    md_path: Path
+    slog: Any
+    rel_name: str
+    meta: dict[str, Any]               # camera / header facts read by 3.0 Sniff
+    seen: str | None                   # the text the quick check saw in a picture
+    reused_md: bool
+    reuse_trace: bool
+    old: dict[str, Any]                # the stored trace (when the Markdown is reused)
+    fill: bool                         # an unchanged photograph made again to fill in a fact
+    faces_seen: int | None
+    route: str
+    t_conv: float
+    profile: dict[str, Any] | None = None
+    prof_s: float = 0.0
+    how: str = ""
+    info: dict[str, Any] = field(default_factory=dict)
+    note: str = ""
+    timeline_done: bool = False
+    photograph: bool = False           # a photograph whose details are made now (only they are indexed)
+    photo_section: str = ""
+    video_section: str = ""
+    described: str = ""                # 3.10: "model", "cache" or "" (none)
+
+    @property
+    def ocr(self) -> bool | None:
+        return self.task.get("ocr")
+
+    def write_sidecar(self) -> None:
+        write_sidecar(self.md_path, self.sha, self.ocr)
+
+
+def write_sidecar(md_path: Path, sha: str, ocr: bool | None) -> None:
+    """``<doc>.md.sha256``: the source checksum and the conversion settings the Markdown was made with (``md_is_current``)."""
+    md_path.with_name(md_path.name + ".sha256").write_text(f"{sha}\n{convert_profile(ocr)}\n", encoding="utf-8")
+
+
+def _step_timeline(d: _Doc) -> None:
+    """3.8 Timeline: a Google Maps Timeline export becomes a day-by-day log; a .json that is not one goes on as pages."""
+    if d.reused_md:
+        return
+    if timeline.convert(d.src, d.md_path, get_paths()):
+        d.write_sidecar()
+        d.how, d.timeline_done = "converted", True
+        d.note = "a Google Maps Timeline: one line per visit and journey, with what the map data says"
+        stage_event(d.slog, d.rel_name, "timeline", "done", seconds=round(time.perf_counter() - d.t_conv, 2))
+    else:
+        d.route = kinds.PAGES                  # it was not one after all: read like any other file
+
+
+def _step_profile(d: _Doc) -> None:
+    """3.1 Profile (pages only): every page looked at once; skipped when the Markdown *and* the trace are current."""
+    if not d.reuse_trace:
+        t_prof = time.perf_counter()
+        d.profile = profiler.profile_file(d.src)
+        d.prof_s = round(time.perf_counter() - t_prof, 2)
+        stage_event(d.slog, d.rel_name, "profile", "done", seconds=d.prof_s, pages=len(d.profile.get("pages", [])))
+        planned: dict[str, int] = {}
+        for _n, branch, _why in profiler.route_pages(d.profile) or [(1, router.decide(d.kind)[0], "")]:
+            planned[branch] = planned.get(branch, 0) + 1
+        plan_event(d.slog, d.rel_name, planned)
+        d.t_conv = time.perf_counter()
+    else:                                      # the stored trace says what the pages are
+        planned = {}
+        for rec in d.old.get("pages", []):
+            planned[trace.page_kind(rec)] = planned.get(trace.page_kind(rec), 0) + 1
+        plan_event(d.slog, d.rel_name, planned)
+
+
+def _step_photo_details(d: _Doc) -> None:
+    """3.6 Photo details (3.7 Locate is part of it: the map lines): a photograph, and a photographed page after its lanes."""
+    t_ph = time.perf_counter()
+    d.photograph = d.route == "photograph" and (not d.reused_md or d.fill)
+    if not d.meta:
+        return
+    paths = get_paths()
+    d.photo_section = photo.block(d.src, paths, d.seen or "") if d.photograph else photo.block(d.src, paths)
+    if d.photo_section:
+        loc_s = float(photo.LAST.get("locate_s") or 0.0)
+        stage_event(d.slog, d.rel_name, "photo", "done", seconds=round(max(0.0, time.perf_counter() - t_ph - loc_s), 2),
+                    photograph=d.route == "photograph")
+        if "- Area:" in d.photo_section or "- Town:" in d.photo_section:
+            stage_event(d.slog, d.rel_name, "locate", "done", seconds=round(loc_s, 3), nearby="- Nearby:" in d.photo_section)
+
+
+def _step_video_details(d: _Doc) -> None:
+    """3.11 Video details (3.7 Locate is part of it); always made again: a few reads of the file's header."""
+    t_v = time.perf_counter()
+    d.video_section = video.block(d.src, get_paths(), d.meta)
+    loc_s = float(photo.LAST.get("locate_s") or 0.0) if "lat" in d.meta else 0.0
+    stage_event(d.slog, d.rel_name, "video", "done", seconds=round(max(0.0, time.perf_counter() - t_v - loc_s), 3),
+                position="lat" in d.meta, time="when" in d.meta)
+    if "- Area:" in d.video_section or "- Town:" in d.video_section:
+        stage_event(d.slog, d.rel_name, "locate", "done", seconds=round(loc_s, 3), nearby="- Nearby:" in d.video_section)
+
+
+def _step_faces(d: _Doc) -> None:
+    """3.9 Faces: after Locate; the count is a line of the photograph's details."""
+    if not d.photograph:
+        return
+    n_faces = d.faces_seen if d.faces_seen is not None else _faces_step(d.task, d.src, d.sha, d.slog, d.rel_name)[0]
+    if n_faces is not None:
+        d.photo_section = photo.insert_extra(d.photo_section, [f"{faces.LINE} {n_faces}"])
+
+
+def _step_describe(d: _Doc) -> None:
+    """3.10 Describe: after Faces, before Chunk (from the cache, or the model this process holds)."""
+    if not d.photograph:
+        return
+    t_de = time.perf_counter()
+    extra, dinfo = describe.for_indexing(get_paths(), d.src, d.sha, retry=bool(d.task.get("describe_retry")))
+    if not extra and d.md_path.exists():       # none made now: an earlier one (another model's) is better than none
+        with contextlib.suppress(OSError):
+            extra = describe.lines_in(describe.section_of(d.md_path.read_text(encoding="utf-8", errors="replace"))[0])
+    d.photo_section = photo.insert_extra(d.photo_section, extra)
+    if d.photo_section.strip() and not d.photo_section.lstrip().startswith(photo.HEADING):
+        d.photo_section = photo.headed(d.photo_section, d.src, d.seen or "")   # no camera data: what 3.9 and 3.10 found
+    d.described = dinfo["described"]
+    stage_event(d.slog, d.rel_name, "describe", "done", seconds=round(time.perf_counter() - t_de, 2),
+                source=dinfo["described"] or "none", why=dinfo["why"], model_s=dinfo["seconds"])
+    if not dinfo["described"] and dinfo["why"]:
+        d.note = f"description missing ({dinfo['why'][:120]}): a later run fills it in"
+
+
+def _write_details(d: _Doc, section: str, how: str, empty: str, note: str) -> None:
+    """A file indexed from its details (a photograph, a video): the section is its whole Markdown."""
+    if not section.strip():
+        raise NoTextError(empty)
+    photo.only(d.md_path, section)
+    d.write_sidecar()
+    d.how, d.info = how, {}
+    d.note = d.note or note
+
+
+def _write_photograph(d: _Doc) -> None:
+    if not d.photograph:                       # its Markdown is current (only chunking changed): written like any document
+        _write_pages(d)
+        return
+    _write_details(d, d.photo_section, "photo details",
+                   "a photograph with no details to index (no time, position or description)",
+                   "a photograph: indexed from its photo details")
+
+
+def _write_video(d: _Doc) -> None:
+    _write_details(d, d.video_section, "video details",
+                   "a video whose file could not be read (no QuickTime or MP4 header, no frames)",
+                   "a video: indexed from its video details")
+
+
+def _write_pages(d: _Doc) -> None:
+    """3.2-3.5: page by page down the lanes when the document can be routed, else docling on the whole file (and Apple
+    Vision when docling found no text); a photographed page without any text is indexed from its photo details."""
+    src, ocr = d.src, d.ocr
+    try:
+        if not d.reused_md and d.profile is not None and _wants_routing(d.kind, d.profile, ocr):
+            try:
+                d.how = convert_source_routed(src, d.md_path, d.profile, src_sha=d.sha, ocr=ocr,
+                                              cache_root=Path(d.task["markup_root"]).parent, info=d.info,
+                                              stage_log=d.slog, rel_name=d.rel_name)
+            except (NoTextError, ConversionTimeout):
+                raise
+            except vlm.ReaderError as exc:     # an image file the document reader cannot read: docling does
+                log.info("document reader not used for %s: %s", src.name, exc)
+                d.note, d.info, d.how = f"document reader not used ({str(exc)[:160]}); converted by docling", {}, ""
+            except Exception as exc:  # noqa: BLE001 - routing must never fail a document
+                log.warning("page routing failed for %s (%s); converting the whole document", src.name, describe_error(exc))
+                d.note = f"page routing failed ({describe_error(exc)[:160]}); converted as a whole document"
+                d.info, d.how = {}, ""
+        if not d.how:
+            if not d.note and not d.reused_md:
+                why = _why_not_routed(d.kind, d.profile, ocr)
+                d.note = f"not read page by page: {why}" if why else ""
+            if not d.reused_md:
+                step_event(d.slog, d.rel_name, 0, "docling, whole document" if d.kind != "text" else "copy")
+            try:
+                d.how = convert_source(src, d.md_path, force=d.task["force_md"], src_sha=d.sha, ocr=ocr, info=d.info)
+            except NoTextError as exc:
+                d.how = _rescue_whole(src, d.md_path, d.profile, d.kind, src_sha=d.sha, ocr=ocr, info=d.info,
+                                      failure=str(exc))
+                if not d.how:
+                    why_av = applevision.why_not() if d.kind in ("pdf", "image") else ""
+                    extra = "; ".join(x for x in (d.note, f"Apple Vision not used ({why_av})" if why_av else
+                                                  "Apple Vision found no text either" if d.kind in ("pdf", "image") else "") if x)
+                    raise NoTextError(f"{exc} [{extra}]" if extra else str(exc)) from exc
+                d.note = "; ".join(x for x in (d.note, "docling found no text: pages read by Apple Vision") if x)
+    except NoTextError:                        # a photographed page without text: its camera metadata is what there is
+        if not d.photo_section or d.photograph:
+            raise
+        photo.only(d.md_path, d.photo_section)
+        d.write_sidecar()
+        d.how, d.info = "photo details", {}
+        d.note = "no text in the picture: indexed from its photo details"
+        return
+    if d.photo_section and not d.photograph:
+        photo.attach(d.md_path, d.photo_section)
+
+
+# Each kind's own steps of 3 Convert, in order, and how its Markdown is written (kinds.py lists the stage ids).
+CONVERT: dict[str, tuple[tuple[Callable[[_Doc], None], ...], Callable[[_Doc], None]]] = {
+    "pages": ((_step_profile, _step_photo_details), _write_pages),
+    "photograph": ((_step_photo_details, _step_faces, _step_describe), _write_photograph),
+    "video": ((_step_video_details,), _write_video),
+    "timeline": ((_step_timeline,), _write_pages),
+}
+
+
+def convert_by_kind(d: _Doc) -> None:
+    """Run the document's kind: its steps, then its writer.  A Timeline that was converted is done; one that was not a
+    Timeline continues as a document of pages (its route says so)."""
+    steps, writer = CONVERT.get(d.route) or CONVERT[kinds.PAGES]
+    for step in steps:
+        step(d)
+    if d.route == "timeline" and d.timeline_done:
+        return
+    if d.route == kinds.PAGES and steps is not CONVERT[kinds.PAGES][0]:
+        for step in CONVERT[kinds.PAGES][0]:     # it went on as pages (a .json that is no Timeline)
+            step(d)
+        writer = _write_pages
+    writer(d)
 
 
 def photo_facts(text: str) -> dict[str, Any]:
@@ -682,9 +916,6 @@ def _remember_unchanged(idx_dir: Path, src: Path, st: os.stat_result | None, md_
         write_json_atomic(meta_file, meta)
 
 
-ROUTE_OF_BRANCH = {"photo": "photograph", "video": "video", "timeline": "timeline"}
-
-
 def quick_skip(task: dict[str, Any], roots: SourceRoots, ctx: dict[str, Any]) -> dict[str, Any] | None:
     """The result of an unchanged document, decided from its ``index.meta.json`` and a ``stat`` of the file alone, in the run's
     own process (no checksum, no Markdown read, no conversion process); None when anything needs a closer look: the file's
@@ -713,13 +944,17 @@ def quick_skip(task: dict[str, Any], roots: SourceRoots, ctx: dict[str, Any]) ->
     sha = str(meta["src_sha256"])
     res: dict[str, Any] = {"status": "skipped", "src": str(src), "idx_dir": str(idx_dir), "sha": sha,
                            "understood": meta["understood"], "fast": True,
-                           "route": ROUTE_OF_BRANCH.get(next(iter(branches), "") if len(branches) == 1 else "", "pages")}
+                           "route": kinds.route_of_branches(branches)}
     if branches == {"photo"}:
         facts = meta.get("photo_facts")
         if not isinstance(facts, dict):
             return None
-        if task.get("describe_ready") and not facts.get("described") and sha not in ctx.get("describe_failed", ()):
-            return None                            # its description can be made now
+        if (task.get("describe_ready") and facts.get("described_by") != ctx.get("describe_id")
+                and sha not in ctx.get("describe_failed", ())):
+            if ctx.get("describe_quota", 0) > 0:   # its description can be made now (a run makes PER_RUN at most)
+                ctx["describe_quota"] -= 1
+                return None
+            ctx["describe_deferred"] = ctx.get("describe_deferred", 0) + 1     # the next run takes it
         if task.get("faces_ready"):
             n = (ctx.get("faces") or {}).get(sha)
             if n is None or n != int(facts.get("faces") or 0):
@@ -730,17 +965,22 @@ def quick_skip(task: dict[str, Any], roots: SourceRoots, ctx: dict[str, Any]) ->
     return res
 
 
-def quick_context(paths: Paths, describe_ready: bool, faces_ready: bool) -> dict[str, Any]:
-    """What ``quick_skip`` needs to know once per run."""
-    ctx: dict[str, Any] = {}
+def quick_context(paths: Paths, describe_ready: bool, faces_ready: bool, *, describe_limit: int = 0,
+                  describe_retry: bool = False) -> dict[str, Any]:
+    """What ``quick_skip`` needs to know once per run: the photographs the describe model failed on (tried again only when
+    asked: *describe_retry*), how many photographs this run may describe again (*describe_limit*, 0 = ``describe.PER_RUN``),
+    and the faces the People store knows."""
+    ctx: dict[str, Any] = {"describe_quota": int(describe_limit) if describe_limit > 0 else describe.PER_RUN,
+                           "describe_deferred": 0}
     try:
         if describe_ready:
-            ctx["describe_failed"] = describe.failures(paths, describe.current_id())
+            ctx["describe_id"] = describe.current_id()
+            ctx["describe_failed"] = set() if describe_retry else describe.failures(paths, ctx["describe_id"])
         if faces_ready:
             ctx["faces"] = faces.known_counts(paths)
     except Exception as exc:  # noqa: BLE001 - without it every photograph takes the full path
         log.info("the quick check of unchanged photographs is not available this run: %s", exc)
-        return {"off": True}
+        return {"off": True, "describe_deferred": 0}
     return ctx
 
 
@@ -905,144 +1145,16 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
                 seen = _text_seen(src, sha, cache)
             stage_event(slog, rel_name, "sniff", "done", seconds=round(time.perf_counter() - t_sn, 3), route=route)
 
-        t_conv = time.perf_counter()
-        info: dict[str, Any] = {}
-        route_note = ""
-        how = ""
-        timeline_done = False
-        if route == "timeline" and not reused_md:      # 3.8 Timeline
-            if timeline.convert(src, md_path, get_paths()):
-                md_path.with_name(md_path.name + ".sha256").write_text(
-                    f"{sha}\n{convert_profile(task.get('ocr'))}\n", encoding="utf-8")
-                how = "converted"
-                timeline_done = True
-                route_note = "a Google Maps Timeline: one line per visit and journey, with what the map data says"
-                stage_event(slog, rel_name, "timeline", "done", seconds=round(time.perf_counter() - t_conv, 2))
-            else:
-                route = "pages"                        # it was not one after all: read like any other file
-
-        # 3.1 Profile (pages only): skipped when this document's Markdown *and* trace are current
-        if route == "pages" and not reuse_trace:
-            t_prof = time.perf_counter()
-            profile = profiler.profile_file(src)
-            prof_s = round(time.perf_counter() - t_prof, 2)
-            stage_event(slog, rel_name, "profile", "done", seconds=prof_s, pages=len(profile.get("pages", [])))
-            planned: dict[str, int] = {}
-            for _n, branch, _why in profiler.route_pages(profile) or [(1, router.decide(kind)[0], "")]:
-                planned[branch] = planned.get(branch, 0) + 1
-            plan_event(slog, rel_name, planned)
-            t_conv = time.perf_counter()
-        elif reuse_trace and route == "pages":                   # the stored trace says what the pages are
-            planned = {}
-            for rec in old.get("pages", []):
-                planned[trace.page_kind(rec)] = planned.get(trace.page_kind(rec), 0) + 1
-            plan_event(slog, rel_name, planned)
-        # a photograph or a Timeline has no pages: nothing is planned, and it is never counted as a page
-
-        # 3.6 Photo details (3.7 Locate is part of it: the map lines): a photograph, and a photographed page after its lanes
-        t_ph = time.perf_counter()
-        photograph = route == "photograph" and (not reused_md or fill)    # made now: only its details are indexed
-        photo_section = ""
-        if meta:
-            photo_section = photo.block(src, get_paths(), seen or "") if photograph else photo.block(src, get_paths())
-        if photo_section:
-            loc_s = float(photo.LAST.get("locate_s") or 0.0)
-            stage_event(slog, rel_name, "photo", "done", seconds=round(max(0.0, time.perf_counter() - t_ph - loc_s), 2),
-                        photograph=route == "photograph")
-            if "- Area:" in photo_section or "- Town:" in photo_section:
-                stage_event(slog, rel_name, "locate", "done", seconds=round(loc_s, 3),
-                            nearby="- Nearby:" in photo_section)
-        video_section = ""
-        if route == "video":                           # 3.11 Video details (3.7 Locate is part of it); always made again: a few reads
-            video_section = video.block(src, get_paths(), meta)
-            loc_s = float(photo.LAST.get("locate_s") or 0.0) if "lat" in meta else 0.0
-            stage_event(slog, rel_name, "video", "done", seconds=round(max(0.0, time.perf_counter() - t_ph - loc_s), 3),
-                        position="lat" in meta, time="when" in meta)
-            if "- Area:" in video_section or "- Town:" in video_section:
-                stage_event(slog, rel_name, "locate", "done", seconds=round(loc_s, 3),
-                            nearby="- Nearby:" in video_section)
-        if photograph:                                 # 3.9 Faces: after Locate; its count is a line of the details
-            if faces_seen is not None:                 # looked at a moment ago, as an unchanged photograph
-                n_faces = faces_seen
-            else:
-                n_faces, f_how, f_s = _faces_step(task, src, sha, slog, rel_name)
-            if n_faces is not None:
-                photo_section = photo.insert_extra(photo_section, [f"{faces.LINE} {n_faces}"])
-        if photograph:                                 # 3.10 Describe: after Faces, before Chunk
-            t_de = time.perf_counter()
-            extra, dinfo = describe.for_indexing(get_paths(), src, sha)
-            photo_section = photo.insert_extra(photo_section, extra)
-            if photo_section.strip() and not photo_section.lstrip().startswith(photo.HEADING):
-                photo_section = photo.headed(photo_section, src, seen or "")   # no camera data: what 3.9 and 3.10 found, under a heading
-            stage_event(slog, rel_name, "describe", "done", seconds=round(time.perf_counter() - t_de, 2),
-                        source=dinfo["described"] or "none", why=dinfo["why"], model_s=dinfo["seconds"])
-            if not dinfo["described"] and dinfo["why"]:
-                route_note = f"description missing ({dinfo['why'][:120]}): a later run fills it in"
-        try:
-            if photograph:                 # the photograph's own way: its details are what is indexed, not a failure
-                if not photo_section.strip():
-                    raise NoTextError("a photograph with no details to index (no time, position or description)")
-                photo.only(md_path, photo_section)
-                md_path.with_name(md_path.name + ".sha256").write_text(
-                    f"{sha}\n{convert_profile(task.get('ocr'))}\n", encoding="utf-8")
-                how, info = "photo details", {}
-                route_note = route_note or "a photograph: indexed from its photo details"
-            elif route == "video":         # a video's own way: its details, never docling
-                if not video_section:
-                    raise NoTextError("a video whose file could not be read (no QuickTime or MP4 header, no frames)")
-                photo.only(md_path, video_section)
-                md_path.with_name(md_path.name + ".sha256").write_text(
-                    f"{sha}\n{convert_profile(task.get('ocr'))}\n", encoding="utf-8")
-                how, info = "video details", {}
-                route_note = route_note or "a video: indexed from its video details"
-            elif not reused_md and profile is not None and _wants_routing(kind, profile, task.get("ocr")):
-                try:
-                    how = convert_source_routed(
-                        src, md_path, profile, src_sha=sha, ocr=task.get("ocr"),
-                        cache_root=Path(task["markup_root"]).parent, info=info, stage_log=slog,
-                        rel_name=rel_name)
-                except (NoTextError, ConversionTimeout):
-                    raise
-                except vlm.ReaderError as exc:     # an image file the document reader cannot read: docling does
-                    log.info("document reader not used for %s: %s", src.name, exc)
-                    route_note = f"document reader not used ({str(exc)[:160]}); converted by docling"
-                    info = {}
-                    how = ""
-                except Exception as exc:  # noqa: BLE001 - routing must never fail a document
-                    log.warning("page routing failed for %s (%s); converting the whole document",
-                                src.name, describe_error(exc))
-                    route_note = f"page routing failed ({describe_error(exc)[:160]}); converted as a whole document"
-                    info = {}
-                    how = ""
-            if not how:
-                if not route_note and not reused_md:
-                    route_note = _why_not_routed(kind, profile, task.get("ocr"))
-                    route_note = f"not read page by page: {route_note}" if route_note else ""
-                if not reused_md:
-                    step_event(slog, rel_name, 0, "docling, whole document" if kind != "text" else "copy")
-                try:
-                    how = convert_source(src, md_path, force=task["force_md"], src_sha=sha,
-                                         ocr=task.get("ocr"), info=info)
-                except NoTextError as exc:
-                    how = _rescue_whole(src, md_path, profile, kind, src_sha=sha, ocr=task.get("ocr"),
-                                        info=info, failure=str(exc))
-                    if not how:
-                        why_av = applevision.why_not() if kind in ("pdf", "image") else ""
-                        extra = "; ".join(x for x in (route_note, f"Apple Vision not used ({why_av})" if why_av else
-                                                      "Apple Vision found no text either" if kind in ("pdf", "image") else "") if x)
-                        raise NoTextError(f"{exc} [{extra}]" if extra else str(exc)) from exc
-                    route_note = "; ".join(x for x in (route_note, "docling found no text: pages read by Apple Vision") if x)
-        except NoTextError:                # a photographed page without text: its camera metadata is what there is to index
-            if not photo_section or photograph:
-                raise
-            photo.only(md_path, photo_section)
-            md_path.with_name(md_path.name + ".sha256").write_text(
-                f"{sha}\n{convert_profile(task.get('ocr'))}\n", encoding="utf-8")
-            how, info = "photo details", {}
-            route_note = "no text in the picture: indexed from its photo details"
-        else:
-            if photo_section and not photograph:
-                photo.attach(md_path, photo_section)
+        # 3 Convert by kind (kinds.py): each kind runs its own steps on one record of the document, then the shared tail
+        d = _Doc(task=task, src=src, kind=kind, sha=sha, md_path=md_path, slog=slog, rel_name=rel_name, meta=meta,
+                 seen=seen, reused_md=reused_md, reuse_trace=reuse_trace, old=old, fill=fill, faces_seen=faces_seen,
+                 route=route, t_conv=time.perf_counter())
+        convert_by_kind(d)
+        route, how, info, route_note = d.route, d.how, d.info, d.note
+        profile, prof_s, t_conv = d.profile, d.prof_s, d.t_conv
+        timeline_done, photograph = d.timeline_done, d.photograph
+        described = d.described
+        photo_section, video_section = d.photo_section, d.video_section
         convert_s = round(time.perf_counter() - t_conv, 2)
         stage_event(slog, rel_name, "convert", "done", seconds=convert_s, how=how,
                     profile_s=prof_s)
@@ -1097,13 +1209,10 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
                 note = ("" if how == "converted" else
                         "Markdown made by an earlier run: no per-page read facts")
                 note = route_note or note
-                if timeline_done or photograph or route == "video":
-                    branch, why = (("timeline", "a Google Maps Timeline export: a day-by-day log written by 3.8, places by 3.7")
-                                   if timeline_done else
-                                   ("video", "a video: indexed from its details (3.11, 3.7), not its frames or sound")
-                                   if route == "video" else
-                                   ("photo", "a photograph: indexed from its details (3.6, 3.7), not read by the document reader"))
-                    pages = [trace.page_record(1, branch, why, reader={"tool": branch}, outcome="pass",
+                whole = kinds.BY_KEY["timeline" if timeline_done else "video" if route == "video"
+                                     else "photograph" if photograph else kinds.PAGES]
+                if whole.branch:                       # a file without pages: one record of its own kind
+                    pages = [trace.page_record(1, whole.branch, whole.what, reader={"tool": whole.branch}, outcome="pass",
                                                out={"chars": len(text)}, note=route_note)]
                 elif info.get("page_records"):
                     pages = info["page_records"]
@@ -1144,6 +1253,7 @@ def _prepare_document(task: dict[str, Any]) -> dict[str, Any]:
         if set((conversion or {}).get("branches") or {}) == {"photo"}:
             keep["photo_facts"] = photo_facts(text)
         return {"status": "prepared", "src": str(src), "idx_dir": str(idx_dir), "sha": sha, "keep": keep,
+                **({"described": described} if described else {}),
                 **({"picture": True} if route == "photograph" and task.get("picture_model") else {}),
                 "nodes": len(nodes), "markdown": how, "convert_s": convert_s, "chunk_s": chunk_s,
                 "profile_s": prof_s, "conversion": conversion, "understood": understood,
@@ -1864,6 +1974,8 @@ def run_index(
     frozen: Iterable[str] = (),
     orphans: Iterable[str] = (),
     plan_info: dict[str, Any] | None = None,
+    describe_limit: int = 0,
+    describe_retry: bool = False,
 ) -> dict[str, Any]:
     """Index *sources* (all inside the registered locations of *roots*), then merge every
     collection.
@@ -1981,6 +2093,7 @@ def run_index(
         # Phase 1 — convert + chunk (parallel, no model)
         prepared: list[dict[str, Any]] = []
         picture_todo: list[dict[str, Any]] = []       # photographs whose picture vector is made in 5.2
+        described_now = [0]                           # photographs the describe model wrote a description for (3.10)
         total = len(tasks)
         done = 0
 
@@ -2005,6 +2118,8 @@ def run_index(
                 picture_todo.append(res)
             if res["status"] != "skipped":
                 conv.add(res.get("conversion"), ok=res["status"] == "prepared")
+            if res.get("described") == "model":
+                described_now[0] += 1
             if res["status"] == "prepared":
                 prepared.append(res)
                 # converted and chunked, waiting for the embed phase: shown in the run's
@@ -2066,7 +2181,10 @@ def run_index(
 
         # Unchanged documents first, in this process, from their index.meta.json and a stat of the file (sources rarely
         # change: an update run over a library where nothing changed reads no file and starts no conversion process).
-        ctx = quick_context(paths, describe_ready, faces_ready)
+        ctx = quick_context(paths, describe_ready, faces_ready, describe_limit=describe_limit, describe_retry=describe_retry)
+        if describe_retry:                             # asked to try the photographs the model failed on again
+            for t in tasks:
+                t["describe_retry"] = True
         left: list[dict[str, Any]] = []
         for t in tasks:
             res = None if ctx.get("off") else quick_skip(t, roots, ctx)
@@ -2290,6 +2408,8 @@ def run_index(
         "residue": residue_info,
         "orphans_removed": orphans_removed,
         "known": known, "not_retried": len(known),
+        # 3.10: descriptions written by the model in this run, and photographs left for the next run (PER_RUN a run)
+        "describe": {"made": described_now[0], "deferred": int(ctx.get("describe_deferred") or 0)},
         **(plan_info or {}),
     }
     emit({"phase": "done", "done": 1, "total": 1})

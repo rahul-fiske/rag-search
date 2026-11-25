@@ -25,7 +25,7 @@ import threading
 import time
 from typing import Any
 
-from ... import stages
+from ... import kinds, stages
 from ...jobs import JOB_ID_RE, all_records, events_file, read_record
 from ...paths import Paths
 
@@ -261,7 +261,7 @@ def _feed_understood(st: dict[str, Any], ev: dict[str, Any]) -> None:
         k[n] += int(u.get(n) or 0)
 
 
-TRACK_NAMES = {"pages": "pages", "photograph": "photograph", "video": "video", "timeline": "timeline"}
+TRACK_NAMES = {k: k for k in kinds.TRACKS}
 
 
 def _feed_track(st: dict[str, Any], ev: dict[str, Any], opened: dict[str, Any], ts: float) -> None:

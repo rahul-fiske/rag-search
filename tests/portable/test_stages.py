@@ -91,6 +91,24 @@ class RegistryTests(unittest.TestCase):
         want = {s.key: (s.id, s.name) for s in stages.ALL}
         self.assertEqual(found, want)
 
+    def test_every_kind_takes_steps_of_3_convert_and_has_a_converter_and_the_browser_knows_it(self):
+        from rag_search import kinds
+        from rag_search.core import indexer
+        from rag_search.core.conversion import trace
+
+        for k in kinds.KINDS:
+            for sid in k.steps:
+                self.assertTrue(sid.startswith("3.") and sid in stages.BY_ID, (k.key, sid))
+        self.assertEqual(set(indexer.CONVERT), {k.key for k in kinds.KINDS})
+        self.assertEqual(trace.WHOLE_FILES, {k.branch for k in kinds.KINDS if k.branch})
+        self.assertEqual(kinds.route_of_branches({"photo": 1}), "photograph")
+        self.assertEqual(kinds.route_of_branches({"digital": 3, "raster": 1}), "pages")
+        js = (SRC / "ui" / "static" / "pipeline.js").read_text(encoding="utf-8")
+        block = js.split("const KINDS = {", 1)[1].split("};", 1)[0]
+        found = {key: (b, one, many, tuple(st.split())) for key, b, one, many, st in
+                 re.findall(r"(\w+): \['([\w]*)', '([^']+)', '([^']+)', '([^']+)'\]", block)}
+        self.assertEqual(found, {k.key: (k.branch, k.label, k.plural, k.steps) for k in kinds.KINDS})
+
     def test_describe_is_json_ready(self):
         import json
 

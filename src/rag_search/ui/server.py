@@ -1188,15 +1188,13 @@ class Handler(BaseHTTPRequestHandler):
             limit = int(body.get("limit") or 0)
         except (TypeError, ValueError):
             return self._error(400, "limit must be a whole number")
-        req = {"op": "describe", "model": "describe photos", "collection": str(body.get("collection") or ""),
-               "limit": max(0, limit), "redo": body.get("redo") is True}
-        try:
-            rec = model_tasks.start_detached(paths, req)
-        except model_tasks.TaskBusy as exc:
-            return self._error(409, str(exc))
-        except model_tasks.TaskError as exc:
-            return self._error(400, str(exc))
-        self._json({"ok": True, "task": rec})
+        # 3.10 is a step of the run: an indexing run describes them (up to the limit) and publishes; the next runs take the rest
+        r = api.index_start(paths, mode="new", path=str(body.get("collection") or ""), describe_limit=max(0, limit),
+                            describe_retry=body.get("redo") is True, client="cli")
+        self.app.live.nudge()
+        if not r.get("ok"):
+            return self._error(400, r.get("error", "failed"))
+        self._json(r)
 
     def _maps_post(self, action: str, body: dict[str, Any]) -> None:
         """Map data downloads run as detached tasks like model downloads (`model_tasks` op "maps"); the page polls

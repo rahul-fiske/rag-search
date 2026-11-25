@@ -579,31 +579,6 @@ def run_maps(paths: Paths, task: Task, req: dict[str, Any]) -> dict[str, Any]:
     return {"dataset": "overture", **res}
 
 
-def run_describe(paths: Paths, task: Task, req: dict[str, Any]) -> dict[str, Any]:
-    """Describe the photographs that have no description by the current model and prompt (``core/describe.py``), then
-    start an indexing run so their new text is embedded.  The model runs in this one process."""
-    from . import api
-    from .core import describe
-
-    task.phase("describe", "describing photographs")
-    try:
-        res = describe.describe_all(
-            paths, collection=req.get("collection", ""), limit=int(req.get("limit") or 0), redo=req.get("redo") is True,
-            auto=req.get("auto") is True,
-            progress=lambda done, total, what: task.progress(done=done, total=total, unit="photos", model=what), log=task.log)
-    except RuntimeError as exc:
-        raise TaskError(str(exc)) from exc
-    started = ""
-    if res.get("updated"):
-        try:
-            api.index_start(paths, mode="new")
-            started = "started"
-        except Exception as exc:  # noqa: BLE001 - the marks stay; the next run embeds them
-            task.log(f"could not start indexing ({exc}); the next run embeds them")
-            started = "not started"
-    return {**res, "reindex": started}
-
-
 def run_faces(paths: Paths, task: Task, req: dict[str, Any]) -> dict[str, Any]:
     """Download the face models when they are missing (about 38 MB, each checked against its checksum).  Finding the faces
     is step 3.9 of the next indexing run (``core/faces.py``): nothing is scanned here."""
@@ -619,7 +594,7 @@ def run_faces(paths: Paths, task: Task, req: dict[str, Any]) -> dict[str, Any]:
 
 RUNNERS: dict[str, Callable[[Paths, Task, dict[str, Any]], dict[str, Any]]] = {
     "switch": run_switch, "download": run_download, "verify": run_verify, "runtime": run_runtime, "maps": run_maps,
-    "describe": run_describe, "faces": run_faces}
+    "faces": run_faces}
 
 
 def run(paths: Paths, request: dict[str, Any], echo: Callable[[str], None] | None = None,

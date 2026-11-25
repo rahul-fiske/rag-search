@@ -20,8 +20,9 @@ GB is held by one process, the run's own: 3.0 Sniff has sorted the files by kind
 converted one after another there (``indexer.by_kind``), and the model is released before the embedder loads.  A machine
 short of memory, or without the model, leaves the description missing, a fact like any other: the photograph is indexed with
 what it has, and a later run that can describe it converts it again (``indexer._fills_description``).
-``rag-search photos describe`` and the pass that follows a run (``IndexerDaemon._auto_describe``) also describe photographs
-described by another model or prompt.  Each result is also kept in ``<workspace>/describe_cache.sqlite`` under the photograph's checksum, the model and
+A photograph described by another model or prompt is described again by the next runs, at most ``PER_RUN`` a run (the rest
+wait: the run publishes, and the indexer daemon starts another while some are left); ``rag-search photos describe`` and the
+Models tab start such a run.  Each result is also kept in ``<workspace>/describe_cache.sqlite`` under the photograph's checksum, the model and
 the prompt version, so converting the photograph again (a full rebuild) puts the description back without running the model,
 and a map refresh carries it over.  A photograph counts as one when its Markdown holds little text beyond the details
 section (a photographed page is read, not described).
@@ -306,21 +307,6 @@ def pending_count(paths: Paths, collection: str = "") -> int:
     return len(classify(paths, collection)["pending"])
 
 
-def wanted_automatically(paths: Paths) -> str:
-    """"" when the automatic step has something to do now, else why not (the switch is off, this machine cannot, the model is
-    not downloaded, nothing is pending)."""
-    if not models.describe_auto():
-        return "the automatic step is switched off"
-    why = available()
-    if why:
-        return why
-    if not models.cache_state(models.describe_selection()[0])["cached"]:
-        return f"the model {models.describe_selection()[0]} is not downloaded"
-    if not pending_count(paths):
-        return "every photograph is described"
-    return ""
-
-
 def status(paths: Paths, collection: str = "") -> dict[str, Any]:
     """What the Models tab and `rag-search photos` show."""
     model, source = models.describe_selection()
@@ -341,6 +327,7 @@ def status(paths: Paths, collection: str = "") -> dict[str, Any]:
             "pending": len(groups["pending"]), "unavailable": available()}
 
 
+PER_RUN = 500                        # photographs a run describes again at most (about 20 minutes with the 8B model)
 _SHARED: Any = None                  # this process's reader of the describe model (tests put a stand-in here)
 
 
@@ -378,7 +365,13 @@ def close_shared() -> None:
         _SHARED = None
 
 
-def for_indexing(paths: Paths, src: Path, sha: str) -> tuple[list[str], dict[str, Any]]:
+def lines_in(section: str) -> list[str]:
+    """The description lines a Photo details section holds (by whichever model), without their "- " (``photo.set_extra``'s
+    form): kept when a photograph is converted again and no new description can be made."""
+    return [ln[2:] for ln in section.splitlines() if ln.startswith("- ") and any(ln[2:].startswith(k) for k in KEYS)]
+
+
+def for_indexing(paths: Paths, src: Path, sha: str, *, retry: bool = False) -> tuple[list[str], dict[str, Any]]:
     """The lines a photograph gets while it is converted, after 3.9 Faces: its description, from
     the cache or from the model (loaded once per process).  Returns (lines, info): ``info["described"]`` is ``model``,
     ``cache`` or ``""``, ``info["why"]`` says why a description is missing (memory, model, a photograph the model could not
@@ -398,7 +391,7 @@ def for_indexing(paths: Paths, src: Path, sha: str) -> tuple[list[str], dict[str
         rec = cached(paths, sha, made_by)
         if rec is not None:
             info["described"] = "cache"
-        elif sha in failures(paths, made_by):
+        elif sha in failures(paths, made_by) and not retry:
             info["why"] = "the model could not describe this photograph before"
         else:
             info["why"] = inline_ready()
@@ -408,6 +401,7 @@ def for_indexing(paths: Paths, src: Path, sha: str) -> tuple[list[str], dict[str
                     rec = describe_image(shared_reader(), image)
                     if rec["description"]:
                         remember(paths, sha, made_by, rec)
+                        forget_failure(paths, sha, made_by)
                         info["described"] = "model"
                     else:
                         remember_failure(paths, sha, made_by, "the model wrote no description")
@@ -442,93 +436,3 @@ def describe_image(reader: Any, image: Path) -> dict[str, Any]:
     reader.ensure_started()
     res = reader.worker.read(image, PROMPT, timeout=vlm.page_timeout(), max_tokens=MAX_TOKENS)
     return parse(res.get("md", ""))
-
-
-def describe_all(paths: Paths, *, collection: str = "", limit: int = 0, redo: bool = False, auto: bool = False,
-                 progress: Callable[[int, int, str], None] | None = None, log: Callable[[str], None] | None = None,
-                 reader: Any = None) -> dict[str, Any]:
-    """Describe the photographs that have no description by the current model and prompt (all of them with *redo*; at
-    most *limit*).  A photograph described before (same checksum, model and prompt) is taken from the cache.  Each Markdown
-    file gets its lines and its index entry is marked out of date, so the next indexing run embeds it again; the picture
-    is not read again there.  With *auto* (the step that follows an indexing run) photographs the model could not describe
-    are left alone, and a machine that is short of memory is no failure: the photographs wait for the next run
-    (``deferred`` says why).  *reader* is for tests."""
-    say = log or (lambda _m: None)
-    if not reader:
-        why = available()
-        if why:
-            raise RuntimeError(why)
-    model, need = models.describe_choice()
-    made_by = current_id(model)
-    bad = failures(paths, made_by) if auto else set()
-    todo = []
-    for md in photographs(paths, collection):
-        text = md.read_text(encoding="utf-8", errors="replace")
-        if (redo or described_by(section_of(text)[0]) != made_by) and source_sha(md) not in bad:
-            todo.append(md)
-    if limit:
-        todo = todo[:limit]
-    res = {"model": made_by, "candidates": len(todo), "described": 0, "from_cache": 0, "skipped": 0, "faces_only": 0,
-           "updated": 0}
-    if not todo:
-        return res
-    own = None
-    if reader is None:
-        from .conversion import vlm
-
-        own = reader = vlm.VlmReader(model, style="instruct", need_gb=need)
-        if auto:
-            try:
-                own.ensure_started()                 # loads the model now: a machine short of memory defers, it does not fail
-            except vlm.ReaderUnavailable as exc:
-                res["deferred"] = str(exc)
-                say(f"not now: {exc}; the photographs wait for the next run")
-                own.close()
-                return res
-    tmp = Path(tempfile.mkdtemp(prefix="rag-describe-"))
-    touched: list[Path] = []
-    t0 = time.monotonic()
-    try:
-        for i, md in enumerate(todo, 1):
-            if progress:
-                progress(i - 1, len(todo), md.name)
-            src = source_of(paths, md)
-            if src is None:
-                res["skipped"] += 1
-                say(f"{md.name}: the source photograph is not where the index says; skipped")
-                continue
-            sha = source_sha(md)
-            rec = cached(paths, sha, made_by)
-            image = render(src, tmp / "p.png")
-            if rec is None:
-                rec = describe_image(reader, image)
-                if not rec["description"]:
-                    res["skipped"] += 1
-                    remember_failure(paths, sha, made_by, "the model wrote no description")
-                    say(f"{md.name}: the model wrote no description; skipped (not tried again by the automatic step)")
-                    continue
-                remember(paths, sha, made_by, rec)
-                forget_failure(paths, sha, made_by)
-                res["described"] += 1
-            else:
-                res["from_cache"] += 1
-            if photo.set_extra(md, lines(rec, made_by)):
-                touched.append(md)
-            if i % 25 == 0:
-                say(f"{i}/{len(todo)} photographs, {(time.monotonic() - t0) / i:.1f} s each")
-    finally:
-        if own is not None:
-            own.close()
-        import shutil
-
-        shutil.rmtree(tmp, ignore_errors=True)
-    from ..paths import META_FILE
-
-    for md in touched:
-        rel = md.relative_to(paths.markup).with_suffix("")
-        with contextlib.suppress(OSError):
-            os.unlink(paths.index / rel / META_FILE)
-    res["updated"] = len(touched)
-    if progress:
-        progress(len(todo), len(todo), "done")
-    return res

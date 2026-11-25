@@ -1247,20 +1247,21 @@ def _cmd_photos(a: argparse.Namespace) -> int:
             _err("photos auto on|off")
             return EXIT_USAGE
         models.set_describe_auto(p, a.value == "on")
-        print(f"photographs are {'now described while they are indexed, and a pass after a run catches up the rest' if a.value == 'on' else 'no longer described automatically'}",
+        print(f"photographs are {'now described while they are indexed (3.10), and later runs catch up the rest' if a.value == 'on' else 'no longer described automatically'}",
               file=sys.stderr)
         return EXIT_OK
-    if a.action == "describe":
-        req = {"op": "describe", "model": "describe photos", "collection": a.collection, "limit": a.limit, "redo": a.redo}
-        try:
-            rec = model_tasks.run(p, req, echo=lambda m: print(m, file=sys.stderr))
-        except model_tasks.TaskBusy as exc:
-            _err(str(exc))
-            return EXIT_FAIL
-        if rec.get("status") != "succeeded":
-            _err(rec.get("error") or rec.get("status", "failed"))
-            return EXIT_FAIL
-        _json(rec.get("result") or {})
+    if a.action == "describe":                 # 3.10 is a step of the run: start one that describes (up to --limit)
+        r = api.index_start(p, mode="new", path=a.collection, describe_limit=a.limit, describe_retry=a.redo, client=a.client)
+        if not r.get("ok"):
+            return _fail(r)
+        if a.json:
+            _json(r)
+        else:
+            job = r.get("job") or {}
+            print(("an indexing run is already active: " if r.get("already_running") else "indexing run started: ")
+                  + f"{job.get('id', '')} (it describes the photographs not described by the current model, "
+                  f"{a.limit or describe.PER_RUN} at most, then publishes; the next runs take the rest; "
+                  "follow it with `rag-search index status -f`)")
         return EXIT_OK
     st = describe.status(p, a.collection)
     if a.json:
@@ -3125,7 +3126,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("value", nargs="?", default="", help="model: the model id; auto: on or off")
     p.add_argument("--collection", default="", help="only this collection")
     p.add_argument("--limit", type=int, default=0, help="describe: at most this many photographs (a trial)")
-    p.add_argument("--redo", action="store_true", help="describe: also the ones already described by the current model")
+    p.add_argument("--redo", action="store_true", help="describe: also try again the photographs the model could not describe")
 
     p = add("coverage", "what each photograph has: descriptions, faces, picture vectors, places -- and what is missing", _cmd_coverage,
             description="For every collection, how many photographs have each step done (and should), and how many have it from an "

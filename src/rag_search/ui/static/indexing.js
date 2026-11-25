@@ -628,8 +628,8 @@
   function byKind(conv) {
     if (!conv) return '';
     const w = conv.whole || {}, s = (n, one, many) => `${num(n)} ${n === 1 ? one : many}`;
-    const parts = [conv.docs ? s(conv.docs, 'document', 'documents') + (conv.pages ? ` (${s(conv.pages, 'page', 'pages')})` : '') : '',
-      w.photo ? s(w.photo, 'photograph', 'photographs') : '', w.video ? s(w.video, 'video', 'videos') : '', w.timeline ? s(w.timeline, 'Timeline', 'Timelines') : ''].filter(Boolean);
+    const parts = [conv.docs ? PL.kindCount('pages', conv.docs) + (conv.pages ? ` (${s(conv.pages, 'page', 'pages')})` : '') : '',
+      ...Object.entries(w).filter(([, n]) => n).map(([branch, n]) => PL.kindCount(branch, n))].filter(Boolean);
     return parts.length ? parts.join(' · ') + ': ' : '';
   }
 

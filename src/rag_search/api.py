@@ -242,11 +242,15 @@ def list_documents(paths: Paths, collection: str, *, prefix: str = "", glob: str
 # ── indexing side ────────────────────────────────────────────────────────────
 
 def index_start(paths: Paths, *, mode: str = "new", path: str = "", rebuild: bool = False,
-                force_md: bool = False, restart: bool = False,
+                force_md: bool = False, restart: bool = False, describe_limit: int = 0, describe_retry: bool = False,
                 client: str | None = None) -> dict[str, Any]:
+    """Start an indexing run.  *describe_limit* / *describe_retry*: 3.10 Describe in this run (how many photographs it may
+    describe again, 0 = the default; whether photographs the model failed on are tried again) -- what `rag-search photos
+    describe` and the Models tab start."""
+    extra = {k: v for k, v in (("describe_limit", int(describe_limit or 0)), ("describe_retry", bool(describe_retry))) if v}
     return client_mod.request_sync(paths, "indexer", "start", client=_client(client), wait_s=30,
                                    request_timeout=120, mode=mode, path=path, rebuild=rebuild,
-                                   force_md=force_md, restart=restart)
+                                   force_md=force_md, restart=restart, **extra)
 
 
 def index_status(paths: Paths, *, job_id: str = "", history: int = 0, docs: int = 50,
@@ -792,6 +796,9 @@ def pipeline(paths: Paths) -> dict[str, Any]:
         errors += [e for e in resolved[kind]["errors"] if e not in errors]
     out["errors"] = errors
     out["overrides"] = {k: out["daemons"][k]["env_overrides"] for k in KINDS}
+    from . import kinds
+
+    out["kinds"] = kinds.describe()
     return out
 
 

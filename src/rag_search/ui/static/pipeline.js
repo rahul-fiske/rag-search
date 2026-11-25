@@ -13,6 +13,15 @@ const STAGE_KEYS = {
   rerank: ['S5', 'Rerank'], top_k: ['S6', 'Top k'],
 };
 
+/* The kinds of file a run tells apart (rag_search/kinds.py; tests/test_stages.py keeps the two equal): key ->
+   [page branch ('' for pages), one, many, its own steps of 3 Convert]. */
+const KINDS = {
+  pages: ['', 'document', 'documents', '3.1 3.2 3.3 3.4 3.5'],
+  photograph: ['photo', 'photograph', 'photographs', '3.6 3.7 3.9 3.10'],
+  video: ['video', 'video', 'videos', '3.11 3.7'],
+  timeline: ['timeline', 'Timeline', 'Timelines', '3.8 3.7'],
+};
+
 const PL = (function () {
   const SCOPE = { run: 'once per run', document: 'per document', collection: 'per collection', query: 'per query' };
   const APPLIES = { immediate: 'applies at once', 'next-run': 'next indexing run', restart: 'after a daemon restart',
@@ -96,5 +105,8 @@ const PL = (function () {
     return ((data && data.stages) || []).filter(s => (pipeline === 'search') === s.id.startsWith('S'));
   }
 
-  return { id, name, label, hw, load, last, valueText, sourceChip, appliesText, settingRow, stageHead, stageBlock, stages, SCOPE };
+  /* a kind by its page branch ('photo') or its key ('photograph'); the count in words */
+  const kindOf = k => KINDS[k] ? k : Object.keys(KINDS).find(x => KINDS[x][0] === k) || '';
+  const kindCount = (k, n) => { const e = KINDS[kindOf(k)]; return e ? `${num(n)} ${n === 1 ? e[1] : e[2]}` : `${num(n)} ${k}`; };
+  return { id, name, label, hw, load, last, valueText, sourceChip, appliesText, settingRow, stageHead, stageBlock, stages, SCOPE, kindOf, kindCount, kinds: KINDS };
 })();

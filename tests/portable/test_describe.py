@@ -101,71 +101,6 @@ class DescribeRunTests(IndexedPhotoTests):
             self.run_index()
         return next(self.paths.markup.rglob("p.md"))
 
-    def test_describe_writes_the_lines_caches_them_and_never_repeats(self):
-        md = self.photo_md()
-        st = describe.status(self.paths)
-        self.assertEqual((st["photographs"], st["described"], st["pending"]), (1, 0, 1))
-        model = StandIn()
-        res = describe.describe_all(self.paths, reader=model)
-        self.assertEqual((res["candidates"], res["described"], res["updated"]), (1, 1, 1))
-        text = md.read_text(encoding="utf-8")
-        self.assertIn("- Looks like (model-written): A tiger walks", text)
-        self.assertIn(f"- Described by: {describe.current_id()}", text)
-        self.assertIn("Text in the picture: EXIT 4", text)
-        self.assertFalse((self.paths.index / "c" / "p" / "index.meta.json").exists())   # marked for embedding
-        self.assertEqual(describe.status(self.paths)["described"], 1)
-        again = describe.describe_all(self.paths, reader=model)
-        self.assertEqual((again["candidates"], model.calls), (0, 1))                    # nothing to do, no question asked
-        self.run_index()                                                                # the next run embeds it
-        nodes = json.loads(next(self.paths.index.rglob("p/nodes.json")).read_text())["nodes"]
-        self.assertTrue(any("A tiger walks" in n["text"] for n in nodes))
-
-    def test_a_map_refresh_keeps_the_description_and_does_not_ask_the_model(self):
-        md = self.photo_md()
-        model = StandIn()
-        describe.describe_all(self.paths, reader=model)
-        self.run_index()
-        maps.write_stamp(self.paths, md, md.read_text(encoding="utf-8"))
-        maps.download_overture(self.paths, ["19.05,78.30"], release="r1", reader=fake_reader())
-        res = maps.refresh(self.paths)
-        self.assertEqual((res["refreshed"], res["in_place"]), (1, 1))
-        with mock.patch.object(photo, "visible_text", side_effect=AssertionError("the picture must not be read")):
-            self.run_index()
-        text = md.read_text(encoding="utf-8")
-        self.assertIn("- Nearby: Hotel Sai Krishna", text)                              # the new place lines
-        self.assertIn("- Looks like (model-written): A tiger walks", text)              # the description, untouched
-        self.assertEqual(model.calls, 1)
-        self.assertEqual(describe.describe_all(self.paths, reader=model)["candidates"], 0)
-
-    def test_a_rebuild_puts_the_cached_description_back_without_the_model(self):
-        md = self.photo_md()
-        model = StandIn()
-        describe.describe_all(self.paths, reader=model)
-        srcs = indexer.scan_sources(self.sdir, indexer.exclude_dirs(self.paths))
-        md.unlink()
-        with mock.patch.object(photo, "visible_text", return_value="EXIT 4"):
-            indexer.run_index(self.paths, srcs, self.roots(), jobs=1, embedder=__import__("tests.helpers", fromlist=["x"]).FakeEmbedder(),
-                              progress=lambda e: None, rebuild=True, force_md=True)
-        text = next(self.paths.markup.rglob("p.md")).read_text(encoding="utf-8")
-        self.assertIn("- Looks like (model-written): A tiger walks", text)
-        self.assertEqual(model.calls, 1)
-
-    def test_a_new_model_or_prompt_describes_again_and_redo_forces_it(self):
-        self.photo_md()
-        model = StandIn()
-        describe.describe_all(self.paths, reader=model)
-        models.set_describe_model(self.paths, models.DESCRIBE_MODELS[1])
-        st = describe.status(self.paths)
-        self.assertEqual((st["described"], st["described_by_another_model"], st["pending"]), (0, 1, 1))
-        res = describe.describe_all(self.paths, reader=model)
-        self.assertEqual((res["candidates"], res["described"]), (1, 1))
-        self.assertEqual(model.calls, 2)
-        text = next(self.paths.markup.rglob("p.md")).read_text(encoding="utf-8")
-        self.assertEqual(text.count("Described by:"), 1)
-        self.assertIn("4B", text)
-        self.assertEqual(describe.describe_all(self.paths, reader=model, redo=True)["described"], 0)   # same id: the cache answers
-        self.assertEqual(model.calls, 2)
-
     def test_a_photographed_page_is_not_described(self):
         (self.sdir / "c").mkdir()
         jpeg(self.sdir / "c" / "page.jpg")
@@ -177,19 +112,7 @@ class DescribeRunTests(IndexedPhotoTests):
                 mock.patch("rag_search.core.docling_convert.convert_file", convert):
             self.run_index()
         self.assertEqual(describe.status(self.paths)["photographs"], 0)
-        self.assertEqual(describe.describe_all(self.paths, reader=StandIn())["candidates"], 0)
 
-    def test_a_model_that_writes_nothing_leaves_the_photograph_as_it_was(self):
-        md = self.photo_md()
-        before = md.read_text(encoding="utf-8")
-        res = describe.describe_all(self.paths, reader=StandIn(reply=""))
-        self.assertEqual((res["described"], res["skipped"]), (0, 1))
-        self.assertEqual(md.read_text(encoding="utf-8"), before)
-
-    def test_limit_and_collection(self):
-        self.photo_md()
-        self.assertEqual(describe.describe_all(self.paths, reader=StandIn(), collection="nowhere")["candidates"], 0)
-        self.assertEqual(describe.describe_all(self.paths, reader=StandIn(), collection="c", limit=1)["described"], 1)
 
 
 class RouteTests(IndexedPhotoTests):
@@ -257,78 +180,6 @@ class AutomaticTests(IndexedPhotoTests):
         models.set_describe_auto(self.paths, False)
         with mock.patch.dict(os.environ, {"RAG_SEARCH_DESCRIBE_AUTO": "on"}):
             self.assertTrue(models.describe_auto())
-
-    def test_wanted_automatically_says_why_not(self):
-        self.photo_md()
-        with switch_as_left(), mock.patch.object(describe, "available", return_value=""), \
-                mock.patch.object(models, "cache_state", return_value={"cached": True}):
-            self.assertEqual(describe.wanted_automatically(self.paths), "")
-            models.set_describe_auto(self.paths, False)
-            self.assertIn("switched off", describe.wanted_automatically(self.paths))
-            models.set_describe_auto(self.paths, True)
-            describe.describe_all(self.paths, reader=StandIn())
-            self.assertIn("every photograph is described", describe.wanted_automatically(self.paths))
-        with switch_as_left(), mock.patch.object(describe, "available", return_value="needs an Apple Silicon Mac"):
-            self.assertIn("Apple Silicon", describe.wanted_automatically(self.paths))
-        with switch_as_left(), mock.patch.object(describe, "available", return_value=""), \
-                mock.patch.object(models, "cache_state", return_value={"cached": False}):
-            self.assertIn("not downloaded", describe.wanted_automatically(self.paths))
-
-    def test_a_machine_short_of_memory_defers_instead_of_failing(self):
-        from rag_search.core.conversion import vlm
-        md = self.photo_md()
-        before = md.read_text(encoding="utf-8")
-
-        class NoRoom:
-            def __init__(self, *a, **k): pass
-            def ensure_started(self): raise vlm.ReaderUnavailable("only 3.0 GB of memory is free")
-            def close(self): pass
-        with mock.patch.object(describe, "available", return_value=""), mock.patch.object(vlm, "VlmReader", NoRoom):
-            res = describe.describe_all(self.paths, auto=True)
-            self.assertIn("3.0 GB", res["deferred"])
-            self.assertEqual((res["described"], res["updated"]), (0, 0))
-            self.assertEqual(md.read_text(encoding="utf-8"), before)
-            self.assertEqual(describe.pending_count(self.paths), 1)                    # it waits for the next run
-            with self.assertRaises(RuntimeError):                                     # started by hand it says so
-                describe.describe_all(self.paths)
-
-    def test_a_photograph_the_model_cannot_describe_is_not_retried_by_the_automatic_step(self):
-        md = self.photo_md()
-        silent = StandIn(reply="")
-        res = describe.describe_all(self.paths, reader=silent, auto=True)
-        self.assertEqual((res["described"], res["skipped"], res["updated"]), (0, 1, 0))
-        self.assertEqual((silent.calls, describe.pending_count(self.paths)), (1, 0))        # nothing pending: no loop
-        again = describe.describe_all(self.paths, reader=silent, auto=True)
-        self.assertEqual((again["candidates"], silent.calls), (0, 1))
-        st = describe.status(self.paths)
-        self.assertEqual((st["failed"], st["pending"], st["photographs"]), (1, 0, 1))
-        manual = describe.describe_all(self.paths, reader=StandIn())                        # by hand it tries again
-        self.assertEqual(manual["described"], 1)
-        self.assertEqual(describe.status(self.paths)["failed"], 0)
-        self.assertIn("Looks like (model-written)", md.read_text(encoding="utf-8"))
-
-    def test_the_daemon_starts_the_describe_task_after_a_run_only_when_there_is_something_to_do(self):
-        from rag_search import model_tasks
-        from rag_search.core.indexer_daemon import IndexerDaemon
-        self.photo_md()
-        rec = {}
-        fake = mock.Mock(paths=self.paths, _update=lambda r, **kw: r.update(kw))
-        with mock.patch.object(describe, "wanted_automatically", return_value=""), \
-                mock.patch.object(model_tasks, "start_detached") as start:
-            IndexerDaemon._auto_describe(fake, rec)
-            start.assert_called_once_with(self.paths, {"op": "describe", "model": "describe photos", "auto": True})
-            self.assertEqual(rec["describe"], {"started": True})
-        rec = {}
-        with mock.patch.object(describe, "wanted_automatically", return_value="the automatic step is switched off"), \
-                mock.patch.object(model_tasks, "start_detached") as start:
-            IndexerDaemon._auto_describe(fake, rec)
-            start.assert_not_called()
-            self.assertEqual(rec["describe"]["started"], False)
-        rec = {}
-        with mock.patch.object(describe, "wanted_automatically", return_value=""), \
-                mock.patch.object(model_tasks, "start_detached", side_effect=model_tasks.TaskBusy("busy")):
-            IndexerDaemon._auto_describe(fake, rec)                                       # never fails a finished run
-            self.assertEqual(rec["describe"]["started"], False)
 
     def test_route_and_command(self):
         from tests.portable.test_cli_api import run
@@ -480,3 +331,91 @@ class InlineDescribeTests(IndexedPhotoTests):
         names = [n for n, _ in seen]
         self.assertEqual(names[-1], "p.jpg")                                           # the image comes last
         self.assertEqual(seen[-1][1], __import__("os").getpid())                       # and in the run's own process
+
+
+class DescribeIsAStepOfTheRunTests(InlineDescribeTests):
+    """3.10 is a step of the run and nothing else: a new model or prompt is caught up by the next runs, PER_RUN a run, the
+    rest wait (and the daemon starts the next run); a photograph the model failed on is tried again only when asked."""
+
+    def two(self):
+        (self.sdir / "c").mkdir(exist_ok=True)
+        jpeg(self.sdir / "c" / "p.jpg")
+        jpeg(self.sdir / "c" / "q.jpg", when="2024:03:15 09:00:00")          # another photograph (another checksum)
+
+    def test_a_new_model_or_prompt_is_described_again_by_the_next_runs_within_their_quota(self):
+        self.two()
+        self.index()
+        self.assertEqual(self.model.calls, 2)
+        models.set_describe_model(self.paths, models.DESCRIBE_MODELS[1])
+        describe._SHARED = self.model
+        s = self.index(describe_limit=1)
+        self.assertEqual((self.model.calls, s["describe"]), (3, {"made": 1, "deferred": 1}))
+        describe._SHARED = self.model
+        s = self.index(describe_limit=1)
+        self.assertEqual((self.model.calls, s["describe"]), (4, {"made": 1, "deferred": 0}))
+        for md in self.paths.markup.rglob("*.md"):
+            text = md.read_text(encoding="utf-8")
+            self.assertIn("4B", text)
+            self.assertEqual(text.count("Described by:"), 1)
+        describe._SHARED = self.model
+        self.assertEqual(self.index()["describe"], {"made": 0, "deferred": 0})          # all current: nothing asked
+        self.assertEqual(self.model.calls, 4)
+
+    def test_a_photograph_left_undescribed_keeps_its_earlier_description(self):
+        from rag_search.core.conversion import vlm
+
+        self.two()
+        self.index()
+        models.set_describe_model(self.paths, models.DESCRIBE_MODELS[1])
+
+        class NoRoom(StandIn):
+            def ensure_started(self):
+                raise vlm.ReaderUnavailable("only 3.0 GB of memory is free")
+        describe._SHARED = NoRoom()
+        s = self.index()
+        self.assertEqual(s["describe"]["made"], 0)
+        for md in self.paths.markup.rglob("*.md"):
+            self.assertIn("A tiger walks", md.read_text(encoding="utf-8"))           # the 8B's description stays
+
+    def test_a_failure_is_tried_again_only_when_asked(self):
+        describe._SHARED = StandIn(reply="")
+        self.index()
+        self.assertEqual(describe.status(self.paths)["failed"], 1)
+        again = StandIn()
+        describe._SHARED = again
+        self.index()
+        self.assertEqual(again.calls, 0)                                               # not by itself
+        describe._SHARED = again
+        self.index(describe_retry=True)
+        self.assertEqual(again.calls, 1)
+        self.assertEqual((describe.status(self.paths)["failed"], describe.status(self.paths)["described"]), (0, 1))
+
+    def test_the_daemon_starts_the_next_run_while_photographs_are_left_and_progress_is_made(self):
+        from rag_search.core.indexer_daemon import IndexerDaemon
+
+        fake = mock.Mock(paths=self.paths, _update=lambda r, **kw: r.update(kw))
+        rec = {"spec": {"path": "c", "describe_limit": 5}, "summary": {"describe": {"made": 5, "deferred": 7}}}
+        with switch_as_left():
+            self.assertEqual(IndexerDaemon._describe_next(fake, rec), {"mode": "new", "path": "c", "describe_limit": 5})
+            self.assertEqual(rec["describe"], {"started": True, "left": 7})
+            rec = {"summary": {"describe": {"made": 0, "deferred": 7}}}
+            self.assertIsNone(IndexerDaemon._describe_next(fake, rec))                  # a model that cannot run never loops
+            self.assertIn("could be described", rec["describe"]["why"])
+            self.assertIsNone(IndexerDaemon._describe_next(fake, {"summary": {"describe": {"made": 3, "deferred": 0}}}))
+        rec = {"summary": {"describe": {"made": 2, "deferred": 1}}}
+        self.assertIsNone(IndexerDaemon._describe_next(fake, rec))                      # the switch is off in tests
+        self.assertIn("switched off", rec["describe"]["why"])
+
+    def test_the_dashboard_and_the_command_start_an_indexing_run(self):
+        from rag_search import api
+        from tests.portable.test_cli_api import run
+
+        with mock.patch.object(api, "index_start", return_value={"ok": True, "started": True, "job": {"id": "j1"}}) as start:
+            dash = Dash(self.paths)
+            try:
+                status, js, _, _ = dash.req("POST", "/api/photos/describe", {"limit": 10, "collection": "c", "redo": True})
+            finally:
+                dash.close()
+            self.assertEqual((status, js["job"]["id"]), (200, "j1"))
+            kw = start.call_args.kwargs
+            self.assertEqual((kw["path"], kw["describe_limit"], kw["describe_retry"]), ("c", 10, True))

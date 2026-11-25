@@ -18,7 +18,7 @@
     return { coll: parts[0], path: parts.slice(1).join('/') };
   }
   const parentOf = p => p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
-  const KIND = { photo: 'photograph', video: 'video', timeline: 'Timeline', pages: 'document' };
+  const KIND = new Proxy({}, { get: (_, b) => (PL.kinds[PL.kindOf(String(b))] || [])[1] || String(b) });   // a page branch in words (kinds.py)
   const when = t => t ? stamp(t) : '–';
 
   async function loadCollections() {

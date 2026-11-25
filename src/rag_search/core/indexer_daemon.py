@@ -244,7 +244,10 @@ class IndexerDaemon(DaemonBase):
                 # Read fresh here (job start), not at daemon boot: a config change is picked up
                 # by the very next run, no daemon restart.
                 "chunk_size": int(req.get("chunk_size") or icfg.get("chunk_size") or 0),
-                "chunk_overlap": int(req.get("chunk_overlap") or icfg.get("chunk_overlap") or 0)}, ""
+                "chunk_overlap": int(req.get("chunk_overlap") or icfg.get("chunk_overlap") or 0),
+                # 3.10: photographs this run may describe again (0 = describe.PER_RUN), and the ones the model failed on
+                "describe_limit": max(0, int(req.get("describe_limit") or 0)),
+                "describe_retry": bool(req.get("describe_retry"))}, ""
 
     def start(self, req: dict[str, Any]) -> dict[str, Any]:
         spec, err = self._validate_spec(req)
@@ -399,6 +402,7 @@ class IndexerDaemon(DaemonBase):
                             f": {err}" if err else "")
         except Exception:  # noqa: BLE001 - logging must never break bookkeeping
             pass
+        follow_up: dict[str, Any] | None = None
         with self.lock:
             cancelled = self.cancel_flag
             final_status = rec.get("_final_status", "cancelled")
@@ -411,7 +415,7 @@ class IndexerDaemon(DaemonBase):
                          finished_at=now(), progress={"phase": "done"})
             if self.cfgs.get()["indexer"].get("auto_publish", True):
                 self._auto_publish(rec)
-            self._auto_describe(rec)
+            follow_up = self._describe_next(rec)
         else:
             why = err or ("another indexing run holds the index lock (started outside the "
                           "daemon?)" if rc == EXIT_BUSY else
@@ -424,6 +428,10 @@ class IndexerDaemon(DaemonBase):
             self.proc = None
             self.touch()
         self._gc_jobs()
+        if follow_up is not None and not self.stop.is_set():
+            log.info("run %s left %s photograph(s) to describe: starting the next run", rec["id"],
+                     (rec.get("describe") or {}).get("left"))
+            self.start(follow_up)
 
     def _auto_publish(self, rec: dict[str, Any]) -> None:
         t0 = time.time()
@@ -432,22 +440,28 @@ class IndexerDaemon(DaemonBase):
         self._update(rec, publish=pub.get("publish"), search_reload=pub.get("search_reload"),
                      publish_s=round(time.time() - t0, 1), progress={"phase": "done"})
 
-    def _auto_describe(self, rec: dict[str, Any]) -> None:
-        """After a run: describe the photographs that have no description by the current model (``core/describe.py``), in the
-        background, in one process (a ``model_tasks`` task), so the run itself is never held up by it.  Nothing is started when
-        the switch is off, the machine cannot, the model is not downloaded, or nothing is pending."""
+    def _describe_next(self, rec: dict[str, Any]) -> dict[str, Any] | None:
+        """3.10 after a run: a run describes ``describe.PER_RUN`` photographs at most and publishes; while photographs are
+        left (and this run made progress, so a model that cannot run never loops) another run is started, which skips
+        everything else from its record.  Returns that run's request, or None."""
+        summ = rec.get("summary") or {}
+        dsc = summ.get("describe") or {}
+        if not dsc.get("deferred"):
+            return None
         try:
-            from .. import model_tasks
-            from . import describe
+            from .. import models
 
-            why = describe.wanted_automatically(self.paths)
-            if why:
-                self._update(rec, describe={"started": False, "why": why})
-                return
-            model_tasks.start_detached(self.paths, {"op": "describe", "model": "describe photos", "auto": True})
-            self._update(rec, describe={"started": True})
-        except Exception as exc:  # noqa: BLE001 - describing is a bonus: never fail a finished run over it
-            self._update(rec, describe={"started": False, "why": f"{type(exc).__name__}: {exc}"})
+            auto = models.describe_auto()
+        except Exception:  # noqa: BLE001 - not knowing is "no"
+            auto = False
+        if not dsc.get("made") or not auto:
+            self._update(rec, describe={"started": False, "left": dsc["deferred"],
+                                        "why": "the automatic step is switched off" if not auto else
+                                        "no photograph could be described in this run"})
+            return None
+        self._update(rec, describe={"started": True, "left": dsc["deferred"]})
+        spec = rec.get("spec") or {}
+        return {"mode": "new", "path": spec.get("path", ""), "describe_limit": spec.get("describe_limit", 0)}
 
     # ── request handling ────────────────────────────────────────────────────
     def dispatch(self, req: dict[str, Any], conn: socket.socket) -> dict[str, Any] | None:

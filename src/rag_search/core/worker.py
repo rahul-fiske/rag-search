@@ -116,6 +116,7 @@ def run_spec(paths: Paths, spec: dict[str, Any], events: EventWriter,
         chunk_size=int(spec.get("chunk_size") or DEFAULT_CHUNK_SIZE),
         chunk_overlap=int(spec.get("chunk_overlap") or DEFAULT_CHUNK_OVERLAP),
         embedder=embedder, progress=events.progress, stage_log=getattr(events, "path", None),
+        describe_limit=int(spec.get("describe_limit") or 0), describe_retry=bool(spec.get("describe_retry")),
     )
 
 

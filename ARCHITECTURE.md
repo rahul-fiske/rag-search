@@ -340,6 +340,15 @@ Search (one query):
 | S5 | Rerank (optional) | GPU | query | a cross-encoder reads query and passage together and re-orders the best candidates; the multimodal one (Qwen3-VL-Reranker) also looks at the picture of each photograph | `models.reranker`, `search.rerank_pool`, `models.rerank_batch`, `models.rerank_max_len` |
 | S6 | Top k | CPU | query | the best passages with page, heading, snippet and score | `search.top_k` |
 
+**Kinds of file (`kinds.py`).** Every kind of file takes the same way through a run (2, 3.0, its own steps of 3, then 4-8); only
+its own steps differ. `kinds.py` is their registry, like `stages.py` for stages: each `Kind` has its key (the route 3.0 Sniff gives
+and the track of the run view: `pages`, `photograph`, `video`, `timeline`), the page branch its trace records (`photo`, `video`,
+`timeline`; pages carry their lanes' branches), its words, its steps of 3 Convert and how it is indexed. In `core/indexer.py`
+`CONVERT` lists each kind's steps and how its Markdown is written (`convert_by_kind`, on one record of the document, `_Doc`); the
+trace, `understanding.py`, the run view, `/api/pipeline` (`kinds`) and the browser (`pipeline.js`, `KINDS`) read the registry, and
+`tests/test_stages.py` checks that every kind has a converter, that its steps exist and that the browser's copy is equal. A new kind
+(frames of a video, sound) is an entry there, its steps in `stages.py` and its converter.
+
 **Settings really in effect (`effective.py`).** `config.json` holds the defaults; an environment variable the
 daemon was started with wins over it (`settings_env`: an actual environment variable is never overwritten, 0 /
 blank in the file means "no override"). `effective.resolve(cfg, env)` computes, per stage and per setting, the
@@ -1103,18 +1112,24 @@ processes, runs without downloading models.
   own way, never through the no-text path; a photograph with no details at all (no time, no position, no description) is a
   genuine `no_text`. Its `understood` record (kind photograph, grade, facts found and missing) is the same record every kind ends
   with, and `description` is one of the facts: missing when it could not be made, filled in by a later run
-  (`indexer._fills_description`: an unchanged photograph whose Markdown has no description is converted again when the model can
-  run now, unless the model failed on it before). `models.describe` chooses the 8B (default) or the 4B
+  (`indexer._fills_description`: an unchanged photograph whose Markdown has no description by the current model and prompt is converted
+  again when the model can run now, unless the model failed on it before). `models.describe` chooses the 8B (default) or the 4B
   (`rag-search photos model NAME`); the switch `models.describe_auto` (default on; `RAG_SEARCH_DESCRIBE_AUTO`,
   `rag-search photos auto on|off`) turns it off.
-* **A describe pass outside the runs**, mainly for photographs described by another model or prompt, and for any that are still
-  missing a description (`IndexerDaemon._auto_describe`, after a run has published; the Models tab's *Photo descriptions* card and
-  `rag-search photos describe [--collection C] [--limit N] [--redo]`; a `model_tasks` task with `op: "describe"`): one process, in the
-  background, then a short run embeds the new lines. `describe.wanted_automatically` says when it starts: the switch is on, this is an
-  Apple Silicon Mac, the model is downloaded and some photograph is pending.
+* **A new model or prompt, or photographs left undescribed, are caught up by the runs themselves**: "described" means described by
+  the current model and prompt (the same rule in `indexer._fills_description`, the quick check `indexer.quick_skip` and the Models
+  card's counts). A run describes `describe.PER_RUN` (500, about 20 minutes with the 8B) of the photographs whose description is
+  missing or by another model at most, chosen while the unchanged documents are checked, and publishes; the others are skipped as
+  unchanged and counted (`summary.describe`: `made`, `deferred`). While some are left and the run described at least one, the
+  indexer daemon starts the next run (`IndexerDaemon._describe_next`), which skips everything else from its record, so search is
+  refreshed every batch and nothing loops when the model cannot run. A photograph re-converted without a new description keeps its
+  earlier lines (another model's are better than none). The Models tab's *Photo descriptions* card and
+  `rag-search photos describe [--collection C] [--limit N] [--redo]` start such a run (`index_start` with `describe_limit`, and
+  `describe_retry` to try the photographs the model failed on): progress is on the Indexing tab like every stage. There is no
+  describe pass outside the runs any more.
 * **Quiet when it cannot**: a machine short of free memory, or without the model, leaves the photograph undescribed for now (no
   failure; the `describe` stage event says why); a photograph the model could not describe is recorded in the cache's `failed` table
-  for that model and prompt and is not tried again automatically (a describe run started by hand tries it again), so nothing loops.
+  for that model and prompt and is not tried again automatically (a run started with `--redo` tries it again), so nothing loops.
 * **What it writes**: lines in the photograph's *Photo details* section, marked as machine-written (`Looks like`, `Things seen`,
   `People in the picture (model count)`, `Described by: <model>, prompt <version>`), plus the `Faces detected` line that 3.9 Faces wrote
   (5.3c). A word
@@ -1125,7 +1140,7 @@ processes, runs without downloading models.
   photograph's checksum, the model and the prompt version; `photo.attach` carries the description lines over when the section is
   renewed (a map refresh rewrites only the place lines); a photograph converted again (a full rebuild) gets its description back from the
   cache while it is converted, without the model. A new model or prompt makes the photographs candidates again.
-* **Embedding**: inside a run the description is part of the photograph's text when it is chunked, so it is embedded once; the catch-up pass marks the photograph's index entry out of date and starts `index new`, which reuses the Markdown and embeds the new text.
+* **Embedding**: inside a run the description is part of the photograph's text when it is chunked, so it is embedded once, also when a later run catches it up (the new chunks wait beside the old index until their vectors exist).
 
 ### 5.3c People in photographs (`core/faces.py`, `core/people.py`, the People tab)
 

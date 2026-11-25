@@ -347,9 +347,13 @@
   }
 
   /* ---------- photo descriptions ---------- */
+  // 3.10 is a step of the run: the button starts an indexing run that describes them (progress on the Indexing tab)
   async function describePhotos(limit) {
-    const r = await api('photos/describe', { limit });
+    const d = photoData || {};
+    const n = limit || d.pending || 0;
+    const r = await api('photos/describe', { limit: n, redo: !!d.failed });
     if (r.ok === false) { toast(r.error || 'failed', 'bad'); return; }
+    toast(r.already_running ? 'An indexing run is already active: the next runs describe them' : `Indexing run started: it describes up to ${num(n)} photograph(s) (Indexing tab)`, 'ok');
     load(true);
   }
 
