@@ -109,6 +109,17 @@ class RegistryTests(unittest.TestCase):
                  re.findall(r"(\w+): \['([\w]*)', '([^']+)', '([^']+)', '([^']+)'\]", block)}
         self.assertEqual(found, {k.key: (k.branch, k.label, k.plural, k.steps) for k in kinds.KINDS})
 
+    def test_the_architecture_view_draws_a_band_for_every_kind_with_its_own_steps(self):
+        from rag_search import kinds
+
+        js = (SRC / "ui" / "static" / "architecture.js").read_text(encoding="utf-8")
+        for k in kinds.KINDS:
+            for sid in k.steps:                                    # each of the kind's steps is a box with its number
+                self.assertIn(f"'{sid} · ", js, (k.key, sid))
+        for heading in ("DOCUMENTS OF PAGES", "PHOTOGRAPHS", "VIDEOS", "GOOGLE MAPS TIMELINES"):
+            self.assertIn(f"'{heading} ·", js, heading)
+        self.assertEqual(js.count("      band("), len(kinds.KINDS))              # one band per kind
+
     def test_describe_is_json_ready(self):
         import json
 
