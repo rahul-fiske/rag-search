@@ -71,23 +71,48 @@ def make_tools(client: str) -> dict[str, Callable[..., Awaitable[Any]]]:
                                     full=documents)
         return _json(r["result"]) if r.get("ok") else _error(r)
 
-    async def rag_describe_collection(collection: str, description: str) -> str:
-        """Set (or, with description="", clear) a short description of a collection.
+    async def rag_describe_collection(collection: str = "", description: str | None = None,
+                                      clear: bool = False) -> str:
+        """View, set or clear the short descriptions of collections -- one tool for all of it.
 
-        This is how `rag_list_collections` gets a useful summary for a collection instead
-        of just a name and a document count -- descriptions can't be generated
-        automatically (a collection is just whatever folder of documents someone indexed),
-        so after you've explored a collection's contents (a search, grep, or a
-        documents=true listing), call this once to save what it's about, in your own
-        words, for future calls to see. Overwrites any previous description.
+        A description is what `rag_list_collections` shows for a collection instead of just a
+        name and a document count; agents read it to choose which collection to search.
+        It can't be generated automatically, so after exploring a collection (a search, a
+        grep, a rag_list_documents listing) save what it holds: dense keywords beat prose --
+        document types, people, organisations, places, date range, typical search terms, and
+        what it does NOT hold when that is easy to confuse with another collection.
+        Descriptions are shared by every host that may see the collection.
+
+        Calls:
+            rag_describe_collection()                          -> every collection you may see,
+                with its description ("" if none) and `undescribed`: the names still without one
+            rag_describe_collection("manuals")                 -> that collection's description
+            rag_describe_collection("manuals", "X100 manuals") -> set it (overwrites the old one)
+            rag_describe_collection("manuals", clear=True)     -> remove it
+                (description="" also removes it)
 
         Args:
-            collection: Exact collection name as returned by rag_list_collections.
-            description: A short (a sentence or two; 500 characters max) summary of what
-                this collection contains. Empty string clears it.
+            collection: Exact collection name as returned by rag_list_collections; empty lists all.
+            description: New text, 500 characters at most. Leave unset to read the current one.
+            clear: True removes the description (do not pass a description with it).
+
+        Returns JSON: {collections, undescribed, max_length} for the listing, else
+        {collection, description} (+ changed: true after a set or clear).
         """
-        r = await asyncio.to_thread(api.describe_collection, get_paths(), collection,
-                                    description, client=client)
+        paths = get_paths()
+        if clear and (description or "").strip():
+            return _error({"code": "bad_request",
+                           "error": "pass either a description or clear=true, not both"})
+        if not collection.strip():
+            if clear or description is not None:
+                return _error({"code": "bad_request",
+                               "error": "name the collection to set or clear its description"})
+            r = await asyncio.to_thread(api.collection_descriptions, paths, client=client)
+        elif clear or description is not None:
+            r = await asyncio.to_thread(api.describe_collection, paths, collection,
+                                        "" if clear else description, client=client)
+        else:
+            r = await asyncio.to_thread(api.collection_descriptions, paths, collection, client=client)
         return _json(r["result"]) if r.get("ok") else _error(r)
 
     async def rag_search(query: str, collection: str = "", top_k: int | None = None) -> str:

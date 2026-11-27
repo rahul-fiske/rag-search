@@ -289,7 +289,7 @@ sandbox — nothing in production is ever touched.
 | Tool | Purpose |
 |---|---|
 | `rag_list_collections(documents=false)` | What is indexed, per collection: name, description, document count, sizes. Pass `documents=true` for the full per-document listing |
-| `rag_describe_collection(collection, description)` | Set (or, with `description=""`, clear) a collection's short description |
+| `rag_describe_collection(collection="", description=None, clear=false)` | Manage collection descriptions: no arguments lists every collection you may see with its description and the ones still `undescribed`; a collection alone reads its description; with `description` sets it; `clear=true` (or `description=""`) removes it |
 | `rag_search(query, collection="", top_k=5)` | Hybrid search + rerank; returns file, `doc` (the name to read it with), page, heading, text (and `"confidence": "low"` for a hit on a page the converter could not fully verify) |
 | `rag_grep(pattern, collection="", context_lines=2, max_matches=20)` | Regex over the converted Markdown, with page numbers |
 | `rag_read_document(collection, doc, offset=0, max_chars=20000, pages="")` | Read one whole document as indexed (a Markdown source verbatim, others as converted Markdown), in slices: `next_offset` says where to continue. Use after search or grep found it, to quote a table's exact figures. Needs no models |
@@ -509,6 +509,11 @@ time -- a collection is just whatever folder of documents someone indexed -- so 
 is normally filled in by the calling LLM itself: `rag_describe_collection(collection, description)`
 lets it save a short summary right after it has looked at a collection (a search, a grep, or a
 `documents=true` listing), for that call and every future one, from any host, to see.
+The same tool reads them back: with no arguments it lists every collection the host may see, with
+its description and the names still `undescribed`; with just a collection it returns that one;
+`clear=true` removes one. A description left behind by a collection that no longer exists can only
+be removed from your own terminal (`rag-search describe NAME --clear`): it may describe a collection
+that was restricted to another client.
 
 `rag-search describe` (and the dashboard's **Describe…** button on the Collections tab) is the
 human side of the same file: a way to see what an agent has set, or to fix one that's wrong or gone

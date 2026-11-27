@@ -91,6 +91,28 @@ class ToolFunctionTests(McpCase):
             # clearing with an empty string removes it again
             cleared = json.loads(await claude["rag_describe_collection"]("security", ""))
             self.assertEqual(cleared["description"], "")
+            # one tool for all of it: list, get, set, clear=True
+            await claude["rag_describe_collection"]("personal", "Diary")
+            listing = json.loads(await claude["rag_describe_collection"]())
+            self.assertEqual(listing["collections"],
+                             [{"collection": "personal", "description": "Diary"},
+                              {"collection": "security", "description": ""}])
+            self.assertEqual(listing["undescribed"], ["security"])
+            self.assertEqual(listing["max_length"], 500)
+            # agent's listing and get never reveal the restricted collection
+            listing_b = json.loads(await agent["rag_describe_collection"]())
+            self.assertEqual([c["collection"] for c in listing_b["collections"]], ["security"])
+            got_b = json.loads(await agent["rag_describe_collection"]("personal"))
+            self.assertIn("unknown collection", got_b["error"])
+            got = json.loads(await claude["rag_describe_collection"]("Personal"))
+            self.assertEqual(got, {"collection": "personal", "description": "Diary"})
+            both = json.loads(await claude["rag_describe_collection"]("personal", "x", clear=True))
+            self.assertEqual(both["code"], "bad_request")
+            no_name = json.loads(await claude["rag_describe_collection"](clear=True))
+            self.assertEqual(no_name["code"], "bad_request")
+            gone = json.loads(await claude["rag_describe_collection"]("personal", clear=True))
+            self.assertEqual(gone["description"], "")
+            self.assertEqual(json.loads(await claude["rag_describe_collection"]("personal"))["description"], "")
             # agent may not use the restricted collection, claude may
             denied = json.loads(await agent["rag_search"]("secret bread", collection="personal"))
             self.assertEqual(denied["code"], "bad_request")

@@ -84,6 +84,37 @@ def list_collections(paths: Paths, *, client: str | None = None, full: bool = Fa
             "result": list_view(paths, rules, _client(client), full=full)}
 
 
+def _describable(paths: Paths, c: str) -> list[str]:
+    """The collections *c* may read and write descriptions of, before access rules: published
+    ones, plus (for the administrator's terminal) ones registered but not published yet."""
+    existing = collection_names(live_catalog(paths))
+    if c == policy.ADMIN_CLIENT:
+        existing = list(dict.fromkeys([*existing, *known_names(paths)]))
+    return existing
+
+
+def collection_descriptions(paths: Paths, name: str = "",
+                            *, client: str | None = None) -> dict[str, Any]:
+    """Read descriptions: with no *name*, every collection *client* may see, with its description
+    ("" when none) and the names still without one; with a *name*, that collection's alone.  A
+    name the client may not see is refused as unknown, as everywhere else."""
+    c = _client(client)
+    name = (name or "").strip()
+    if name and not is_plain_name(name):
+        return protocol.error(protocol.BAD_REQUEST, f"{name!r} is not a collection name (the name a "
+                              "folder was registered with, e.g. 'manuals')")
+    scope, err = policy.resolve_scope(policy.current_rules(paths), c, [name] if name else [],
+                                      _describable(paths, c))
+    if err:
+        return protocol.error(protocol.BAD_REQUEST, err)
+    rows = [{"collection": n, "description": descriptions.get_description(paths, n)} for n in scope]
+    if name:
+        return {"ok": True, "result": rows[0]}
+    return {"ok": True, "result": {"collections": rows,
+                                   "undescribed": [r["collection"] for r in rows if not r["description"]],
+                                   "max_length": descriptions.MAX_LENGTH}}
+
+
 def describe_collection(paths: Paths, name: str, description: str,
                         *, client: str | None = None) -> dict[str, Any]:
     """Set (or, with an empty *description*, clear) one collection's description.
@@ -100,11 +131,8 @@ def describe_collection(paths: Paths, name: str, description: str,
         return protocol.error(protocol.BAD_REQUEST, f"{name!r} is not a collection name (the name a "
                               "folder was registered with, e.g. 'manuals')")
     rules = policy.current_rules(paths)
-    existing = collection_names(live_catalog(paths))
-    if c == policy.ADMIN_CLIENT:
-        existing = list(dict.fromkeys([*existing, *known_names(paths)]))
     requested = [name.strip()] if name.strip() else []
-    scope, err = policy.resolve_scope(rules, c, requested, existing)
+    scope, err = policy.resolve_scope(rules, c, requested, _describable(paths, c))
     if err:
         # the administrator may clear a description left behind by a collection that no longer
         # exists (one deleted or unregistered outside `rag-search collection delete`)
