@@ -117,6 +117,21 @@ class ApiDescribeCollectionTests(TempHome):
         by_name, _ = descriptions.load_descriptions(self.paths)
         self.assertEqual(by_name, {})
 
+    def test_admin_clears_an_orphaned_description_other_clients_cannot(self):
+        self._publish_one()
+        descriptions.save_descriptions(self.paths, {"manuals": "Guides", "Gone": "old text"})
+        r = api.describe_collection(self.paths, "gone", "", client="agent")
+        self.assertFalse(r.get("ok"))
+        self.assertIn("unknown collection", r.get("error", ""))
+        r = api.describe_collection(self.paths, "gone", "new text", client="cli")
+        self.assertFalse(r.get("ok"))
+        r = api.describe_collection(self.paths, "gone", "", client="cli")
+        self.assertTrue(r.get("ok"), r)
+        by_name, _ = descriptions.load_descriptions(self.paths)
+        self.assertEqual(by_name, {"manuals": "Guides"})
+        r = api.describe_collection(self.paths, "gone", "", client="cli")
+        self.assertFalse(r.get("ok"))
+
     def test_refuses_an_unknown_collection(self):
         self._publish_one()
         r = api.describe_collection(self.paths, "nope-at-all", "text", client="cli")

@@ -106,6 +106,12 @@ def describe_collection(paths: Paths, name: str, description: str,
     requested = [name.strip()] if name.strip() else []
     scope, err = policy.resolve_scope(rules, c, requested, existing)
     if err:
+        # the administrator may clear a description left behind by a collection that no longer
+        # exists (one deleted or unregistered outside `rag-search collection delete`)
+        if (c == policy.ADMIN_CLIENT and not (description or "").strip()
+                and descriptions.forget(paths, name.strip())):
+            return {"ok": True, "result": {"collection": name.strip(), "description": "",
+                                           "changed": True}}
         return protocol.error(protocol.BAD_REQUEST, err)
     try:
         result = descriptions.set_description(paths, scope[0] if scope else name, description)
